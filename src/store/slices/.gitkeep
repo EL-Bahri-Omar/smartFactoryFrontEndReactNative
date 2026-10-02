@@ -1,0 +1,2 @@
+// src/store/slices/
+// One slice per resource, async thunks call services

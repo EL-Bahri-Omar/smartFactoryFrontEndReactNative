@@ -1,0 +1,2 @@
+// src/store/services/
+// One file per resource, all HTTP calls, uses lib/axios
