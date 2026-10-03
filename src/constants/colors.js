@@ -14,7 +14,7 @@ export const COLORS = Object.freeze({
   success: "#16A34A", // Running status, positive delta
   warning: "#F59E0B", // Warning severity, Maintenance status
   danger: "#DC2626", // High severity, Failure status
-  idle: "#FACC15", // Idle status
+  idle: "#0EA5E9", // Idle status
   offline: "#94A3B8", // Offline status, muted text
   text: "#0F172A", // Primary text
   textMuted: "#64748B", // Secondary text

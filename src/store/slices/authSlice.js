@@ -162,6 +162,12 @@ const authSlice = createSlice({
     resetPasswordError: null,
   },
   reducers: {
+    // Sync the signed-in user (e.g. right after a profile update) so every
+    // consumer — Sidebar, TopBar, guards — re-renders without a page refresh.
+    setUser(state, action) {
+      state.user = action.payload;
+      storage.setUser(action.payload);
+    },
     forceLogout(state) {
       state.user = null;
       state.accessToken = null;
@@ -323,5 +329,5 @@ const authSlice = createSlice({
   },
 });
 
-export const { forceLogout, clearResetToken } = authSlice.actions;
+export const { forceLogout, clearResetToken, setUser } = authSlice.actions;
 export default authSlice.reducer;

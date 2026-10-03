@@ -100,7 +100,7 @@ export default function MapScreen() {
 
     return (
       <Card className="mb-4">
-        <Text className="text-base font-semibold text-text font-inter mb-3">
+        <Text className="text-base font-bold text-text font-inter mb-3">
           Zone Details
         </Text>
         {slotZones.map((z) => {
@@ -163,7 +163,7 @@ export default function MapScreen() {
 
     return (
       <Card>
-        <Text className="text-base font-semibold text-text font-inter mb-3">
+        <Text className="text-base font-bold text-text font-inter mb-3">
           Recent Activity
         </Text>
         {events.map((event, idx) => {

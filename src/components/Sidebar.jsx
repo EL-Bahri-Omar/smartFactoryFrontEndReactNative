@@ -75,8 +75,10 @@ export default function Sidebar({ user, onNavigate }) {
               }`}
               style={({ pressed }) => (pressed && !active ? { backgroundColor: "rgba(255,255,255,0.05)" } : {})}
             >
-              <Text style={{ fontSize: 16 }}>{item.icon}</Text>
-              <Text className={`text-sm font-inter ${active ? "text-white font-semibold" : "text-sidebar-text"}`}>
+              {/* Icon color is explicit so monochrome glyphs (e.g. ⚙) stay
+                  visible on the navy sidebar; color emojis are unaffected. */}
+              <Text style={{ fontSize: 16, color: active ? "#FFFFFF" : "#C7D2E1" }}>{item.icon}</Text>
+              <Text className={`text-sm font-inter ${active ? "text-white font-bold" : "text-sidebar-text"}`}>
                 {item.label}
               </Text>
             </Pressable>

@@ -28,7 +28,7 @@ import { useRole } from "../../src/hooks/useRole";
 import { useDialog } from "../../src/components/dialog/DialogContext";
 import { useAppDispatch } from "../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../src/hooks/useAppSelector";
-import { logoutThunk } from "../../src/store/slices/authSlice";
+import { logoutThunk, setUser as setAuthUser } from "../../src/store/slices/authSlice";
 import {
   fetchProfile,
   updateProfile,
@@ -110,11 +110,13 @@ export default function ProfileScreen() {
     if (!firstName || !emailField.trim()) return;
     try {
       // Self-service: names+email only (role/status are never sent).
-      await dispatch(updateProfile({
+      // Sync auth.user too so Sidebar/TopBar show the new name instantly.
+      const updated = await dispatch(updateProfile({
         firstName,
         lastName,
         email: emailField.trim(),
       })).unwrap();
+      if (updated) dispatch(setAuthUser(updated));
     } catch (e) {
       // Until the coworker ships PUT /api/users/me, non-admin saves 403 on
       // the legacy fallback. Inline error shows; add guidance.
@@ -170,7 +172,7 @@ export default function ProfileScreen() {
   function PasswordCard() {
     return (
       <Card>
-        <Text className="text-base font-semibold text-text font-inter mb-1">Change Password</Text>
+        <Text className="text-base font-bold text-text font-inter mb-1">Change Password</Text>
         <Text className="text-xs text-text-muted font-inter mb-4">
           Enter your current password to set a new one.
         </Text>
@@ -188,10 +190,10 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        <View className="gap-4">
-          <Input label="Current Password" placeholder="••••••••" value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry />
-          <Input label="New Password" placeholder="Min. 6 characters" value={newPassword} onChangeText={setNewPassword} secureTextEntry />
-          <Input label="Confirm New Password" placeholder="••••••••" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry onSubmitEditing={handleChangePassword} />
+        <View className="gap-5">
+          <Input label="Current Password" labelClassName="font-bold" placeholder="••••••••" value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry />
+          <Input label="New Password" labelClassName="font-bold" placeholder="Min. 6 characters" value={newPassword} onChangeText={setNewPassword} secureTextEntry />
+          <Input label="Confirm New Password" labelClassName="font-bold" placeholder="••••••••" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry onSubmitEditing={handleChangePassword} />
           <Button
             title="Change Password"
             variant="primary"
@@ -212,12 +214,12 @@ export default function ProfileScreen() {
   function InfoCard() {
     return (
       <Card className="mb-4">
-        <Text className="text-base font-semibold text-text font-inter mb-4">Personal Information</Text>
+        <Text className="text-base font-bold text-text font-inter mb-4">Personal Information</Text>
 
         <View className="flex-row items-center gap-4 mb-2">
           <Avatar name={displayName} size="lg" />
           <View className="flex-1">
-            <Text className="text-lg font-semibold text-text font-inter">{displayName}</Text>
+            <Text className="text-lg font-bold text-text font-inter">{displayName}</Text>
             <Text className="text-sm text-text-muted font-inter">{user?.email || ""}</Text>
             <View className="flex-row items-center mt-1.5 gap-2 flex-wrap">
               <View className="bg-primary-soft px-2 py-0.5 rounded-chip">
@@ -261,14 +263,19 @@ export default function ProfileScreen() {
         <Divider />
 
         <View className="gap-4 mt-2">
-          <Input label="Full Name" placeholder="Omar Bahri" value={fullName} onChangeText={setFullName} disabled={!isEditing} />
-          <Input label="Email" placeholder="omar@smartfactory.com" value={emailField} onChangeText={setEmailField} keyboardType="email-address" autoCapitalize="none" disabled={!isEditing} />
+          <Input label="Full Name" labelClassName="font-bold" placeholder="Omar Bahri" value={fullName} onChangeText={setFullName} disabled={!isEditing} />
+          <Input label="Email" labelClassName="font-bold" placeholder="omar@smartfactory.com" value={emailField} onChangeText={setEmailField} keyboardType="email-address" autoCapitalize="none" disabled={!isEditing} />
           <View className="gap-1">
-            <Text className="text-sm font-medium text-text font-inter">Role</Text>
+            <Text className="text-sm font-bold text-text font-inter">Role</Text>
             <View className="bg-bg border border-border rounded-btn px-3 py-2.5">
               <Text className="text-sm text-text-muted font-inter">{roleLabel}</Text>
             </View>
-            <Text className="text-xs text-text-muted font-inter">Role and status are managed by administrators</Text>
+            <View className="flex-row items-center gap-2 mt-1">
+              <Text className="text-sm">ℹ️</Text>
+              <Text className="flex-1 text-xs font-bold text-primary font-inter">
+                Role and status are managed by administrators
+              </Text>
+            </View>
           </View>
         </View>
       </Card>
@@ -292,25 +299,26 @@ export default function ProfileScreen() {
     return (
       <AppShell>
         <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
-          <View className="flex-row items-center justify-between mb-6">
+          <View className="flex-row items-center mb-4">
             <Text className={titleClass}>Profile</Text>
-            {!isEditing ? (
-              <Button title="Edit Profile" variant="outline" size="sm" onPress={() => setIsEditing(true)} />
-            ) : (
-              <View className="flex-row gap-2">
-                <Button title="Cancel" variant="ghost" size="sm" onPress={() => setIsEditing(false)} />
-                <Button title="Save Changes" variant="primary" size="sm" onPress={handleSaveProfile} loading={saveStatus === "saving"} />
-              </View>
-            )}
           </View>
 
-          <View className="flex-row gap-6 items-start" style={{ maxWidth: 860 }}>
+          <View className="flex-row gap-6 items-stretch" style={{ maxWidth: 1020 }}>
             <View className="flex-1">{InfoCard()}</View>
             <View style={{ width: 340 }}>
               {PasswordCard()}
-              <View className="mt-6">
-                <Button title="Log Out" variant="danger" onPress={handleLogout} className="w-full" />
-              </View>
+            </View>
+            {/* Action rail — same height level as the cards, matched widths */}
+            <View className="gap-2" style={{ width: 160 }}>
+              {!isEditing ? (
+                <Button title="✎  Edit Profile" variant="primary" size="md" onPress={() => setIsEditing(true)} className="w-full" />
+              ) : (
+                <>
+                  <Button title="Cancel" variant="ghost" size="sm" onPress={() => setIsEditing(false)} className="w-full" />
+                  <Button title="Save Changes" variant="primary" size="sm" onPress={handleSaveProfile} loading={saveStatus === "saving"} className="w-full" />
+                </>
+              )}
+              <Button title="Log Out" variant="danger" size="sm" onPress={handleLogout} className="w-full" />
             </View>
           </View>
         </ScrollView>
@@ -333,7 +341,10 @@ export default function ProfileScreen() {
         </View>
 
         {!isEditing ? (
-          <Button title="Edit Profile" variant="outline" onPress={() => setIsEditing(true)} className="w-full mb-4" />
+          <View className="flex-row gap-2 mb-4">
+            <Button title="✎  Edit Profile" variant="primary" onPress={() => setIsEditing(true)} className="flex-1" />
+            <Button title="Log Out" variant="danger" onPress={handleLogout} className="flex-1" />
+          </View>
         ) : (
           <View className="flex-row gap-2 mb-4">
             <Button title="Cancel" variant="ghost" onPress={() => setIsEditing(false)} className="flex-1" />
@@ -343,10 +354,6 @@ export default function ProfileScreen() {
 
         {InfoCard()}
         {PasswordCard()}
-
-        <View className="mb-8">
-          <Button title="Log Out" variant="danger" onPress={handleLogout} className="w-full" size="lg" />
-        </View>
       </ScrollView>
     </AppShell>
   );

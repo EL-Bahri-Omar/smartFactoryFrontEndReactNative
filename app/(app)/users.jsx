@@ -251,7 +251,7 @@ export default function UsersScreen() {
                 <View className="flex-row items-center gap-3">
                   <Avatar name={`${item.firstName || ""} ${item.lastName || ""}`.trim() || item.email} size="sm" />
                   <View className="flex-1">
-                    <Text className="text-sm font-semibold text-text font-inter">{item.firstName} {item.lastName}</Text>
+                    <Text className="text-sm font-bold text-text font-inter">{item.firstName} {item.lastName}</Text>
                     <Text className="text-xs text-text-muted font-inter">{item.email}</Text>
                     <Text className="text-xs text-primary font-inter mt-0.5">{ROLE_LABEL[item.role] || item.role} · {item.status}</Text>
                   </View>

@@ -20,7 +20,7 @@ export default function EmptyState({
           <Text className="text-3xl">📭</Text>
         </View>
       )}
-      <Text className="text-lg font-semibold text-text font-inter text-center">{title}</Text>
+      <Text className="text-lg font-bold text-text font-inter text-center">{title}</Text>
       <Text className="text-sm text-text-muted font-inter text-center mt-1 max-w-xs">{message}</Text>
       {action && <View className="mt-4">{action}</View>}
     </View>

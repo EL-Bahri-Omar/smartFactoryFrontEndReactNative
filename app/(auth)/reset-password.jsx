@@ -31,6 +31,7 @@ import { useAppSelector } from "../../src/hooks/useAppSelector";
 import { resetPasswordThunk } from "../../src/store/slices/authSlice";
 import { passwordError } from "../../src/lib/validators";
 import Button from "../../src/components/Button";
+import EyeIcon from "../../src/components/EyeIcon";
 
 const factoryBg = require("../../assets/images/factory-bg.jpg");
 
@@ -112,10 +113,8 @@ export default function ResetPasswordScreen() {
             onSubmitEditing={onSubmit}
             style={{ outlineStyle: "none" }}
           />
-          <Pressable onPress={onToggle} className="pl-2">
-            <Text className={`text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>
-              {show ? "HIDE" : "SHOW"}
-            </Text>
+          <Pressable onPress={onToggle} className="pl-2" accessibilityLabel={show ? "Hide password" : "Show password"}>
+            <EyeIcon open={!show} size={22} color={dark ? "rgba(255,255,255,0.65)" : "#64748B"} />
           </Pressable>
         </View>
       </View>

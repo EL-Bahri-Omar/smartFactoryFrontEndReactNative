@@ -9,6 +9,14 @@
 // This file is the SINGLE source — Dashboard and Map both import it.
 
 import { View, Text, Pressable } from "react-native";
+import { getMachineStatus } from "../lib/status";
+import { MACHINE_STATUS } from "../constants/roles";
+
+// Status → dot color, from the single source of truth (lib/status.js).
+// Matches the StatusBadge colors used in the machines table exactly.
+function statusDot(status) {
+  return getMachineStatus(status).dotColor;
+}
 
 // Zone layout configs — positions as percentages
 const ZONE_CONFIG = [
@@ -54,14 +62,7 @@ const ZONE_CONFIG = [
   },
 ];
 
-// Status → dot color
-const STATUS_DOT = {
-  RUNNING: "#16A34A",
-  IDLE: "#94A3B8",
-  MAINTENANCE: "#F59E0B",
-  FAILURE: "#DC2626",
-  OFFLINE: "#6B7280",
-};
+// Status dot colors are resolved per-machine via statusDot() (lib/status.js).
 
 export default function FactoryMap({
   variant = "full",
@@ -172,7 +173,7 @@ export default function FactoryMap({
             {/* Machine markers */}
             <View className="flex-row flex-wrap gap-1.5 px-2 mt-1">
               {machines.slice(0, isCompact ? 3 : 6).map((m, idx) => {
-                const dotColor = STATUS_DOT[m.status] || STATUS_DOT.OFFLINE;
+                const dotColor = statusDot(m.status);
                 return (
                   <View key={m.id || idx} className="items-center">
                     <View
@@ -229,11 +230,11 @@ export default function FactoryMap({
       {!isCompact && (
         <View className="absolute bottom-2 left-3 flex-row gap-3">
           {[
-            { label: "Running", color: STATUS_DOT.RUNNING },
-            { label: "Idle", color: STATUS_DOT.IDLE },
-            { label: "Maintenance", color: STATUS_DOT.MAINTENANCE },
-            { label: "Failure", color: STATUS_DOT.FAILURE },
-            { label: "Offline", color: STATUS_DOT.OFFLINE },
+            { label: "Running", color: statusDot(MACHINE_STATUS.RUNNING) },
+            { label: "Idle", color: statusDot(MACHINE_STATUS.IDLE) },
+            { label: "Maintenance", color: statusDot(MACHINE_STATUS.MAINTENANCE) },
+            { label: "Failure", color: statusDot(MACHINE_STATUS.FAILURE) },
+            { label: "Offline", color: statusDot(MACHINE_STATUS.OFFLINE) },
           ].map((item) => (
             <View key={item.label} className="flex-row items-center gap-1">
               <View

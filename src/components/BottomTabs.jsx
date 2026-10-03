@@ -46,12 +46,16 @@ export default function BottomTabs() {
           <Pressable
             key={tab.path}
             onPress={() => router.push(tab.path)}
-            className="flex-1 items-center justify-center gap-0.5"
+            className={`flex-1 items-center justify-center gap-0.5 mx-1 my-1 rounded-btn ${
+              active ? "bg-primary/10" : ""
+            }`}
           >
-            <Text style={{ fontSize: 20, opacity: active ? 1 : 0.5 }}>{tab.icon}</Text>
+            {/* Explicit color so monochrome glyphs (e.g. ☰) stay visible in
+                dark mode; color emojis ignore it. Active tab gets a pill bg. */}
+            <Text style={{ fontSize: 20, opacity: active ? 1 : 0.6, color: dark ? "#FFFFFF" : "#0F172A" }}>{tab.icon}</Text>
             <Text
               className={`text-[10px] font-inter ${
-                active ? "text-primary font-semibold" : dark ? "text-white/60" : "text-text-muted"
+                active ? "text-primary font-bold" : dark ? "text-white/60" : "text-text-muted"
               }`}
             >
               {tab.label}

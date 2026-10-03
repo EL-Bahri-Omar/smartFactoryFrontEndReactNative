@@ -12,7 +12,7 @@
 // Dispatches registerThunk → authService.register → lib/axios.
 // Never calls axios directly. No token stored — navigates to verify-account on success.
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
   View,
   Text,
@@ -31,6 +31,7 @@ import { useAppSelector } from "../../src/hooks/useAppSelector";
 import { registerThunk } from "../../src/store/slices/authSlice";
 import { emailError, passwordError } from "../../src/lib/validators";
 import { TERMS_SECTIONS, TERMS_UPDATED } from "../../src/constants/terms";
+import EyeIcon from "../../src/components/EyeIcon";
 import Button from "../../src/components/Button";
 
 const factoryBg = require("../../assets/images/factory-bg.jpg");
@@ -75,6 +76,36 @@ export default function RegisterScreen() {
   const [termsOpen, setTermsOpen] = useState(false);
   const [touched, setTouched] = useState(false);
   const [focused, setFocused] = useState(null);
+
+  // Keep the focused field visible above the keyboard on small phones.
+  // measureInWindow gives screen coords; adding the current scroll offset
+  // yields the absolute content position regardless of layout nesting.
+  const scrollRef = useRef(null);
+  const fieldRefs = useRef({});
+  const scrollOffset = useRef(0);
+  const lastNameRef = useRef(null);
+  const emailRef = useRef(null);
+  const passwordRef = useRef(null);
+  const confirmRef = useRef(null);
+  function setFieldRef(key) {
+    return (r) => {
+      fieldRefs.current[key] = r;
+    };
+  }
+  function scrollToField(key) {
+    const node = fieldRefs.current[key];
+    if (!node || !node.measureInWindow) return;
+    setTimeout(() => {
+      node.measureInWindow((x, y) => {
+        const target = scrollOffset.current + y - 140;
+        scrollRef.current?.scrollTo({ y: Math.max(0, target), animated: true });
+      });
+    }, 150);
+  }
+  function focusField(key) {
+    setFocused(key);
+    scrollToField(key);
+  }
 
   const isDesktop = breakpoint === "desktop" || breakpoint === "tablet";
   const isLoading = status === "loading";
@@ -122,30 +153,27 @@ export default function RegisterScreen() {
   }
 
   function TermsModal() {
+    // Whole card scrolls as one region so long text is reachable on small phones.
     return (
       <Modal visible={termsOpen} transparent animationType="fade" onRequestClose={() => setTermsOpen(false)}>
-        <Pressable
-          onPress={() => setTermsOpen(false)}
-          style={{ flex: 1, backgroundColor: "rgba(11,29,58,0.6)", alignItems: "center", justifyContent: "center", padding: 24 }}
-        >
-          <Pressable
-            onPress={() => {}}
-            className="bg-white w-full p-6"
-            style={{ maxWidth: 480, maxHeight: "85%", borderRadius: 16 }}
+        <View style={{ flex: 1, backgroundColor: "rgba(11,29,58,0.6)", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <View
+            className="bg-white w-full"
+            style={{ maxWidth: 480, maxHeight: "88%", borderRadius: 16 }}
           >
-            <Text className="text-lg font-bold text-text font-inter mb-1">Terms of Use</Text>
-            <Text className="text-xs text-text-muted font-inter mb-3">Last updated: {TERMS_UPDATED}</Text>
-            <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={true}>
+            <ScrollView contentContainerStyle={{ padding: 24 }} showsVerticalScrollIndicator={true}>
+              <Text className="text-lg font-bold text-text font-inter mb-1">Terms of Use</Text>
+              <Text className="text-xs text-text-muted font-inter mb-3">Last updated: {TERMS_UPDATED}</Text>
               {TERMS_SECTIONS.map((s) => (
                 <View key={s.title} className="mb-3">
-                  <Text className="text-sm font-semibold text-text font-inter mb-1">{s.title}</Text>
+                  <Text className="text-sm font-bold text-text font-inter mb-1">{s.title}</Text>
                   <Text className="text-sm text-text-muted font-inter leading-5">{s.body}</Text>
                 </View>
               ))}
+              <Button title="Close" variant="primary" onPress={() => setTermsOpen(false)} className="w-full mt-2" />
             </ScrollView>
-            <Button title="Close" variant="primary" onPress={() => setTermsOpen(false)} className="w-full mt-4" />
-          </Pressable>
-        </Pressable>
+          </View>
+        </View>
       </Modal>
     );
   }
@@ -217,8 +245,8 @@ export default function RegisterScreen() {
                 <Text className="text-sm font-medium text-text font-inter mb-1.5">Password</Text>
                 <View className={`flex-row items-center border rounded-btn px-3 py-2 bg-white ${focused === "password" ? "border-primary" : "border-border"}`}>
                   <TextInput className="flex-1 text-sm text-text font-inter" placeholder="••••••••" placeholderTextColor="#94A3B8" value={password} onChangeText={setPassword} secureTextEntry={!showPassword} editable={!isLoading} onFocus={() => setFocused("password")} onBlur={() => setFocused(null)} style={{ outlineStyle: "none" }} />
-                  <Pressable onPress={() => setShowPassword(!showPassword)} className="pl-2">
-                    <Text className="text-xs text-text-muted font-semibold font-inter">{showPassword ? "HIDE" : "SHOW"}</Text>
+                  <Pressable onPress={() => setShowPassword(!showPassword)} className="pl-2" accessibilityLabel={showPassword ? "Hide password" : "Show password"}>
+                    <EyeIcon open={!showPassword} size={22} color="#64748B" />
                   </Pressable>
                 </View>
                 <FieldError message={fieldErrors.password} />
@@ -229,8 +257,8 @@ export default function RegisterScreen() {
                 <Text className="text-sm font-medium text-text font-inter mb-1.5">Confirm password</Text>
                 <View className={`flex-row items-center border rounded-btn px-3 py-2 bg-white ${focused === "confirm" ? "border-primary" : "border-border"}`}>
                   <TextInput className="flex-1 text-sm text-text font-inter" placeholder="••••••••" placeholderTextColor="#94A3B8" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry={!showConfirm} editable={!isLoading} onFocus={() => setFocused("confirm")} onBlur={() => setFocused(null)} onSubmitEditing={handleRegister} style={{ outlineStyle: "none" }} />
-                  <Pressable onPress={() => setShowConfirm(!showConfirm)} className="pl-2">
-                    <Text className="text-xs text-text-muted font-semibold font-inter">{showConfirm ? "HIDE" : "SHOW"}</Text>
+                  <Pressable onPress={() => setShowConfirm(!showConfirm)} className="pl-2" accessibilityLabel={showConfirm ? "Hide password" : "Show password"}>
+                    <EyeIcon open={!showConfirm} size={22} color="#64748B" />
                   </Pressable>
                 </View>
                 <FieldError message={fieldErrors.confirmPassword} />
@@ -265,19 +293,30 @@ export default function RegisterScreen() {
   // ── MOBILE LAYOUT (same full-bleed choice as Login mobile) ──────────
   return (
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} className="flex-1">
-      <ScrollView className="flex-1 bg-sidebar" contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
-        <View className="flex-1 px-6 pt-16 pb-10 justify-between" style={{ minHeight: "100vh" }}>
+      <ScrollView
+        ref={scrollRef}
+        className="flex-1 bg-sidebar"
+        contentContainerStyle={{ flexGrow: 1 }}
+        keyboardShouldPersistTaps="handled"
+        scrollEventThrottle={16}
+        onScroll={(e) => {
+          scrollOffset.current = e.nativeEvent.contentOffset.y;
+        }}
+      >
+        <View className="flex-1 px-6 pt-10 pb-6" style={{ minHeight: "100vh" }}>
           <View>
-            <View className="items-center pt-6 mb-6">
-              <View className="w-16 h-16 rounded-xl bg-primary items-center justify-center mb-4">
+            <View className="items-center pt-2 mb-4">
+              <View className="w-20 h-20 rounded-2xl bg-primary items-center justify-center mb-3">
                 <Text className="text-white text-3xl font-bold">⚙</Text>
               </View>
-              <Text className="text-2xl font-bold text-white font-inter mb-1">SmartFactory</Text>
-              <Text className="text-sm text-sidebar-text font-inter">Industrial Intelligence</Text>
+              <Text className="text-2xl font-bold text-white font-inter mb-2">SmartFactory</Text>
+              <Text className="text-base text-white/80 font-inter text-center" numberOfLines={1}>
+                Smarter factories. Safer tomorrow.
+              </Text>
             </View>
 
             <Text className="text-xl font-bold text-white font-inter text-center mb-1">Create Account</Text>
-            <Text className="text-sm text-sidebar-text font-inter text-center mb-6">Sign up to get started</Text>
+            <Text className="text-sm text-sidebar-text font-inter text-center mb-4">Sign up to get started</Text>
 
             {serverMessage && (
               <View className="rounded-btn px-3 py-2.5 mb-4" style={{ backgroundColor: "rgba(220,38,38,0.15)", borderWidth: 1, borderColor: "rgba(220,38,38,0.3)" }}>
@@ -290,47 +329,47 @@ export default function RegisterScreen() {
               </View>
             )}
 
-            <View className="mb-3">
+            <View className="mb-3" ref={setFieldRef("firstName")}>
               <Text className="text-sm font-medium text-white/90 font-inter mb-1.5">First name</Text>
               <View className="flex-row items-center rounded-btn px-3 py-2.5" style={inputWrap(focused === "firstName", true)}>
-                <TextInput className="flex-1 text-sm text-white font-inter" placeholder="Omar" placeholderTextColor="rgba(255,255,255,0.35)" value={firstName} onChangeText={setFirstName} autoCapitalize="words" editable={!isLoading} onFocus={() => setFocused("firstName")} onBlur={() => setFocused(null)} style={{ outlineStyle: "none" }} />
+                <TextInput className="flex-1 text-sm text-white font-inter" placeholder="Omar" placeholderTextColor="rgba(255,255,255,0.35)" value={firstName} onChangeText={setFirstName} autoCapitalize="words" autoCorrect={false} editable={!isLoading} returnKeyType="next" blurOnSubmit={false} onSubmitEditing={() => lastNameRef.current?.focus()} onFocus={() => focusField("firstName")} onBlur={() => setFocused(null)} style={{ outlineStyle: "none" }} />
               </View>
               <FieldError message={fieldErrors.firstName} dark />
             </View>
 
-            <View className="mb-3">
+            <View className="mb-3" ref={setFieldRef("lastName")}>
               <Text className="text-sm font-medium text-white/90 font-inter mb-1.5">Last name</Text>
               <View className="flex-row items-center rounded-btn px-3 py-2.5" style={inputWrap(focused === "lastName", true)}>
-                <TextInput className="flex-1 text-sm text-white font-inter" placeholder="Bahri" placeholderTextColor="rgba(255,255,255,0.35)" value={lastName} onChangeText={setLastName} autoCapitalize="words" editable={!isLoading} onFocus={() => setFocused("lastName")} onBlur={() => setFocused(null)} style={{ outlineStyle: "none" }} />
+                <TextInput ref={lastNameRef} className="flex-1 text-sm text-white font-inter" placeholder="Bahri" placeholderTextColor="rgba(255,255,255,0.35)" value={lastName} onChangeText={setLastName} autoCapitalize="words" autoCorrect={false} editable={!isLoading} returnKeyType="next" blurOnSubmit={false} onSubmitEditing={() => emailRef.current?.focus()} onFocus={() => focusField("lastName")} onBlur={() => setFocused(null)} style={{ outlineStyle: "none" }} />
               </View>
               <FieldError message={fieldErrors.lastName} dark />
             </View>
 
-            <View className="mb-3">
+            <View className="mb-3" ref={setFieldRef("email")}>
               <Text className="text-sm font-medium text-white/90 font-inter mb-1.5">Email</Text>
               <View className="flex-row items-center rounded-btn px-3 py-2.5" style={inputWrap(focused === "email", true)}>
-                <TextInput className="flex-1 text-sm text-white font-inter" placeholder="name@company.com" placeholderTextColor="rgba(255,255,255,0.35)" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoComplete="email" editable={!isLoading} onFocus={() => setFocused("email")} onBlur={() => setFocused(null)} style={{ outlineStyle: "none" }} />
+                <TextInput ref={emailRef} className="flex-1 text-sm text-white font-inter" placeholder="name@company.com" placeholderTextColor="rgba(255,255,255,0.35)" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} autoComplete="email" editable={!isLoading} returnKeyType="next" blurOnSubmit={false} onSubmitEditing={() => passwordRef.current?.focus()} onFocus={() => focusField("email")} onBlur={() => setFocused(null)} style={{ outlineStyle: "none" }} />
               </View>
               <FieldError message={fieldErrors.email} dark />
             </View>
 
-            <View className="mb-3">
+            <View className="mb-3" ref={setFieldRef("password")}>
               <Text className="text-sm font-medium text-white/90 font-inter mb-1.5">Password</Text>
               <View className="flex-row items-center rounded-btn px-3 py-2.5" style={inputWrap(focused === "password", true)}>
-                <TextInput className="flex-1 text-sm text-white font-inter" placeholder="••••••••" placeholderTextColor="rgba(255,255,255,0.35)" value={password} onChangeText={setPassword} secureTextEntry={!showPassword} editable={!isLoading} onFocus={() => setFocused("password")} onBlur={() => setFocused(null)} style={{ outlineStyle: "none" }} />
-                <Pressable onPress={() => setShowPassword(!showPassword)} className="pl-2">
-                  <Text className="text-xs text-white/50 font-semibold font-inter">{showPassword ? "HIDE" : "SHOW"}</Text>
+                <TextInput ref={passwordRef} className="flex-1 text-sm text-white font-inter" placeholder="••••••••" placeholderTextColor="rgba(255,255,255,0.35)" value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoCorrect={false} editable={!isLoading} returnKeyType="next" blurOnSubmit={false} onSubmitEditing={() => confirmRef.current?.focus()} onFocus={() => focusField("password")} onBlur={() => setFocused(null)} style={{ outlineStyle: "none" }} />
+                <Pressable onPress={() => setShowPassword(!showPassword)} className="pl-2" accessibilityLabel={showPassword ? "Hide password" : "Show password"}>
+                  <EyeIcon open={!showPassword} size={22} color="rgba(255,255,255,0.65)" />
                 </Pressable>
               </View>
               <FieldError message={fieldErrors.password} dark />
             </View>
 
-            <View className="mb-4">
+            <View className="mb-4" ref={setFieldRef("confirm")}>
               <Text className="text-sm font-medium text-white/90 font-inter mb-1.5">Confirm password</Text>
               <View className="flex-row items-center rounded-btn px-3 py-2.5" style={inputWrap(focused === "confirm", true)}>
-                <TextInput className="flex-1 text-sm text-white font-inter" placeholder="••••••••" placeholderTextColor="rgba(255,255,255,0.35)" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry={!showConfirm} editable={!isLoading} onFocus={() => setFocused("confirm")} onBlur={() => setFocused(null)} onSubmitEditing={handleRegister} style={{ outlineStyle: "none" }} />
-                <Pressable onPress={() => setShowConfirm(!showConfirm)} className="pl-2">
-                  <Text className="text-xs text-white/50 font-semibold font-inter">{showConfirm ? "HIDE" : "SHOW"}</Text>
+                <TextInput ref={confirmRef} className="flex-1 text-sm text-white font-inter" placeholder="••••••••" placeholderTextColor="rgba(255,255,255,0.35)" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry={!showConfirm} autoCorrect={false} editable={!isLoading} returnKeyType="go" onSubmitEditing={handleRegister} onFocus={() => focusField("confirm")} onBlur={() => setFocused(null)} style={{ outlineStyle: "none" }} />
+                <Pressable onPress={() => setShowConfirm(!showConfirm)} className="pl-2" accessibilityLabel={showConfirm ? "Hide password" : "Show password"}>
+                  <EyeIcon open={!showConfirm} size={22} color="rgba(255,255,255,0.65)" />
                 </Pressable>
               </View>
               <FieldError message={fieldErrors.confirmPassword} dark />
@@ -347,8 +386,8 @@ export default function RegisterScreen() {
             <FieldError message={fieldErrors.acceptTerms} dark />
           </View>
 
-          <View className="mt-6">
-            <Button title="Create Account" variant="primary" onPress={handleRegister} loading={isLoading} disabled={isLoading || (touched && hasClientErrors)} className="w-full mb-5" size="lg" />
+          <View className="mt-4">
+            <Button title="Create Account" variant="primary" onPress={handleRegister} loading={isLoading} disabled={isLoading || (touched && hasClientErrors)} className="w-full mb-4" size="lg" />
             <Text className="text-sm text-sidebar-text font-inter text-center">
               Already have an account?{" "}
               <Text className="text-primary font-medium" onPress={() => router.push("/(auth)/login")}>Sign in</Text>

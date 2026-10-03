@@ -14,6 +14,7 @@ export default function Select({
   disabled = false,
   error,
   className = "",
+  labelClassName = "",
 }) {
   const [open, setOpen] = useState(false);
   const selectedOption = options.find((o) => o.value === value);
@@ -21,7 +22,7 @@ export default function Select({
   return (
     <View className={`gap-1 ${className}`}>
       {label && (
-        <Text className="text-sm font-medium text-text font-inter">{label}</Text>
+        <Text className={`text-sm text-text font-inter ${labelClassName || "font-medium"}`}>{label}</Text>
       )}
       <Pressable
         onPress={() => !disabled && setOpen(true)}
@@ -29,9 +30,17 @@ export default function Select({
           error ? "border-danger" : "border-border"
         } ${disabled ? "opacity-50" : ""}`}
       >
-        <Text className={`text-sm font-inter ${selectedOption ? "text-text" : "text-offline"}`}>
-          {selectedOption ? selectedOption.label : placeholder}
-        </Text>
+        <View className="flex-1 flex-row items-center gap-2">
+          {selectedOption?.dot ? (
+            <View
+              className="w-2.5 h-2.5 rounded-full"
+              style={{ backgroundColor: selectedOption.dot }}
+            />
+          ) : null}
+          <Text className={`text-sm font-inter ${selectedOption ? "text-text" : "text-offline"}`}>
+            {selectedOption ? selectedOption.label : placeholder}
+          </Text>
+        </View>
         <Text className="text-text-muted text-xs">▼</Text>
       </Pressable>
       {error && <Text className="text-xs text-danger font-inter">{error}</Text>}
@@ -59,9 +68,17 @@ export default function Select({
                     item.value === value ? "bg-primary-soft" : ""
                   }`}
                 >
-                  <Text className={`text-sm font-inter ${item.value === value ? "text-primary font-semibold" : "text-text"}`}>
-                    {item.label}
-                  </Text>
+                  <View className="flex-row items-center gap-2">
+                    {item.dot ? (
+                      <View
+                        className="w-2.5 h-2.5 rounded-full"
+                        style={{ backgroundColor: item.dot }}
+                      />
+                    ) : null}
+                    <Text className={`text-sm font-inter ${item.value === value ? "text-primary font-semibold" : "text-text"}`}>
+                      {item.label}
+                    </Text>
+                  </View>
                 </Pressable>
               )}
             />

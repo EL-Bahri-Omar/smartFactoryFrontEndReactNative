@@ -9,7 +9,7 @@
 // Chart merges historical readings with live points.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, ScrollView, Pressable } from "react-native";
+import { View, Text, ScrollView, Pressable, Share } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import AppShell from "../../../src/components/AppShell";
 import Card from "../../../src/components/Card";
@@ -21,14 +21,16 @@ import Breadcrumb from "../../../src/components/Breadcrumb";
 import Tabs from "../../../src/components/Tabs";
 import RangeTabs from "../../../src/components/RangeTabs";
 import MetricCard from "../../../src/components/MetricCard";
+import AddMachineModal from "../../../src/components/AddMachineModal";
 import LineChart from "../../../src/components/charts/LineChart";
 import ChartLegend from "../../../src/components/charts/ChartLegend";
 import { useBreakpoint } from "../../../src/hooks/useBreakpoint";
 import { useRole } from "../../../src/hooks/useRole";
+import { useDialog } from "../../../src/components/dialog/DialogContext";
 import { useAppDispatch } from "../../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../../src/hooks/useAppSelector";
 import { useLiveTopic } from "../../../src/hooks/useLiveTopic";
-import { fetchMachineById } from "../../../src/store/slices/machineSlice";
+import { fetchMachineById, deleteMachine } from "../../../src/store/slices/machineSlice";
 import { fetchReadings } from "../../../src/store/slices/readingSlice";
 import {
   SERIES_META,
@@ -58,6 +60,8 @@ export default function MachineDetailScreen() {
   const machineId = Array.isArray(id) ? id[0] : id;
   const dispatch = useAppDispatch();
   const router = useRouter();
+  const dialog = useDialog();
+  const { isAdmin } = useRole();
   const { canAccess, homeRoute } = useRole();
   const isDesktop = useBreakpoint() === "desktop";
 
@@ -74,6 +78,8 @@ export default function MachineDetailScreen() {
   const [tab, setTab] = useState("overview");
   const [chartRange, setChartRange] = useState("6h");
   const [livePoints, setLivePoints] = useState([]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const lastLiveRef = useRef(null);
 
   const destination = machineId ? `/topic/machines/${machineId}/readings` : null;
@@ -133,6 +139,69 @@ export default function MachineDetailScreen() {
     setChartRange(next);
   }
 
+  function summaryText() {
+    return `${code} (${typeLabel}) — Status: ${status || "unknown"}`;
+  }
+
+  // ↗ Share the machine summary (native sheet, web navigator.share,
+  // clipboard fallback with confirmation dialog).
+  async function handleShare() {
+    const text = summaryText();
+    try {
+      const result = await Share.share({ message: text });
+      if (result.action === Share.dismissedAction) return;
+    } catch {
+      try {
+        if (typeof navigator !== "undefined" && navigator.share) {
+          await navigator.share({ title: code, text });
+          return;
+        }
+        throw new Error("no-share");
+      } catch {
+        try {
+          if (typeof navigator !== "undefined" && navigator.clipboard) {
+            await navigator.clipboard.writeText(text);
+            dialog.alert("Copied", "Machine summary copied to clipboard.", "success");
+          } else {
+            dialog.alert("Share", text);
+          }
+        } catch {
+          dialog.alert("Share", text);
+        }
+      }
+    }
+  }
+
+  async function handleCopyCode() {
+    setMenuOpen(false);
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard) {
+        await navigator.clipboard.writeText(String(code));
+        dialog.alert("Copied", `Machine code ${code} copied to clipboard.`, "success");
+      } else {
+        dialog.alert("Machine code", String(code));
+      }
+    } catch {
+      dialog.alert("Machine code", String(code));
+    }
+  }
+
+  async function handleDelete() {
+    setMenuOpen(false);
+    if (!machine) return;
+    const ok = await dialog.confirm("Delete machine", `Remove ${code}? This cannot be undone.`, {
+      confirmText: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await dispatch(deleteMachine(machine.id)).unwrap();
+      router.replace("/(app)/machines");
+    } catch {
+      // Slice error state surfaces the failure.
+    }
+  }
+
   function OverviewBody() {
     return (
       <View>
@@ -184,7 +253,7 @@ export default function MachineDetailScreen() {
         <Card>
           <View className={`${isDesktop ? "flex-row items-center justify-between mb-3" : "mb-3"}`}>
             <View className="flex-row items-center gap-2 mb-2">
-              <Text className="text-base font-semibold text-text font-inter">
+              <Text className="text-base font-bold text-text font-inter">
                 Live Sensor Data
               </Text>
               {!liveConnected && (
@@ -296,12 +365,45 @@ export default function MachineDetailScreen() {
               </View>
               <View className="flex-row items-center gap-2">
                 {status ? <StatusBadge status={status} /> : null}
-                <Pressable className="w-9 h-9 rounded-btn border border-border items-center justify-center bg-surface">
+                <Pressable
+                  onPress={handleShare}
+                  accessibilityLabel="Share machine"
+                  className="w-9 h-9 rounded-btn border border-border items-center justify-center bg-surface"
+                >
                   <Text className="text-text-muted">↗</Text>
                 </Pressable>
-                <Pressable className="w-9 h-9 rounded-btn border border-border items-center justify-center bg-surface">
-                  <Text className="text-text-muted">⋮</Text>
-                </Pressable>
+                <View className="relative">
+                  <Pressable
+                    onPress={() => setMenuOpen((v) => !v)}
+                    accessibilityLabel="Machine actions"
+                    className="w-9 h-9 rounded-btn border border-border items-center justify-center bg-surface"
+                  >
+                    <Text className="text-text-muted">⋮</Text>
+                  </Pressable>
+                  {menuOpen && (
+                    <View
+                      className="absolute right-0 bg-surface border border-border rounded-card overflow-hidden"
+                      style={{ top: 40, width: 180, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 6, zIndex: 20 }}
+                    >
+                      {isAdmin && (
+                        <Pressable
+                          onPress={() => { setMenuOpen(false); setEditOpen(true); }}
+                          className="px-4 py-3 border-b border-border"
+                        >
+                          <Text className="text-sm text-text font-inter">Edit machine</Text>
+                        </Pressable>
+                      )}
+                      <Pressable onPress={handleCopyCode} className="px-4 py-3 border-b border-border">
+                        <Text className="text-sm text-text font-inter">Copy machine code</Text>
+                      </Pressable>
+                      {isAdmin && (
+                        <Pressable onPress={handleDelete} className="px-4 py-3">
+                          <Text className="text-sm text-danger font-medium font-inter">Delete machine</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  )}
+                </View>
               </View>
             </View>
           </View>
@@ -351,6 +453,14 @@ export default function MachineDetailScreen() {
 
         {tab === "overview" ? <OverviewBody /> : <ComingSoon />}
       </ScrollView>
+      <AddMachineModal
+        visible={editOpen}
+        machine={machine}
+        onClose={() => {
+          setEditOpen(false);
+          if (machineId) dispatch(fetchMachineById(machineId));
+        }}
+      />
     </AppShell>
   );
 }

@@ -14,6 +14,7 @@ export default function Input({
   multiline = false,
   keyboardType = "default",
   className = "",
+  labelClassName = "",
   icon,
 }) {
   const [focused, setFocused] = useState(false);
@@ -21,7 +22,7 @@ export default function Input({
   return (
     <View className={`gap-1 ${className}`}>
       {label && (
-        <Text className="text-sm font-medium text-text font-inter">{label}</Text>
+        <Text className={`text-sm text-text font-inter ${labelClassName || "font-medium"}`}>{label}</Text>
       )}
       <View
         className={`flex-row items-center bg-surface border rounded-btn px-3 py-2.5 gap-2 ${

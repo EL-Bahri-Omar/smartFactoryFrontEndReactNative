@@ -18,7 +18,7 @@ export default function Tabs({ tabs = [], active, onChange, scrollable = false }
           >
             <Text
               className={`text-sm font-inter ${
-                isActive ? "text-primary font-semibold" : "text-text-muted font-medium"
+                isActive ? "text-primary font-bold" : "text-text-muted font-medium"
               }`}
             >
               {tab.label}

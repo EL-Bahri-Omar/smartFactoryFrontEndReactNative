@@ -1,11 +1,11 @@
 // app/(app)/settings.jsx
 //
 // Settings — web + mobile, same file.
-// Web:  Tabs (General · Users · Machines · Notifications). Form fields + Save button.
-// Mobile: Vertical section list. Settings as full-width rows. Sticky Save button.
+// Web:  Tabs (General · Machines · Notifications). Form fields + Save button.
+// Mobile: Vertical section list with distinct section headers. Sticky Save button.
+// (User management lives on the Users screen, not here.)
 //
-// Users & Machines tabs: ADMIN only (RB10).
-// Dark Mode toggle: saves value, does NOT apply theme. TODO.
+// Machines tab: ADMIN only (RB10). Dark Mode lives in General and applies instantly.
 
 import { useEffect, useState } from "react";
 import { View, Text, ScrollView, Pressable } from "react-native";
@@ -29,12 +29,10 @@ import {
   setNotifications,
   clearSaveStatus,
 } from "../../src/store/slices/settingsSlice";
-import { fetchUsers } from "../../src/store/slices/userSlice";
 import { useDialog } from "../../src/components/dialog/DialogContext";
 
 const TABS = [
   { key: "general", label: "General" },
-  { key: "users", label: "Users", adminOnly: true },
   { key: "machines", label: "Machines", adminOnly: true },
   { key: "notifications", label: "Notifications" },
 ];
@@ -69,22 +67,12 @@ export default function SettingsScreen() {
   const { general, notifications, status, saveStatus, error } = useAppSelector(
     (s) => s.settings
   );
-  const { list: users, totalElements: userTotal, listStatus: usersStatus, listError: usersError } = useAppSelector(
-    (s) => s.user
-  );
   const [activeTab, setActiveTab] = useState("general");
 
   // Fetch on mount
   useEffect(() => {
     dispatch(fetchSettings());
   }, [dispatch]);
-
-  // Users tab (ADMIN) — real backend list
-  useEffect(() => {
-    if (activeTab === "users" && isAdmin) {
-      dispatch(fetchUsers({ page: 0, size: 20 }));
-    }
-  }, [activeTab, isAdmin, dispatch]);
 
   // Success dialog (dialog fns are stable; keep out of deps to avoid re-firing)
   useEffect(() => {
@@ -109,7 +97,7 @@ export default function SettingsScreen() {
   function renderGeneralTab() {
     return (
       <Card className="mb-4">
-        <Text className="text-base font-semibold text-text font-inter mb-4">
+        <Text className="text-base font-bold text-text font-inter mb-4">
           General Settings
         </Text>
         <View className="gap-4">
@@ -156,7 +144,7 @@ export default function SettingsScreen() {
   function renderNotificationsTab() {
     return (
       <Card className="mb-4">
-        <Text className="text-base font-semibold text-text font-inter mb-4">
+        <Text className="text-base font-bold text-text font-inter mb-4">
           Notifications
         </Text>
         <View className="gap-5">
@@ -170,57 +158,10 @@ export default function SettingsScreen() {
     );
   }
 
-  function renderUsersTab() {
-    return (
-      <Card className="mb-4">
-        <Text className="text-base font-semibold text-text font-inter mb-2">
-          User Management
-        </Text>
-        <Text className="text-sm text-text-muted font-inter mb-4">
-          {userTotal} user{userTotal === 1 ? "" : "s"} — administrators only.
-        </Text>
-        {usersStatus === "loading" && (
-          <View className="gap-2">
-            {[1, 2, 3].map((i) => (
-              <Skeleton key={i} width="100%" height={38} />
-            ))}
-          </View>
-        )}
-        {usersStatus === "error" && (
-          <Text className="text-sm text-danger font-inter">
-            {usersError?.message || "Failed to load users"}
-          </Text>
-        )}
-        {usersStatus === "succeeded" &&
-          (users.length === 0 ? (
-            <Text className="text-sm text-text-muted font-inter">No users found.</Text>
-          ) : (
-            <View className="gap-2">
-              {users.map((u) => (
-                <View key={u.id} className="flex-row items-center justify-between bg-bg rounded-btn px-3 py-2.5">
-                  <View className="flex-1 mr-3">
-                    <Text className="text-sm font-semibold text-text font-inter" numberOfLines={1}>
-                      {u.firstName} {u.lastName}
-                    </Text>
-                    <Text className="text-xs text-text-muted font-inter" numberOfLines={1}>
-                      {u.email}
-                    </Text>
-                  </View>
-                  <View className="bg-primary-soft px-2 py-0.5 rounded-chip">
-                    <Text className="text-xs text-primary font-medium font-inter">{u.role}</Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-          ))}
-      </Card>
-    );
-  }
-
   function renderMachinesTab() {
     return (
       <Card className="mb-4">
-        <Text className="text-base font-semibold text-text font-inter mb-2">
+        <Text className="text-base font-bold text-text font-inter mb-2">
           Machine Configuration
         </Text>
         <Text className="text-sm text-text-muted font-inter mb-4">
@@ -239,8 +180,6 @@ export default function SettingsScreen() {
     switch (activeTab) {
       case "general":
         return renderGeneralTab();
-      case "users":
-        return renderUsersTab();
       case "machines":
         return renderMachinesTab();
       case "notifications":
@@ -318,14 +257,9 @@ export default function SettingsScreen() {
               {/* Tab content */}
               <View style={{ maxWidth: 600 }}>{renderActiveTab()}</View>
 
-              {/* Save button */}
+              {/* Save button (success arrives via dialog — no extra box) */}
               {(activeTab === "general" || activeTab === "notifications") && (
                 <View className="flex-row justify-end mt-2" style={{ maxWidth: 600 }}>
-                  {saveStatus === "saved" && (
-                    <View className="bg-success/10 rounded-btn px-3 py-2 mr-3 items-center justify-center">
-                      <Text className="text-sm text-success font-inter">✓ Saved</Text>
-                    </View>
-                  )}
                   <Button
                     title="Save Changes"
                     variant="primary"
@@ -383,24 +317,28 @@ export default function SettingsScreen() {
                 <View className="gap-4">
                   <Input
                     label="Factory Name"
+                    labelClassName="font-bold"
                     placeholder="SmartFactory"
                     value={general.factoryName}
                     onChangeText={(v) => dispatch(setGeneral({ factoryName: v }))}
                   />
                   <Select
                     label="Timezone"
+                    labelClassName="font-bold"
                     value={general.timezone}
                     onValueChange={(v) => dispatch(setGeneral({ timezone: v }))}
                     options={TIMEZONE_OPTIONS}
                   />
                   <Select
                     label="Language"
+                    labelClassName="font-bold"
                     value={general.language}
                     onValueChange={(v) => dispatch(setGeneral({ language: v }))}
                     options={LANGUAGE_OPTIONS}
                   />
                   <Select
                     label="Date Format"
+                    labelClassName="font-bold"
                     value={general.dateFormat}
                     onValueChange={(v) => dispatch(setGeneral({ dateFormat: v }))}
                     options={DATE_FORMAT_OPTIONS}
@@ -415,26 +353,6 @@ export default function SettingsScreen() {
                   />
                 </View>
               </Card>
-
-              {/* Users Section (ADMIN) */}
-              {isAdmin && (
-                <>
-                  <SectionHeader title="Users" />
-                  <Card className="mb-4">
-                    {usersStatus === "loading" ? (
-                      <Text className="text-sm text-text-muted font-inter">Loading users…</Text>
-                    ) : usersStatus === "error" ? (
-                      <Text className="text-sm text-danger font-inter">
-                        {usersError?.message || "Failed to load users"}
-                      </Text>
-                    ) : (
-                      <Text className="text-sm text-text-muted font-inter">
-                        {userTotal} user{userTotal === 1 ? "" : "s"} — see the Users tab on desktop for the full list.
-                      </Text>
-                    )}
-                  </Card>
-                </>
-              )}
 
               {/* Machines Section (ADMIN) */}
               {isAdmin && (
@@ -468,14 +386,12 @@ export default function SettingsScreen() {
           )}
         </ScrollView>
 
-        {/* Sticky Save button */}
+        {/* Sticky Save button (success arrives via dialog — no extra box) */}
         {!isLoading && (
-          <View className="px-0 pb-2 pt-2 bg-bg border-t border-border">
-            {saveStatus === "saved" && (
-              <View className="bg-success/10 rounded-btn px-3 py-1.5 mb-2 items-center">
-                <Text className="text-sm text-success font-inter">✓ Settings saved</Text>
-              </View>
-            )}
+          <View
+            className="px-0 pb-2 pt-2 border-t border-border"
+            style={{ backgroundColor: dark ? "#060F24" : "#F6F8FB" }}
+          >
             <Button
               title="Save Changes"
               variant="primary"
@@ -491,13 +407,16 @@ export default function SettingsScreen() {
   );
 }
 
-// ── Section header for mobile ────────────────────────────────────────────
+// ── Section header for mobile: distinct pill title ───────────────────────
 
 function SectionHeader({ title }) {
   const dark = useDark();
   return (
-    <Text className={`text-xs font-semibold uppercase tracking-wider font-inter mb-2 mt-2 ${dark ? "text-white/60" : "text-text-muted"}`}>
-      {title}
-    </Text>
+    <View className="flex-row items-center gap-2 mb-2 mt-2">
+      <View className="w-1 rounded-full bg-primary" style={{ height: 18 }} />
+      <Text className={`text-sm font-bold uppercase tracking-wider font-inter ${dark ? "text-white" : "text-text"}`}>
+        {title}
+      </Text>
+    </View>
   );
 }

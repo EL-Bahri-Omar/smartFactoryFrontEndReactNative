@@ -14,13 +14,14 @@ import { useAppSelector } from "../hooks/useAppSelector";
 import { createMachine, updateMachine, fetchMachines, fetchMachineCounts } from "../store/slices/machineSlice";
 import { fetchZones } from "../store/slices/zoneSlice";
 import { MACHINE_STATUS } from "../constants/roles";
+import { getMachineStatus } from "../lib/status";
 
 const STATUS_OPTIONS = [
-  { value: MACHINE_STATUS.RUNNING, label: "Running" },
-  { value: MACHINE_STATUS.IDLE, label: "Idle" },
-  { value: MACHINE_STATUS.MAINTENANCE, label: "Maintenance" },
-  { value: MACHINE_STATUS.FAILURE, label: "Failure" },
-  { value: MACHINE_STATUS.OFFLINE, label: "Offline" },
+  { value: MACHINE_STATUS.RUNNING, label: "Running", dot: getMachineStatus(MACHINE_STATUS.RUNNING).dotColor },
+  { value: MACHINE_STATUS.IDLE, label: "Idle", dot: getMachineStatus(MACHINE_STATUS.IDLE).dotColor },
+  { value: MACHINE_STATUS.MAINTENANCE, label: "Maintenance", dot: getMachineStatus(MACHINE_STATUS.MAINTENANCE).dotColor },
+  { value: MACHINE_STATUS.FAILURE, label: "Failure", dot: getMachineStatus(MACHINE_STATUS.FAILURE).dotColor },
+  { value: MACHINE_STATUS.OFFLINE, label: "Offline", dot: getMachineStatus(MACHINE_STATUS.OFFLINE).dotColor },
 ];
 
 export default function AddMachineModal({ visible, machine, onClose }) {

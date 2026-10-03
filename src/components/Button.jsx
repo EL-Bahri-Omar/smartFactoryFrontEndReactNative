@@ -7,22 +7,22 @@ const VARIANTS = {
   primary: {
     container: "bg-primary rounded-btn px-4 py-2.5 items-center justify-center flex-row gap-2",
     containerPressed: "opacity-80",
-    text: "text-white font-semibold text-sm font-inter",
+    text: "text-white font-bold text-sm font-inter",
   },
   outline: {
     container: "bg-transparent border border-border rounded-btn px-4 py-2.5 items-center justify-center flex-row gap-2",
     containerPressed: "bg-bg",
-    text: "text-text font-semibold text-sm font-inter",
+    text: "text-text font-bold text-sm font-inter",
   },
   ghost: {
     container: "bg-transparent rounded-btn px-4 py-2.5 items-center justify-center flex-row gap-2",
     containerPressed: "bg-bg",
-    text: "text-text-muted font-semibold text-sm font-inter",
+    text: "text-text-muted font-bold text-sm font-inter",
   },
   danger: {
     container: "bg-danger rounded-btn px-4 py-2.5 items-center justify-center flex-row gap-2",
     containerPressed: "opacity-80",
-    text: "text-white font-semibold text-sm font-inter",
+    text: "text-white font-bold text-sm font-inter",
   },
 };
 

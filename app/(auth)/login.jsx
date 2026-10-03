@@ -7,7 +7,7 @@
 // Dispatches loginThunk → authService.login → lib/axios.
 // Never calls axios directly. On success navigates to /(app)/dashboard.
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
   View,
   Text,
@@ -25,6 +25,7 @@ import { useAppSelector } from "../../src/hooks/useAppSelector";
 import { loginThunk } from "../../src/store/slices/authSlice";
 import { homeRouteFor } from "../../src/hooks/useRole";
 import Button from "../../src/components/Button";
+import EyeIcon from "../../src/components/EyeIcon";
 
 const factoryBg = require("../../assets/images/factory-bg.jpg");
 
@@ -48,6 +49,24 @@ export default function LoginScreen() {
   const [remember, setRemember] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
+
+  // Keep the focused field visible above the keyboard on small phones.
+  // measureInWindow gives screen coords; adding the current scroll offset
+  // yields the absolute content position regardless of layout nesting.
+  const scrollRef = useRef(null);
+  const fieldRefs = useRef({});
+  const scrollOffset = useRef(0);
+  const passwordRef = useRef(null);
+  function scrollToField(key) {
+    const node = fieldRefs.current[key];
+    if (!node || !node.measureInWindow) return;
+    setTimeout(() => {
+      node.measureInWindow((x, y) => {
+        const target = scrollOffset.current + y - 140;
+        scrollRef.current?.scrollTo({ y: Math.max(0, target), animated: true });
+      });
+    }, 150);
+  }
 
   const isDesktop = breakpoint === "desktop" || breakpoint === "tablet";
   const isLoading = status === "loading";
@@ -172,10 +191,12 @@ export default function LoginScreen() {
                   onSubmitEditing={handleLogin}
                   style={{ outlineStyle: "none" }}
                 />
-                <Pressable onPress={() => setShowPassword(!showPassword)} className="pl-2">
-                  <Text className="text-xs text-text-muted font-semibold font-inter">
-                    {showPassword ? "HIDE" : "SHOW"}
-                  </Text>
+                <Pressable
+                  onPress={() => setShowPassword(!showPassword)}
+                  className="pl-2"
+                  accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+                >
+                  <EyeIcon open={!showPassword} size={22} color="#64748B" />
                 </Pressable>
               </View>
             </View>
@@ -246,32 +267,34 @@ export default function LoginScreen() {
       className="flex-1"
     >
       <ScrollView
+        ref={scrollRef}
         className="flex-1 bg-sidebar"
-        contentContainerStyle={{ flexGrow: 1 }}
+        contentContainerStyle={{ flexGrow: 1, justifyContent: "center" }}
         keyboardShouldPersistTaps="handled"
+        scrollEventThrottle={16}
+        onScroll={(e) => {
+          scrollOffset.current = e.nativeEvent.contentOffset.y;
+        }}
       >
         <View
-          className="flex-1 px-6 pt-16 pb-10 justify-between"
+          className="flex-1 px-6 py-8 justify-center"
           style={{ minHeight: "100vh" }}
         >
           {/* Top: Logo + tagline */}
-          <View className="items-center pt-6">
-            <View className="w-16 h-16 rounded-xl bg-primary items-center justify-center mb-4">
+          <View className="items-center">
+            <View className="w-20 h-20 rounded-2xl bg-primary items-center justify-center mb-3">
               <Text className="text-white text-3xl font-bold">⚙</Text>
             </View>
-            <Text className="text-2xl font-bold text-white font-inter mb-1">
+            <Text className="text-2xl font-bold text-white font-inter mb-2">
               SmartFactory
             </Text>
-            <Text className="text-sm text-sidebar-text font-inter mb-4">
-              Industrial Intelligence
-            </Text>
-            <Text className="text-base text-white/70 font-inter text-center leading-6">
-              Smarter factories.{"\n"}Safer tomorrow.
+            <Text className="text-base text-white/80 font-inter text-center" numberOfLines={1}>
+              Smarter factories. Safer tomorrow.
             </Text>
           </View>
 
           {/* Form */}
-          <View className="mt-8 mb-4">
+          <View className="mt-6 mb-4">
             {successMessage && !errorMessage && (
               <View className="rounded-btn px-3 py-2.5 mb-4" style={{ backgroundColor: "rgba(22,163,74,0.15)", borderWidth: 1, borderColor: "rgba(22,163,74,0.35)" }}>
                 <Text className="text-sm text-white font-inter text-center">{successMessage}</Text>
@@ -298,7 +321,12 @@ export default function LoginScreen() {
             )}
 
             {/* Email */}
-            <View className="mb-3">
+            <View
+              className="mb-3"
+              ref={(r) => {
+                fieldRefs.current.email = r;
+              }}
+            >
               <Text className="text-sm font-medium text-white/90 font-inter mb-1.5">
                 Email
               </Text>
@@ -320,9 +348,13 @@ export default function LoginScreen() {
                   onChangeText={setEmail}
                   keyboardType="email-address"
                   autoCapitalize="none"
+                  autoCorrect={false}
                   autoComplete="email"
                   editable={!isLoading}
-                  onFocus={() => setEmailFocused(true)}
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => passwordRef.current?.focus()}
+                  onFocus={() => { setEmailFocused(true); scrollToField("email"); }}
                   onBlur={() => setEmailFocused(false)}
                   style={{ outlineStyle: "none" }}
                 />
@@ -330,7 +362,12 @@ export default function LoginScreen() {
             </View>
 
             {/* Password */}
-            <View className="mb-4">
+            <View
+              className="mb-4"
+              ref={(r) => {
+                fieldRefs.current.password = r;
+              }}
+            >
               <Text className="text-sm font-medium text-white/90 font-inter mb-1.5">
                 Password
               </Text>
@@ -345,14 +382,17 @@ export default function LoginScreen() {
                 }}
               >
                 <TextInput
+                  ref={passwordRef}
                   className="flex-1 text-sm text-white font-inter"
                   placeholder="••••••••"
                   placeholderTextColor="rgba(255,255,255,0.35)"
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry={!showPassword}
+                  autoCorrect={false}
                   editable={!isLoading}
-                  onFocus={() => setPasswordFocused(true)}
+                  returnKeyType="go"
+                  onFocus={() => { setPasswordFocused(true); scrollToField("password"); }}
                   onBlur={() => setPasswordFocused(false)}
                   onSubmitEditing={handleLogin}
                   style={{ outlineStyle: "none" }}
@@ -360,10 +400,9 @@ export default function LoginScreen() {
                 <Pressable
                   onPress={() => setShowPassword(!showPassword)}
                   className="pl-2"
+                  accessibilityLabel={showPassword ? "Hide password" : "Show password"}
                 >
-                  <Text className="text-xs text-white/50 font-semibold font-inter">
-                    {showPassword ? "HIDE" : "SHOW"}
-                  </Text>
+                  <EyeIcon open={!showPassword} size={22} color="rgba(255,255,255,0.65)" />
                 </Pressable>
               </View>
             </View>
@@ -395,14 +434,14 @@ export default function LoginScreen() {
           </View>
 
           {/* Bottom */}
-          <View>
+          <View className="mt-2">
             <Button
               title="Sign In"
               variant="primary"
               onPress={handleLogin}
               loading={isLoading}
               disabled={!email.trim() || !password.trim()}
-              className="w-full mb-5"
+              className="w-full mb-4"
               size="lg"
             />
             <Text className="text-sm text-sidebar-text font-inter text-center">
