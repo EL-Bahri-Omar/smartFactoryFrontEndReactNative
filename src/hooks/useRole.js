@@ -17,6 +17,7 @@ export const ACCESS = Object.freeze({
   machines: SUPERVISORS,
   maintenance: SUPERVISORS,
   users: [ROLES.ADMIN],
+  groups: [ROLES.ADMIN],
 });
 
 export function homeRouteFor(role) {

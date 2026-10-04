@@ -6,6 +6,7 @@ import { View, Text, Pressable, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { usePathname, useRouter } from "expo-router";
 import { useRole } from "../hooks/useRole";
+import { ROLES } from "../constants/roles";
 import LogoMark from "./LogoMark";
 import Avatar from "./Avatar";
 import Divider from "./Divider";
@@ -15,6 +16,8 @@ const NAV_ITEMS = [
   { label: "Machines", icon: "⚙️", path: "/(app)/machines", access: "machines" },
   { label: "Map & Zones", icon: "🗺️", path: "/(app)/map" },
   { label: "Users", icon: "👥", path: "/(app)/users", access: "users" },
+  { label: "Groups", icon: "👪", path: "/(app)/groups", access: "groups" },
+  { label: "My Group", icon: "👤", path: "/(app)/my-group", roles: [ROLES.OPERATOR, ROLES.RESPONSABLE_INDUSTRIEL] },
   { label: "Alerts", icon: "🔔", path: "/(app)/alerts" },
   { label: "Maintenance", icon: "🔧", path: "/(app)/maintenance", access: "maintenance" },
   { label: "History", icon: "📜", path: "/(app)/history" },
@@ -26,8 +29,12 @@ const NAV_ITEMS = [
 export default function Sidebar({ user, onNavigate }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { canAccess } = useRole();
-  const visibleItems = NAV_ITEMS.filter((item) => !item.access || canAccess(item.access));
+  const { canAccess, role } = useRole();
+  const visibleItems = NAV_ITEMS.filter(
+    (item) =>
+      (!item.access || canAccess(item.access)) &&
+      (!item.roles || (role && item.roles.includes(role)))
+  );
   // In the mobile/tablet drawer the sidebar starts at the very top of the
   // screen — pad below the status bar (0 on desktop web).
   const insets = useSafeAreaInsets();

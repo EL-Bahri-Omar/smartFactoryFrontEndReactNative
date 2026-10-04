@@ -75,7 +75,7 @@ export default function UserModal({ visible, user, onClose }) {
           status: "ACTIVE",
         })).unwrap();
       }
-      dispatch(fetchUsers({ page: 0, size: 20 }));
+      dispatch(fetchUsers({ page: 0, size: 100 }));
       onClose();
     } catch (e) {
       // Backend codes: USER_ALREADY_EXISTS (409), VALIDATION_ERROR (400), FORBIDDEN.

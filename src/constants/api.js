@@ -35,6 +35,13 @@ export const ENDPOINTS = Object.freeze({
   ZONE_BY_ID: "/api/zones/:id", // CONFIRMED — GET one; PUT update (ADMIN); DELETE 204 (ADMIN)
   ZONE_MACHINES: "/api/zones/:id/machines", // CONFIRMED — machines in a zone
 
+  // --- Groups (CONFIRMED — GroupController) ---
+  GROUPS: "/api/groups", // CONFIRMED — GET paginated (?search=&page=&size=&sort=, any role); POST (ADMIN) { name, operators?, supervisorId? }
+  GROUP_BY_ID: "/api/groups/:id", // CONFIRMED — GET one; PUT (ADMIN); DELETE 204 (ADMIN)
+  GROUP_OPERATORS: "/api/groups/:groupId/operators", // CONFIRMED — GET members (any role)
+  GROUP_OPERATOR: "/api/groups/:groupId/operators/:userId", // CONFIRMED — POST add / DELETE remove (ADMIN). Backend validates OPERATOR role, dedupes, clears supervisor if removed
+  GROUP_SUPERVISOR: "/api/groups/:groupId/supervisor", // CONFIRMED — GET supervisor (any role, 204 if none); PUT { supervisorId } (ADMIN, OPERATOR or RESPONSABLE_INDUSTRIEL)
+
   // --- Sensors ---
   SENSORS: "/api/sensors", // ASSUMED — confirm with backend
   SENSOR_BY_ID: "/api/sensors/:id", // ASSUMED — confirm with backend

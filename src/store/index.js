@@ -22,6 +22,7 @@ import dashboardReducer from "./slices/dashboardSlice";
 import analyticsReducer from "./slices/analyticsSlice";
 import reportReducer from "./slices/reportSlice";
 import userReducer from "./slices/userSlice";
+import groupReducer from "./slices/groupSlice";
 import settingsReducer from "./slices/settingsSlice";
 import aiReducer from "./slices/aiSlice";
 import liveReducer from "./slices/liveSlice";
@@ -44,6 +45,7 @@ export const store = configureStore({
     analytics: analyticsReducer,
     report: reportReducer,
     user: userReducer,
+    group: groupReducer,
     settings: settingsReducer,
     ai: aiReducer,
     live: liveReducer,

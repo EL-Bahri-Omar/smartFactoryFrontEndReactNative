@@ -18,6 +18,7 @@ const FULL_TABS = [
 
 const LIMITED_TABS = [
   { label: "Map", icon: "🗺️", path: "/(app)/map" },
+  { label: "Group", icon: "👤", path: "/(app)/my-group", roles: ["OPERATOR", "RESPONSABLE_INDUSTRIEL"] },
   { label: "Alerts", icon: "🔔", path: "/(app)/alerts" },
   { label: "More", icon: "☰", path: "/(app)/settings" },
 ];
@@ -26,8 +27,9 @@ export default function BottomTabs() {
   const pathname = usePathname();
   const router = useRouter();
   const dark = useDark();
-  const { canAccess } = useRole();
-  const tabs = canAccess("dashboard") ? FULL_TABS : LIMITED_TABS;
+  const { canAccess, role } = useRole();
+  const base = canAccess("dashboard") ? FULL_TABS : LIMITED_TABS;
+  const tabs = base.filter((t) => !t.roles || (role && t.roles.includes(role)));
   // Lift labels above the phone gesture / navigation bar (0 on web).
   const insets = useSafeAreaInsets();
 
