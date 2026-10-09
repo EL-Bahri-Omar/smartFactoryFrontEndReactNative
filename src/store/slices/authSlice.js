@@ -14,11 +14,15 @@ export const loginThunk = createAsyncThunk(
   "auth/login",
   async (credentials, { rejectWithValue }) => {
     try {
-      const data = await authService.login(credentials);
+      const { remember = false, ...loginBody } = credentials || {};
+      const data = await authService.login(loginBody);
       // Backend returns { token, user } — single access token, no refresh.
-      await storage.setTokens({ accessToken: data.token });
-      if (data.user) await storage.setUser(data.user);
-      return data;
+      // Persist only when remember === true; otherwise memory-only session.
+      await storage.setTokens({ accessToken: data.token, remember });
+      if (data.user) await storage.setUser(data.user, { remember });
+      if (remember && loginBody.email) await storage.setRememberedEmail(loginBody.email.trim());
+      else if (!remember) await storage.clearRememberedEmail();
+      return { ...data, remember };
     } catch (error) {
       return rejectWithValue(error);
     }
@@ -113,9 +117,12 @@ export const meThunk = createAsyncThunk(
   "auth/me",
   async (_, { rejectWithValue }) => {
     try {
+      const token = await storage.getAccessToken();
       const data = await authService.me();
+      // Re-persist user respecting the stored remember flag; hydrate the
+      // token into Redux state so reloads behave like fresh logins.
       await storage.setUser(data);
-      return data;
+      return { user: data, token: token || null };
     } catch (error) {
       return rejectWithValue(error);
     }
@@ -228,7 +235,10 @@ const authSlice = createSlice({
       })
       .addCase(meThunk.fulfilled, (state, action) => {
         state.status = "authenticated";
-        state.user = action.payload;
+        // Supports both shapes: { user, token } (new) and plain user (legacy).
+        const payload = action.payload || {};
+        state.user = payload.user || payload;
+        if (payload.token) state.accessToken = payload.token;
         state.error = null;
       })
       .addCase(meThunk.rejected, (state, action) => {

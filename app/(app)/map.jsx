@@ -19,8 +19,11 @@ import { useBreakpoint } from "../../src/hooks/useBreakpoint";
 import { useDark } from "../../src/hooks/useDark";
 import { useAppDispatch } from "../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../src/hooks/useAppSelector";
+import { useRole } from "../../src/hooks/useRole";
 import { fetchZones, fetchZoneMachines } from "../../src/store/slices/zoneSlice";
+import { updateMachine } from "../../src/store/slices/machineSlice";
 import { fetchRecentEvents } from "../../src/store/slices/eventSlice";
+import { useDialog } from "../../src/components/dialog/DialogContext";
 import { useLiveTopic } from "../../src/hooks/useLiveTopic";
 import { relativeTime } from "../../src/lib/time";
 
@@ -43,8 +46,10 @@ const EVENT_DOTS = {
 
 export default function MapScreen() {
   const dispatch = useAppDispatch();
+  const dialog = useDialog();
   const breakpoint = useBreakpoint();
   const dark = useDark();
+  const { isAdmin } = useRole();
   const isDesktop = breakpoint === "desktop";
 
   const { list: zones, machinesByZone, status: zoneStatus, error: zoneError } =
@@ -52,6 +57,8 @@ export default function MapScreen() {
   const { list: events, status: eventStatus } = useAppSelector((s) => s.event);
 
   const [selectedZone, setSelectedZone] = useState(null);
+  const [selectedMachine, setSelectedMachine] = useState(null); // { machine, fromSlot } | null
+  const [moving, setMoving] = useState(false);
 
   // Subscribe to live zone updates
   useLiveTopic("/topic/zones");
@@ -85,7 +92,62 @@ export default function MapScreen() {
   slotZones.forEach((z) => {
     slotMachines[z.slot] = machinesByZone[z.id] || [];
   });
-  const mapZones = slotZones.map((z) => ({ ...z, id: z.slot }));
+  // Keep the real Mongo id in realId — the map slot ("A".."D") is only layout.
+  const mapZones = slotZones.map((z) => ({ ...z, id: z.slot, realId: z.id }));
+  const realZoneBySlot = {};
+  slotZones.forEach((z) => {
+    realZoneBySlot[z.slot] = z;
+  });
+
+  // ── MOVE MACHINE BETWEEN ZONES (PUT /api/machines/:id, ADMIN) ─────────
+  // Drag & drop on web, tap-to-move on mobile. Always confirmed via dialog.
+  async function handleMoveMachine(machine, fromSlot, toSlot) {
+    if (!machine || !fromSlot || !toSlot || fromSlot === toSlot) return;
+    if (!isAdmin) {
+      await dialog.alert("Not allowed", "Only administrators can move machines between zones.");
+      return;
+    }
+    const fromZone = realZoneBySlot[fromSlot];
+    const toZone = realZoneBySlot[toSlot];
+    const code = machine.code || machine.machineCode || machine.id;
+    const ok = await dialog.confirm(
+      "Move machine",
+      `Move ${code} from ${fromZone?.name || fromSlot} to ${toZone?.name || toSlot}?`,
+      { confirmText: moving ? "Moving…" : "Move" }
+    );
+    if (!ok) return;
+    // PUT requires the full object (name, code, type, status) + new zoneId.
+    if (!machine.name || !machine.code || !machine.type || !machine.status || !toZone?.id) {
+      await dialog.alert("Cannot move", "Machine data or target zone is incomplete.");
+      return;
+    }
+    setMoving(true);
+    try {
+      await dispatch(
+        updateMachine({
+          id: machine.id,
+          body: {
+            name: machine.name,
+            code: machine.code,
+            type: machine.type,
+            zoneId: toZone.id,
+            status: machine.status,
+            description: machine.description ?? null,
+            caracteristiques: machine.caracteristiques || [],
+          },
+        })
+      ).unwrap();
+      setSelectedMachine(null);
+      // Refresh counts + both affected zones.
+      dispatch(fetchZones());
+      dispatch(fetchZoneMachines(fromZone.id));
+      dispatch(fetchZoneMachines(toZone.id));
+    } catch (e) {
+      await dialog.alert("Move failed", e?.message || "Could not move the machine.");
+    } finally {
+      setMoving(false);
+    }
+  }
 
   // ── ZONE DETAILS ────────────────────────────────────────────────────
 
@@ -253,12 +315,23 @@ export default function MapScreen() {
             <View className="flex-row gap-6">
               {/* Left: Map */}
               <View style={{ flex: 0.65 }}>
+                {isAdmin && slotZones.length > 1 && (
+                  <Text className={`text-xs font-inter font-bold mb-2 ${dark ? "text-white/80" : "text-text-muted"}`}>
+                    {selectedMachine
+                      ? `Moving ${selectedMachine.machine?.code || ""} — drop it on a zone, or click the machine again to cancel.`
+                      : " ** Hold-click a machine dot and drag it to another zone to move it."}
+                  </Text>
+                )}
                 <FactoryMap
                   variant="full"
                   zones={mapZones}
                   machinesByZone={slotMachines}
                   selectedZoneId={selectedZone}
                   onZonePress={(id) => setSelectedZone(selectedZone === id ? null : id)}
+                  movable={isAdmin && !moving}
+                  selectedMachine={selectedMachine}
+                  onSelectMachine={setSelectedMachine}
+                  onMoveMachine={handleMoveMachine}
                 />
               </View>
 
@@ -298,12 +371,23 @@ export default function MapScreen() {
           </View>
         ) : (
           <>
+            {isAdmin && slotZones.length > 1 && (
+              <Text className={`text-xs font-inter mb-2 ${dark ? "text-white/60" : "text-text-muted"}`}>
+                {selectedMachine
+                  ? `Moving ${selectedMachine.machine?.code || ""} — tap a zone to move it here.`
+                  : "Tap a machine dot, then tap another zone to move it (ADMIN)."}
+              </Text>
+            )}
             <FactoryMap
               variant="full"
               zones={mapZones}
               machinesByZone={slotMachines}
               selectedZoneId={selectedZone}
               onZonePress={(id) => setSelectedZone(selectedZone === id ? null : id)}
+              movable={isAdmin && !moving}
+              selectedMachine={selectedMachine}
+              onSelectMachine={setSelectedMachine}
+              onMoveMachine={handleMoveMachine}
             />
             <View className="mt-4">
               <ZoneDetailsList />

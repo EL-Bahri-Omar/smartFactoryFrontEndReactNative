@@ -4,20 +4,14 @@
 //
 // The Sprint 1 backend is a stateless JWT API: login returns { token, user },
 // the token travels in the Authorization: Bearer header, there is NO refresh
-// endpoint and NO httpOnly cookie. So the access token is persisted on both
-// platforms and rehydrated on launch via GET /api/auth/me:
+// endpoint and NO httpOnly cookie.
 //
-// ┌─────────────────────────────────────────────────────────────────────────┐
-/// │ NATIVE (iOS / Android)                                                │
-// │   • accessToken → AsyncStorage ("@sf_access_token")                    │
-// │   • user JSON   → AsyncStorage ("@sf_user")                            │
-// │                                                                       │
-// │ WEB (browser)                                                         │
-// │   • accessToken → localStorage ("@sf_access_token")                   │
-// │   • user JSON   → localStorage ("@sf_user")                           │
-// │   • On reload the token is read from localStorage and the user is     │
-// │     rehydrated via GET /api/auth/me (see store/initAuth.js).          │
-// └─────────────────────────────────────────────────────────────────────────┘
+// Remember-me model:
+// - Memory (module-level) always holds the current session. Lost on reload.
+// - Persistent storage (AsyncStorage native / localStorage web) is written
+//   ONLY when remember === true. bootstrapAuth rehydrates via GET /me only
+//   for remembered sessions — unchecked = session ends on app close.
+// - Remembered email is kept separately so the login field can be prefilled.
 //
 // Every export is async to keep a uniform signature across platforms.
 
@@ -26,7 +20,13 @@ import { Platform } from "react-native";
 const KEYS = {
   ACCESS_TOKEN: "@sf_access_token",
   USER: "@sf_user",
+  REMEMBER: "@sf_remember",
+  REMEMBER_EMAIL: "@sf_remember_email",
 };
+
+// ── In-memory session (lost on reload — the non-remembered case) ──────
+let memoryToken = null;
+let memoryUser = null;
 
 // ── Lazy AsyncStorage import (native only) ──────────────────────────────
 let AsyncStorage = null;
@@ -68,72 +68,118 @@ function webRemove(key) {
   }
 }
 
-// ── Public API ──────────────────────────────────────────────────────────
-
-/** Store the access token. */
-export async function setTokens({ accessToken }) {
-  if (Platform.OS === "web") {
-    if (accessToken) webSet(KEYS.ACCESS_TOKEN, accessToken);
-    return;
-  }
+async function nativeGet(key) {
   const storage = await getStorage();
-  if (accessToken) await storage.setItem(KEYS.ACCESS_TOKEN, accessToken);
+  return storage.getItem(key);
 }
 
-/** Return the access token (string | null). */
+async function nativeSet(key, value) {
+  const storage = await getStorage();
+  await storage.setItem(key, value);
+}
+
+async function nativeRemove(key) {
+  const storage = await getStorage();
+  await storage.removeItem(key);
+}
+
+// ── Remember flag + remembered email ────────────────────────────────────
+
+export async function setRememberMe(remember) {
+  if (Platform.OS === "web") {
+    if (remember) webSet(KEYS.REMEMBER, "1");
+    else webRemove(KEYS.REMEMBER);
+    return;
+  }
+  if (remember) await nativeSet(KEYS.REMEMBER, "1");
+  else await nativeRemove(KEYS.REMEMBER);
+}
+
+export async function getRememberMe() {
+  if (Platform.OS === "web") return webGet(KEYS.REMEMBER) === "1";
+  return (await nativeGet(KEYS.REMEMBER)) === "1";
+}
+
+export async function setRememberedEmail(email) {
+  if (!email) return;
+  if (Platform.OS === "web") webSet(KEYS.REMEMBER_EMAIL, email);
+  else await nativeSet(KEYS.REMEMBER_EMAIL, email);
+}
+
+export async function getRememberedEmail() {
+  if (Platform.OS === "web") return webGet(KEYS.REMEMBER_EMAIL);
+  return nativeGet(KEYS.REMEMBER_EMAIL);
+}
+
+export async function clearRememberedEmail() {
+  if (Platform.OS === "web") webRemove(KEYS.REMEMBER_EMAIL);
+  else await nativeRemove(KEYS.REMEMBER_EMAIL);
+}
+
+// ── Tokens ──────────────────────────────────────────────────────────────
+
+/** Store the access token. Pass { remember: true } to survive app restart. */
+export async function setTokens({ accessToken, remember = false }) {
+  memoryToken = accessToken ?? null;
+  await setRememberMe(remember);
+  if (Platform.OS === "web") {
+    if (remember && accessToken) webSet(KEYS.ACCESS_TOKEN, accessToken);
+    else webRemove(KEYS.ACCESS_TOKEN);
+    return;
+  }
+  if (remember && accessToken) await nativeSet(KEYS.ACCESS_TOKEN, accessToken);
+  else await nativeRemove(KEYS.ACCESS_TOKEN);
+}
+
+/** Return the access token (memory first, then persistent). */
 export async function getAccessToken() {
-  if (Platform.OS === "web") return webGet(KEYS.ACCESS_TOKEN);
-  const storage = await getStorage();
-  return storage.getItem(KEYS.ACCESS_TOKEN);
+  if (memoryToken) return memoryToken;
+  const t = Platform.OS === "web" ? webGet(KEYS.ACCESS_TOKEN) : await nativeGet(KEYS.ACCESS_TOKEN);
+  if (t) memoryToken = t;
+  return t;
 }
 
-/** Clear the access token. */
+/** Clear the access token (memory + persistent). Keeps the remember flag. */
 export async function clearTokens() {
-  if (Platform.OS === "web") {
-    webRemove(KEYS.ACCESS_TOKEN);
-    return;
-  }
-  const storage = await getStorage();
-  await storage.removeItem(KEYS.ACCESS_TOKEN);
+  memoryToken = null;
+  if (Platform.OS === "web") webRemove(KEYS.ACCESS_TOKEN);
+  else await nativeRemove(KEYS.ACCESS_TOKEN);
 }
 
-/** Persist user metadata. */
-export async function setUser(user) {
+// ── User ────────────────────────────────────────────────────────────────
+
+/** Persist user metadata. Respects the remember flag unless overridden. */
+export async function setUser(user, opts = {}) {
+  memoryUser = user ?? null;
+  let remember = opts.remember;
+  if (remember === undefined) remember = await getRememberMe();
+  if (!user) return;
   if (Platform.OS === "web") {
-    webSet(KEYS.USER, JSON.stringify(user));
+    if (remember) webSet(KEYS.USER, JSON.stringify(user));
+    else webRemove(KEYS.USER);
     return;
   }
-  const storage = await getStorage();
-  await storage.setItem(KEYS.USER, JSON.stringify(user));
+  if (remember) await nativeSet(KEYS.USER, JSON.stringify(user));
+  else await nativeRemove(KEYS.USER);
 }
 
-/** Retrieve user metadata (parsed object | null). */
+/** Retrieve user metadata (memory first, then persistent). */
 export async function getUser() {
-  if (Platform.OS === "web") {
-    const raw = webGet(KEYS.USER);
-    if (!raw) return null;
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return null;
-    }
-  }
-  const storage = await getStorage();
-  const raw = await storage.getItem(KEYS.USER);
+  if (memoryUser) return memoryUser;
+  const raw = Platform.OS === "web" ? webGet(KEYS.USER) : await nativeGet(KEYS.USER);
   if (!raw) return null;
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    memoryUser = parsed;
+    return parsed;
   } catch {
     return null;
   }
 }
 
-/** Clear user metadata. */
+/** Clear user metadata (memory + persistent). */
 export async function clearUser() {
-  if (Platform.OS === "web") {
-    webRemove(KEYS.USER);
-    return;
-  }
-  const storage = await getStorage();
-  await storage.removeItem(KEYS.USER);
+  memoryUser = null;
+  if (Platform.OS === "web") webRemove(KEYS.USER);
+  else await nativeRemove(KEYS.USER);
 }

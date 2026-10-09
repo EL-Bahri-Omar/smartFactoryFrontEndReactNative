@@ -7,7 +7,7 @@
 // Dispatches loginThunk → authService.login → lib/axios.
 // Never calls axios directly. On success navigates to /(app)/dashboard.
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -24,6 +24,7 @@ import { useAppDispatch } from "../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../src/hooks/useAppSelector";
 import { loginThunk } from "../../src/store/slices/authSlice";
 import { homeRouteFor } from "../../src/hooks/useRole";
+import { getRememberedEmail, getRememberMe } from "../../src/lib/storage";
 import Button from "../../src/components/Button";
 import EyeIcon from "../../src/components/EyeIcon";
 
@@ -49,6 +50,22 @@ export default function LoginScreen() {
   const [remember, setRemember] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
+
+  // Prefill email + checkbox from the last remembered session.
+  useEffect(() => {
+    (async () => {
+      try {
+        const [savedEmail, savedRemember] = await Promise.all([
+          getRememberedEmail(),
+          getRememberMe(),
+        ]);
+        if (savedEmail) setEmail(savedEmail);
+        if (savedRemember) setRemember(true);
+      } catch {
+        // Ignore — fields stay empty.
+      }
+    })();
+  }, []);
 
   // Keep the focused field visible above the keyboard on small phones.
   // measureInWindow gives screen coords; adding the current scroll offset
@@ -80,7 +97,7 @@ export default function LoginScreen() {
   async function handleLogin() {
     if (!email.trim() || !password.trim()) return;
     try {
-      const data = await dispatch(loginThunk({ email: email.trim(), password })).unwrap();
+      const data = await dispatch(loginThunk({ email: email.trim(), password, remember })).unwrap();
       router.replace(homeRouteFor(data?.user?.role));
     } catch {
       // Error handled via slice state
