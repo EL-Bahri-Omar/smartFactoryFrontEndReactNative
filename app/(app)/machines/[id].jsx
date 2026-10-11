@@ -9,7 +9,7 @@
 // Chart merges historical readings with live points.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, ScrollView, Pressable, Share } from "react-native";
+import { View, Text, ScrollView, Pressable, Share, Modal, useWindowDimensions } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import AppShell from "../../../src/components/AppShell";
 import Card from "../../../src/components/Card";
@@ -25,13 +25,20 @@ import AddMachineModal from "../../../src/components/AddMachineModal";
 import LineChart from "../../../src/components/charts/LineChart";
 import ChartLegend from "../../../src/components/charts/ChartLegend";
 import { useBreakpoint } from "../../../src/hooks/useBreakpoint";
+import { useDark } from "../../../src/hooks/useDark";
 import { useRole } from "../../../src/hooks/useRole";
 import { useDialog } from "../../../src/components/dialog/DialogContext";
 import { useAppDispatch } from "../../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../../src/hooks/useAppSelector";
 import { useLiveTopic } from "../../../src/hooks/useLiveTopic";
-import { fetchMachineById, deleteMachine } from "../../../src/store/slices/machineSlice";
+import { fetchMachineById, deleteMachine, updateMachine } from "../../../src/store/slices/machineSlice";
 import { fetchReadings } from "../../../src/store/slices/readingSlice";
+import { fetchMachineSensors } from "../../../src/store/slices/sensorSlice";
+import { getSensorStatus } from "../../../src/lib/status";
+import { relativeTime } from "../../../src/lib/time";
+import { getThresholds, withThresholds, validateThresholds } from "../../../src/lib/thresholds";
+import { SENSOR_TYPE } from "../../../src/constants/roles";
+import Input from "../../../src/components/Input";
 import {
   SERIES_META,
   mergeReadings,
@@ -53,6 +60,7 @@ const MOBILE_TABS = [
   { key: "overview", label: "Overview" },
   { key: "live", label: "Sensor Data" },
   { key: "history", label: "History" },
+  { key: "settings", label: "Settings" },
 ];
 
 export default function MachineDetailScreen() {
@@ -64,6 +72,7 @@ export default function MachineDetailScreen() {
   const { isAdmin } = useRole();
   const { canAccess, homeRoute } = useRole();
   const isDesktop = useBreakpoint() === "desktop";
+  const dark = useDark();
 
   const {
     current,
@@ -73,23 +82,87 @@ export default function MachineDetailScreen() {
   } = useAppSelector((s) => s.machine);
   const { list: readings, status: readingStatus, error: readingError } =
     useAppSelector((s) => s.reading);
+  const { list: sensors, status: sensorStatus } = useAppSelector((s) => s.sensor);
   const liveConnected = useAppSelector((s) => s.live.connected);
 
   const [tab, setTab] = useState("overview");
   const [chartRange, setChartRange] = useState("6h");
   const [livePoints, setLivePoints] = useState([]);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState(null); // { top, right } screen coords for the dropdown
   const [editOpen, setEditOpen] = useState(false);
   const lastLiveRef = useRef(null);
+  const menuBtnRef = useRef(null);
+  const { width: winWidth } = useWindowDimensions();
 
-  const destination = machineId ? `/topic/machines/${machineId}/readings` : null;
-  const liveMessage = useLiveTopic(destination, { enabled: Boolean(machineId) });
+  // Open the ⋮ menu under its button (measured on screen so the Modal can
+  // place it exactly). Falls back to a fixed top-right spot if measure fails.
+  function toggleMenu() {
+    if (menuOpen) {
+      setMenuOpen(false);
+      return;
+    }
+    const node = menuBtnRef.current;
+    if (node && node.measureInWindow) {
+      node.measureInWindow((x, y, w, h) => {
+        setMenuPos({ top: y + h + 6, right: Math.max(8, winWidth - (x + w)) });
+        setMenuOpen(true);
+      });
+    } else {
+      setMenuPos(null);
+      setMenuOpen(true);
+    }
+  }
+
+  // Threshold (seuil) editor state — initialized from the machine once loaded
+  // (effect placed after the `machine` const below).
+  const [thr, setThr] = useState(null);
+  const [thrError, setThrError] = useState(null);
+  const [thrSaving, setThrSaving] = useState(false);
+
+  const machineFromList = list.find(
+    (m) => m.id === machineId || m.code === machineId || m.machineCode === machineId
+  );
+  const machine =
+    current && (current.id === machineId || current.code === machineId || current.machineCode === machineId)
+      ? current
+      : machineFromList;
+
+  // The backend broadcasts every reading to BOTH the Mongo-id topic and the
+  // code topic. Prefer the code topic (stable, human-readable) once loaded.
+  const destination = machine?.code
+    ? `/topic/machines/${machine.code}/readings`
+    : machineId
+      ? `/topic/machines/${machineId}/readings`
+      : null;
+  const liveMessage = useLiveTopic(destination, { enabled: Boolean(destination) });
+  // Sensor ONLINE/OFFLINE flips arrive here (US19) — refresh the chips.
+  const sensorTopic = machine?.code ? `/topic/machines/${machine.code}/sensors` : null;
+  const sensorLiveMessage = useLiveTopic(sensorTopic, { enabled: Boolean(sensorTopic) });
 
   useEffect(() => {
     if (!machineId) return;
     dispatch(fetchMachineById(machineId));
     dispatch(fetchReadings({ machineId, range: chartRange }));
   }, [dispatch, machineId, chartRange]);
+
+  // Sensors resolve by Mongo id only — wait until the machine is loaded.
+  useEffect(() => {
+    if (machine?.id) dispatch(fetchMachineSensors(machine.id));
+  }, [dispatch, machine?.id]);
+
+  // Threshold editor starts from the machine's stored seuils (or defaults).
+  useEffect(() => {
+    if (machine?.id) {
+      setThr(getThresholds(machine).values);
+      setThrError(null);
+    }
+  }, [machine?.id]);
+
+  // A sensor status push means something flipped — re-read the list.
+  useEffect(() => {
+    if (sensorLiveMessage && machine?.id) dispatch(fetchMachineSensors(machine.id));
+  }, [dispatch, sensorLiveMessage, machine?.id]);
 
   useEffect(() => {
     setLivePoints([]);
@@ -102,14 +175,6 @@ export default function MachineDetailScreen() {
     lastLiveRef.current = liveMessage;
     setLivePoints((prev) => [...prev, ...incomingToList(liveMessage)]);
   }, [dispatch, destination, liveMessage]);
-
-  const machineFromList = list.find(
-    (m) => m.id === machineId || m.code === machineId || m.machineCode === machineId
-  );
-  const machine =
-    current && (current.id === machineId || current.code === machineId || current.machineCode === machineId)
-      ? current
-      : machineFromList;
 
   const code = machine?.code || machine?.machineCode || machine?.id || machineId || "—";
   const typeLabel = machine?.type || machine?.name || "Machine";
@@ -202,7 +267,97 @@ export default function MachineDetailScreen() {
     }
   }
 
+  // Save per-machine seuils into caracteristiques (PUT /machines/:id, ADMIN).
+  // Stored in the database immediately; the backend enforces them once the
+  // coworker switches checkThresholdsAndAlert to read seuil entries.
+  async function handleSaveThresholds() {
+    if (!machine || !thr) return;
+    const validationError = validateThresholds(thr);
+    if (validationError) {
+      setThrError(validationError);
+      return;
+    }
+    setThrError(null);
+    setThrSaving(true);
+    try {
+      await dispatch(
+        updateMachine({
+          id: machine.id,
+          body: {
+            name: machine.name,
+            code: machine.code,
+            type: machine.type,
+            zoneId: machine.zoneId || null,
+            status: machine.status,
+            description: machine.description ?? null,
+            caracteristiques: withThresholds(machine, thr),
+          },
+        })
+      ).unwrap();
+      await dispatch(fetchMachineById(machine.id));
+      dialog.alert("Thresholds saved", `Alert limits for ${code} are stored in the database.`, "success");
+    } catch (e) {
+      setThrError(e?.message || "Failed to save thresholds.");
+    } finally {
+      setThrSaving(false);
+    }
+  }
+
   function OverviewBody() {
+    const sensorByType = {};
+    (sensors || []).forEach((s) => {
+      if (s?.type) sensorByType[s.type] = s;
+    });
+
+    function SensorChips() {
+      if (sensorStatus === "loading" && sensors.length === 0) {
+        return (
+          <Card className="mb-4">
+            <Skeleton width="40%" height={16} className="mb-3" />
+            <Skeleton width="100%" height={44} />
+          </Card>
+        );
+      }
+      if (sensors.length === 0) {
+        return (
+          <Card className="mb-4">
+            <EmptyState
+              title="No sensors yet"
+              message="Sensors provision automatically once this machine publishes its first reading."
+            />
+          </Card>
+        );
+      }
+      return (
+        <Card className="mb-4">
+          <Text className={`text-base font-bold font-inter mb-1 ${dark ? "text-white" : "text-text"}`}>Sensors</Text>
+          <Text className={`text-xs font-inter mb-3 ${dark ? "text-white/60" : "text-text-muted"}`}>
+            Live ONLINE / OFFLINE state from the backend (US19).
+          </Text>
+          <View className={`${isDesktop ? "flex-row gap-2" : "gap-2"}`}>
+            {SERIES_META.map((meta) => {
+              const s = sensorByType[meta.id];
+              const st = getSensorStatus(s?.status);
+              return (
+                <View
+                  key={meta.id}
+                  className={`flex-row items-center gap-2 px-3 py-2 rounded-btn border ${dark ? "border-white/10 bg-white/5" : "border-border bg-bg"} ${isDesktop ? "flex-1" : ""}`}
+                >
+                  <View className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: st.dotColor }} />
+                  <View className="flex-1">
+                    <Text className={`text-sm font-bold font-inter ${dark ? "text-white" : "text-text"}`}>{meta.label}</Text>
+                    <Text className={`text-[11px] font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>
+                      {s ? `${st.label} · ${s.unit || meta.unit} · seen ${s.lastSeen ? relativeTime(s.lastSeen) : "—"}` : "Not provisioned yet"}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </Card>
+      );
+    }
+
     return (
       <View>
         <View className={`mb-4 ${isDesktop ? "flex-row gap-3" : ""}`}>
@@ -250,10 +405,12 @@ export default function MachineDetailScreen() {
           )}
         </View>
 
+        <SensorChips />
+
         <Card>
           <View className={`${isDesktop ? "flex-row items-center justify-between mb-3" : "mb-3"}`}>
             <View className="flex-row items-center gap-2 mb-2">
-              <Text className="text-base font-bold text-text font-inter">
+              <Text className={`text-base font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
                 Live Sensor Data
               </Text>
               {!liveConnected && (
@@ -331,6 +488,98 @@ export default function MachineDetailScreen() {
     );
   }
 
+  function SettingsBody() {
+    if (!machine) {
+      return (
+        <Card>
+          <Skeleton width="60%" height={16} />
+        </Card>
+      );
+    }
+    const { custom } = getThresholds(machine);
+    const units = {
+      [SENSOR_TYPE.TEMPERATURE]: "°C",
+      [SENSOR_TYPE.VIBRATION]: "mm/s",
+      [SENSOR_TYPE.CURRENT]: "A",
+      [SENSOR_TYPE.RPM]: "RPM",
+    };
+    function setThrValue(type, key, text) {
+      setThr((prev) => ({ ...prev, [type]: { ...prev?.[type], [key]: text } }));
+    }
+    // Plain helper (called as a function, not <ThrField/>) so the
+    // TextInputs keep focus while typing.
+    function ThrField({ type, fieldKey, label }) {
+      return (
+        <View className="flex-1">
+          <Input
+            label={`${label} (${units[type]})`}
+            placeholder="—"
+            value={thr?.[type]?.[fieldKey] != null ? String(thr[type][fieldKey]) : ""}
+            onChangeText={(t) => setThrValue(type, fieldKey, t)}
+            keyboardType="numeric"
+            disabled={!isAdmin || thrSaving}
+          />
+        </View>
+      );
+    }
+    return (
+      <Card>
+        <View className="flex-row items-center gap-2 mb-1">
+          <Text className={`text-base font-bold font-inter ${dark ? "text-white" : "text-text"}`}>Alert Thresholds</Text>
+          <View className={`px-2 py-0.5 rounded-chip ${custom ? "bg-success/15" : dark ? "bg-white/10" : "bg-bg"}`}>
+            <Text className={`text-[11px] font-medium font-inter ${custom ? "text-success" : dark ? "text-white/60" : "text-text-muted"}`}>
+              {custom ? "custom" : "backend defaults"}
+            </Text>
+          </View>
+        </View>
+        <Text className={`text-xs font-inter mb-4 ${dark ? "text-white/60" : "text-text-muted"}`}>
+          Per-machine alert limits, stored in the database with the machine.
+          {isAdmin
+            ? " The backend enforces its defaults until it is updated to read these values."
+            : " Only administrators can change them."}
+        </Text>
+
+        {thrError && (
+          <View className="rounded-btn px-3 py-2.5 mb-4" style={{ backgroundColor: "rgba(220,38,38,0.1)", borderWidth: 1, borderColor: "rgba(220,38,38,0.3)" }}>
+            <Text className="text-sm text-danger font-inter">{thrError}</Text>
+          </View>
+        )}
+
+        {[SENSOR_TYPE.TEMPERATURE, SENSOR_TYPE.VIBRATION, SENSOR_TYPE.CURRENT].map((type) => (
+          <View key={type} className="mb-4">
+            <Text className={`text-sm font-bold font-inter mb-2 capitalize ${dark ? "text-white" : "text-text"}`}>{type.toLowerCase()}</Text>
+            <View className="flex-row gap-3">
+              {ThrField({ type, fieldKey: "warning", label: "Warning ≥" })}
+              {ThrField({ type, fieldKey: "critical", label: "Critical ≥" })}
+            </View>
+          </View>
+        ))}
+
+        <View className="mb-5">
+          <Text className={`text-sm font-bold font-inter mb-2 ${dark ? "text-white" : "text-text"}`}>RPM</Text>
+          <View className="flex-row gap-3 mb-3">
+            {ThrField({ type: SENSOR_TYPE.RPM, fieldKey: "warningLow", label: "Warn low <" })}
+            {ThrField({ type: SENSOR_TYPE.RPM, fieldKey: "warningHigh", label: "Warn high >" })}
+          </View>
+          <View className="flex-row gap-3">
+            {ThrField({ type: SENSOR_TYPE.RPM, fieldKey: "criticalLow", label: "Critical low <" })}
+            {ThrField({ type: SENSOR_TYPE.RPM, fieldKey: "criticalHigh", label: "Critical high >" })}
+          </View>
+        </View>
+
+        {isAdmin && (
+          <Button
+            title="Save Thresholds"
+            variant="primary"
+            onPress={handleSaveThresholds}
+            loading={thrSaving}
+            disabled={!thr}
+          />
+        )}
+      </Card>
+    );
+  }
+
   if (!canAccess("machines")) {
     return (
       <AppShell>
@@ -358,8 +607,8 @@ export default function MachineDetailScreen() {
             />
             <View className="flex-row items-start justify-between">
               <View className="flex-1 mr-4">
-                <Text className="text-2xl font-bold text-text font-inter">{code}</Text>
-                <Text className="text-sm text-text-muted font-inter mt-0.5">
+                <Text className={`text-2xl font-bold font-inter ${dark ? "text-white" : "text-text"}`}>{code}</Text>
+                <Text className={`text-sm font-inter mt-0.5 ${dark ? "text-white/60" : "text-text-muted"}`}>
                   {typeLabel}
                 </Text>
               </View>
@@ -368,42 +617,18 @@ export default function MachineDetailScreen() {
                 <Pressable
                   onPress={handleShare}
                   accessibilityLabel="Share machine"
-                  className="w-9 h-9 rounded-btn border border-border items-center justify-center bg-surface"
+                  className={`w-9 h-9 rounded-btn border items-center justify-center ${dark ? "border-white/15 bg-white/5" : "border-border bg-surface"}`}
                 >
-                  <Text className="text-text-muted">↗</Text>
+                  <Text className={dark ? "text-white/70" : "text-text-muted"}>↗</Text>
                 </Pressable>
-                <View className="relative">
-                  <Pressable
-                    onPress={() => setMenuOpen((v) => !v)}
-                    accessibilityLabel="Machine actions"
-                    className="w-9 h-9 rounded-btn border border-border items-center justify-center bg-surface"
-                  >
-                    <Text className="text-text-muted">⋮</Text>
-                  </Pressable>
-                  {menuOpen && (
-                    <View
-                      className="absolute right-0 bg-surface border border-border rounded-card overflow-hidden"
-                      style={{ top: 40, width: 180, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 6, zIndex: 20 }}
-                    >
-                      {isAdmin && (
-                        <Pressable
-                          onPress={() => { setMenuOpen(false); setEditOpen(true); }}
-                          className="px-4 py-3 border-b border-border"
-                        >
-                          <Text className="text-sm text-text font-inter">Edit machine</Text>
-                        </Pressable>
-                      )}
-                      <Pressable onPress={handleCopyCode} className="px-4 py-3 border-b border-border">
-                        <Text className="text-sm text-text font-inter">Copy machine code</Text>
-                      </Pressable>
-                      {isAdmin && (
-                        <Pressable onPress={handleDelete} className="px-4 py-3">
-                          <Text className="text-sm text-danger font-medium font-inter">Delete machine</Text>
-                        </Pressable>
-                      )}
-                    </View>
-                  )}
-                </View>
+                <Pressable
+                  ref={menuBtnRef}
+                  onPress={toggleMenu}
+                  accessibilityLabel="Machine actions"
+                  className={`w-9 h-9 rounded-btn border items-center justify-center ${dark ? "border-white/15 bg-white/5" : "border-border bg-surface"}`}
+                >
+                  <Text className={dark ? "text-white/70" : "text-text-muted"}>⋮</Text>
+                </Pressable>
               </View>
             </View>
           </View>
@@ -411,9 +636,9 @@ export default function MachineDetailScreen() {
           <View className="flex-row items-center justify-between mb-4">
             <View className="flex-row items-center flex-1 mr-2">
               <Pressable onPress={() => router.back()} className="pr-3 py-1">
-                <Text className="text-xl text-text">←</Text>
+                <Text className={`text-xl ${dark ? "text-white" : "text-text"}`}>←</Text>
               </Pressable>
-              <Text className="text-lg font-bold text-text font-inter" numberOfLines={1}>
+              <Text className={`text-lg font-bold font-inter ${dark ? "text-white" : "text-text"}`} numberOfLines={1}>
                 {code}
               </Text>
             </View>
@@ -451,8 +676,57 @@ export default function MachineDetailScreen() {
           />
         </View>
 
-        {tab === "overview" ? <OverviewBody /> : <ComingSoon />}
+        {tab === "overview" ? <OverviewBody /> : tab === "settings" ? <SettingsBody /> : <ComingSoon />}
       </ScrollView>
+      {/* ⋮ dropdown — Modal so it floats above everything (never clipped)
+          and any tap outside closes it. */}
+      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+        <View style={{ flex: 1 }}>
+          <Pressable
+            style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
+            onPress={() => setMenuOpen(false)}
+          />
+          <View
+            className={`absolute rounded-card overflow-hidden border ${dark ? "bg-darkcard border-white/15" : "bg-surface border-border"}`}
+            style={{
+              top: menuPos?.top ?? 120,
+              right: menuPos?.right ?? 16,
+              width: 210,
+              shadowColor: "#0F172A",
+              shadowOffset: { width: 0, height: 8 },
+              shadowOpacity: 0.18,
+              shadowRadius: 20,
+              elevation: 8,
+            }}
+          >
+            {isAdmin && (
+              <Pressable
+                onPress={() => { setMenuOpen(false); setEditOpen(true); }}
+                className={`px-4 py-3 border-b ${dark ? "border-white/10" : "border-border"}`}
+                style={({ pressed }) => (pressed ? { backgroundColor: dark ? "rgba(255,255,255,0.08)" : "#F0F4FA" } : {})}
+              >
+                <Text className={`text-sm font-inter ${dark ? "text-white" : "text-text"}`}>Edit machine</Text>
+              </Pressable>
+            )}
+            <Pressable
+              onPress={handleCopyCode}
+              className={isAdmin ? `px-4 py-3 border-b ${dark ? "border-white/10" : "border-border"}` : "px-4 py-3"}
+              style={({ pressed }) => (pressed ? { backgroundColor: dark ? "rgba(255,255,255,0.08)" : "#F0F4FA" } : {})}
+            >
+              <Text className={`text-sm font-inter ${dark ? "text-white" : "text-text"}`}>Copy machine code</Text>
+            </Pressable>
+            {isAdmin && (
+              <Pressable
+                onPress={handleDelete}
+                className="px-4 py-3"
+                style={({ pressed }) => (pressed ? { backgroundColor: "rgba(220,38,38,0.08)" } : {})}
+              >
+                <Text className="text-sm text-danger font-medium font-inter">Delete machine</Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+      </Modal>
       <AddMachineModal
         visible={editOpen}
         machine={machine}

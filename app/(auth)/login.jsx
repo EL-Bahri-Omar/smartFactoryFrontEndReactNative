@@ -86,6 +86,7 @@ export default function LoginScreen() {
   }
 
   const isDesktop = breakpoint === "desktop" || breakpoint === "tablet";
+  const isWeb = Platform.OS === "web"; // web always persists (no Remember me checkbox)
   const isLoading = status === "loading";
 
   const errorMessage =
@@ -97,7 +98,8 @@ export default function LoginScreen() {
   async function handleLogin() {
     if (!email.trim() || !password.trim()) return;
     try {
-      const data = await dispatch(loginThunk({ email: email.trim(), password, remember })).unwrap();
+      // Web sessions always persist (storage forces it); native follows the checkbox.
+      const data = await dispatch(loginThunk({ email: email.trim(), password, remember: isWeb ? true : remember })).unwrap();
       router.replace(homeRouteFor(data?.user?.role));
     } catch {
       // Error handled via slice state
@@ -218,8 +220,9 @@ export default function LoginScreen() {
               </View>
             </View>
 
-            {/* Remember + Forgot */}
-            <View className="flex-row items-center justify-between mb-4">
+            {/* Remember (native only) + Forgot */}
+            <View className={`flex-row items-center mb-4 ${isWeb ? "justify-end" : "justify-between"}`}>
+              {!isWeb && (
               <Pressable onPress={() => setRemember(!remember)} className="flex-row items-center gap-2">
                 <View className={`w-4.5 h-4.5 rounded border-2 items-center justify-center ${remember ? "bg-primary border-primary" : "bg-white border-border"}`}
                   style={{ width: 18, height: 18 }}
@@ -228,6 +231,7 @@ export default function LoginScreen() {
                 </View>
                 <Text className="text-sm text-text font-inter">Remember me</Text>
               </Pressable>
+              )}
               <Pressable onPress={() => router.push("/(auth)/forgot-password")}>
                 <Text className="text-sm text-primary font-medium font-inter">Forgot password?</Text>
               </Pressable>
@@ -424,8 +428,9 @@ export default function LoginScreen() {
               </View>
             </View>
 
-            {/* Remember + Forgot */}
-            <View className="flex-row items-center justify-between mb-2">
+            {/* Remember (native only) + Forgot */}
+            <View className={`flex-row items-center mb-2 ${isWeb ? "justify-end" : "justify-between"}`}>
+              {!isWeb && (
               <Pressable
                 onPress={() => setRemember(!remember)}
                 className="flex-row items-center gap-2"
@@ -442,6 +447,7 @@ export default function LoginScreen() {
                   Remember me
                 </Text>
               </Pressable>
+              )}
               <Pressable onPress={() => router.push("/(auth)/forgot-password")}>
                 <Text className="text-sm text-primary font-medium font-inter">
                   Forgot password?

@@ -17,6 +17,7 @@ import Breadcrumb from "../../../src/components/Breadcrumb";
 import Select from "../../../src/components/Select";
 import MultiSelect from "../../../src/components/MultiSelect";
 import { useBreakpoint } from "../../../src/hooks/useBreakpoint";
+import { useDark } from "../../../src/hooks/useDark";
 import { useRole } from "../../../src/hooks/useRole";
 import { useDialog } from "../../../src/components/dialog/DialogContext";
 import { useAppDispatch } from "../../../src/hooks/useAppDispatch";
@@ -41,6 +42,7 @@ export default function GroupDetailScreen() {
   const dialog = useDialog();
   const router = useRouter();
   const { isAdmin } = useRole();
+  const dark = useDark();
   const isDesktop = useBreakpoint() === "desktop";
 
   const { current, operators, supervisor, currentStatus, currentError, membersStatus } =
@@ -149,17 +151,17 @@ export default function GroupDetailScreen() {
   function SupervisorCard() {
     return (
       <Card className="mb-4">
-        <Text className="text-base font-bold text-text font-inter mb-3">Supervisor</Text>
+        <Text className={`text-base font-bold font-inter mb-3 ${dark ? "text-white" : "text-text"}`}>Supervisor</Text>
         {supervisor ? (
           <View className="flex-row items-center gap-3 mb-3">
             <Avatar name={fullName(supervisor)} size="sm" />
             <View className="flex-1">
-              <Text className="text-sm font-bold text-text font-inter">{fullName(supervisor)}</Text>
-              <Text className="text-xs text-text-muted font-inter">{supervisor.email}</Text>
+              <Text className={`text-sm font-bold font-inter ${dark ? "text-white" : "text-text"}`}>{fullName(supervisor)}</Text>
+              <Text className={`text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>{supervisor.email}</Text>
             </View>
           </View>
         ) : (
-          <Text className="text-sm text-text-muted font-inter mb-3">No supervisor assigned.</Text>
+          <Text className={`text-sm font-inter mb-3 ${dark ? "text-white/60" : "text-text-muted"}`}>No supervisor assigned.</Text>
         )}
         {isAdmin && (
           <View className="gap-2">
@@ -190,7 +192,7 @@ export default function GroupDetailScreen() {
     return (
       <Card>
         <View className="flex-row items-center justify-between mb-3">
-          <Text className="text-base font-bold text-text font-inter">
+          <Text className={`text-base font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
             Operators ({operators.length})
           </Text>
           {isAdmin && (
@@ -212,16 +214,16 @@ export default function GroupDetailScreen() {
 
         <View className="gap-2">
           {operators.map((u) => (
-            <View key={u.id} className="flex-row items-center gap-3 bg-bg rounded-btn px-3 py-2.5">
+            <View key={u.id} className={`flex-row items-center gap-3 rounded-btn px-3 py-2.5 ${dark ? "bg-white/5" : "bg-bg"}`}>
               <Avatar name={fullName(u)} size="sm" />
               <View className="flex-1">
-                <Text className="text-sm font-bold text-text font-inter" numberOfLines={1}>
+                <Text className={`text-sm font-bold font-inter ${dark ? "text-white" : "text-text"}`} numberOfLines={1}>
                   {fullName(u)}
                   {current?.supervisorId === u.id && (
                     <Text className="text-xs text-primary font-inter"> · Supervisor</Text>
                   )}
                 </Text>
-                <Text className="text-xs text-text-muted font-inter" numberOfLines={1}>{u.email}</Text>
+                <Text className={`text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>{u.email}</Text>
               </View>
               {isAdmin && (
                 <Pressable onPress={() => handleRemove(u)} className="px-2 py-1">
@@ -233,7 +235,7 @@ export default function GroupDetailScreen() {
         </View>
 
         {isAdmin && addOpen && (
-          <View className="mt-4 pt-4 border-t border-border gap-3">
+          <View className={`mt-4 pt-4 border-t gap-3 ${dark ? "border-white/10" : "border-border"}`}>
             <MultiSelect
               label="Pick operators to add"
               values={pendingIds}
@@ -281,8 +283,8 @@ export default function GroupDetailScreen() {
           <>
             <View className="flex-row items-start justify-between mb-4 gap-3">
               <View className="flex-1">
-                <Text className="text-2xl font-bold text-text font-inter">{current.name}</Text>
-                <Text className="text-sm text-text-muted font-inter mt-0.5">
+                <Text className={`text-2xl font-bold font-inter ${dark ? "text-white" : "text-text"}`}>{current.name}</Text>
+                <Text className={`text-sm font-inter mt-0.5 ${dark ? "text-white/60" : "text-text-muted"}`}>
                   {(current.operatorCount ?? (current.operators || []).length)} operators
                   {current.supervisorName ? ` · Supervised by ${current.supervisorName}` : ""}
                 </Text>

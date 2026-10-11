@@ -22,6 +22,7 @@ module.exports = {
         text: "#0F172A",
         "text-muted": "#64748B",
         border: "#E2E8F0",
+        darkcard: "#1E293B",
       },
       fontFamily: {
         inter: ["Inter", "system-ui", "sans-serif"],

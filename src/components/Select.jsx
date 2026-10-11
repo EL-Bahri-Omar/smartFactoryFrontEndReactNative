@@ -4,6 +4,7 @@
 
 import { View, Text, Pressable, Modal, FlatList } from "react-native";
 import { useState } from "react";
+import { useDark } from "../hooks/useDark";
 
 export default function Select({
   label,
@@ -17,18 +18,19 @@ export default function Select({
   labelClassName = "",
 }) {
   const [open, setOpen] = useState(false);
+  const dark = useDark();
   const selectedOption = options.find((o) => o.value === value);
 
   return (
     <View className={`gap-1 ${className}`}>
       {label && (
-        <Text className={`text-sm text-text font-inter ${labelClassName || "font-medium"}`}>{label}</Text>
+        <Text className={`text-sm font-inter ${dark ? "text-white" : "text-text"} ${labelClassName || "font-medium"}`}>{label}</Text>
       )}
       <Pressable
         onPress={() => !disabled && setOpen(true)}
-        className={`flex-row items-center justify-between bg-surface border rounded-btn px-3 py-2.5 ${
-          error ? "border-danger" : "border-border"
-        } ${disabled ? "opacity-50" : ""}`}
+        className={`flex-row items-center justify-between border rounded-btn px-3 py-2.5 ${
+          error ? "border-danger" : dark ? "border-white/15" : "border-border"
+        } ${dark ? "bg-white/5" : "bg-surface"} ${disabled ? "opacity-50" : ""}`}
       >
         <View className="flex-1 flex-row items-center gap-2">
           {selectedOption?.dot ? (
@@ -37,11 +39,11 @@ export default function Select({
               style={{ backgroundColor: selectedOption.dot }}
             />
           ) : null}
-          <Text className={`text-sm font-inter ${selectedOption ? "text-text" : "text-offline"}`}>
+          <Text className={`text-sm font-inter ${selectedOption ? (dark ? "text-white" : "text-text") : "text-offline"}`}>
             {selectedOption ? selectedOption.label : placeholder}
           </Text>
         </View>
-        <Text className="text-text-muted text-xs">▼</Text>
+        <Text className={`text-xs ${dark ? "text-white/50" : "text-text-muted"}`}>▼</Text>
       </Pressable>
       {error && <Text className="text-xs text-danger font-inter">{error}</Text>}
 
@@ -50,8 +52,8 @@ export default function Select({
           className="flex-1 bg-black/30 justify-center items-center px-8"
           onPress={() => setOpen(false)}
         >
-          <View className="bg-surface rounded-card w-full max-w-sm border border-border overflow-hidden">
-            <Text className="text-sm font-semibold text-text px-4 pt-3 pb-2 font-inter">
+          <View className={`rounded-card w-full max-w-sm border overflow-hidden ${dark ? "bg-darkcard border-white/15" : "bg-surface border-border"}`}>
+            <Text className={`text-sm font-semibold px-4 pt-3 pb-2 font-inter ${dark ? "text-white" : "text-text"}`}>
               {label || "Select"}
             </Text>
             <FlatList
@@ -64,7 +66,7 @@ export default function Select({
                     onValueChange?.(item.value);
                     setOpen(false);
                   }}
-                  className={`px-4 py-3 border-t border-border ${
+                  className={`px-4 py-3 border-t ${dark ? "border-white/10" : "border-border"} ${
                     item.value === value ? "bg-primary-soft" : ""
                   }`}
                 >
@@ -75,7 +77,7 @@ export default function Select({
                         style={{ backgroundColor: item.dot }}
                       />
                     ) : null}
-                    <Text className={`text-sm font-inter ${item.value === value ? "text-primary font-semibold" : "text-text"}`}>
+                    <Text className={`text-sm font-inter ${item.value === value ? "text-primary font-semibold" : dark ? "text-white" : "text-text"}`}>
                       {item.label}
                     </Text>
                   </View>

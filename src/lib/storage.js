@@ -118,16 +118,22 @@ export async function clearRememberedEmail() {
 
 // ── Tokens ──────────────────────────────────────────────────────────────
 
-/** Store the access token. Pass { remember: true } to survive app restart. */
+/**
+ * Store the access token.
+ * Web ALWAYS persists (localStorage) — a browser refresh must never log the
+ * user out. Native persists only when remember === true (the Remember me
+ * checkbox exists on mobile only).
+ */
 export async function setTokens({ accessToken, remember = false }) {
+  const persist = Platform.OS === "web" ? true : remember;
   memoryToken = accessToken ?? null;
-  await setRememberMe(remember);
+  await setRememberMe(persist);
   if (Platform.OS === "web") {
-    if (remember && accessToken) webSet(KEYS.ACCESS_TOKEN, accessToken);
+    if (persist && accessToken) webSet(KEYS.ACCESS_TOKEN, accessToken);
     else webRemove(KEYS.ACCESS_TOKEN);
     return;
   }
-  if (remember && accessToken) await nativeSet(KEYS.ACCESS_TOKEN, accessToken);
+  if (persist && accessToken) await nativeSet(KEYS.ACCESS_TOKEN, accessToken);
   else await nativeRemove(KEYS.ACCESS_TOKEN);
 }
 
@@ -148,18 +154,19 @@ export async function clearTokens() {
 
 // ── User ────────────────────────────────────────────────────────────────
 
-/** Persist user metadata. Respects the remember flag unless overridden. */
+/** Persist user metadata. Web always persists; native respects remember. */
 export async function setUser(user, opts = {}) {
   memoryUser = user ?? null;
   let remember = opts.remember;
   if (remember === undefined) remember = await getRememberMe();
+  const persist = Platform.OS === "web" ? true : remember;
   if (!user) return;
   if (Platform.OS === "web") {
-    if (remember) webSet(KEYS.USER, JSON.stringify(user));
+    if (persist) webSet(KEYS.USER, JSON.stringify(user));
     else webRemove(KEYS.USER);
     return;
   }
-  if (remember) await nativeSet(KEYS.USER, JSON.stringify(user));
+  if (persist) await nativeSet(KEYS.USER, JSON.stringify(user));
   else await nativeRemove(KEYS.USER);
 }
 

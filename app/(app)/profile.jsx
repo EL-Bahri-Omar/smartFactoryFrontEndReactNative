@@ -172,8 +172,8 @@ export default function ProfileScreen() {
   function PasswordCard() {
     return (
       <Card>
-        <Text className="text-base font-bold text-text font-inter mb-1">Change Password</Text>
-        <Text className="text-xs text-text-muted font-inter mb-4">
+        <Text className={`text-base font-bold font-inter mb-1 ${dark ? "text-white" : "text-text"}`}>Change Password</Text>
+        <Text className={`text-xs font-inter mb-4 ${dark ? "text-white/60" : "text-text-muted"}`}>
           Enter your current password to set a new one.
         </Text>
 
@@ -214,13 +214,13 @@ export default function ProfileScreen() {
   function InfoCard() {
     return (
       <Card className="mb-4">
-        <Text className="text-base font-bold text-text font-inter mb-4">Personal Information</Text>
+        <Text className={`text-base font-bold font-inter mb-4 ${dark ? "text-white" : "text-text"}`}>Personal Information</Text>
 
         <View className="flex-row items-center gap-4 mb-2">
           <Avatar name={displayName} size="lg" />
           <View className="flex-1">
-            <Text className="text-lg font-bold text-text font-inter">{displayName}</Text>
-            <Text className="text-sm text-text-muted font-inter">{user?.email || ""}</Text>
+            <Text className={`text-lg font-bold font-inter ${dark ? "text-white" : "text-text"}`}>{displayName}</Text>
+            <Text className={`text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>{user?.email || ""}</Text>
             <View className="flex-row items-center mt-1.5 gap-2 flex-wrap">
               <View className="bg-primary-soft px-2 py-0.5 rounded-chip">
                 <Text className="text-xs text-primary font-medium font-inter">{roleLabel}</Text>
@@ -245,7 +245,7 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        <Text className="text-xs text-text-muted font-inter mb-4">
+        <Text className={`text-xs font-inter mb-4 ${dark ? "text-white/50" : "text-text-muted"}`}>
           Member since {user?.createdAt ? formatDate(user.createdAt) : "—"}
         </Text>
 
@@ -266,9 +266,9 @@ export default function ProfileScreen() {
           <Input label="Full Name" labelClassName="font-bold" placeholder="Omar Bahri" value={fullName} onChangeText={setFullName} disabled={!isEditing} />
           <Input label="Email" labelClassName="font-bold" placeholder="omar@smartfactory.com" value={emailField} onChangeText={setEmailField} keyboardType="email-address" autoCapitalize="none" disabled={!isEditing} />
           <View className="gap-1">
-            <Text className="text-sm font-bold text-text font-inter">Role</Text>
-            <View className="bg-bg border border-border rounded-btn px-3 py-2.5">
-              <Text className="text-sm text-text-muted font-inter">{roleLabel}</Text>
+            <Text className={`text-sm font-bold font-inter ${dark ? "text-white" : "text-text"}`}>Role</Text>
+            <View className={`border rounded-btn px-3 py-2.5 ${dark ? "bg-white/5 border-white/15" : "bg-bg border-border"}`}>
+              <Text className={`text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>{roleLabel}</Text>
             </View>
             <View className="flex-row items-center gap-2 mt-1">
               <Text className="text-sm">ℹ️</Text>

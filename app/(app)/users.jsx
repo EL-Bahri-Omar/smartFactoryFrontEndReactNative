@@ -144,21 +144,21 @@ export default function UsersScreen() {
         <Pressable
           onPress={() => setPage((p) => Math.max(0, p - 1))}
           disabled={safePage === 0}
-          className={`px-4 py-1.5 rounded-btn ${safePage === 0 ? "bg-bg border border-border opacity-40" : "bg-primary"}`}
+          className={`px-4 py-1.5 rounded-btn ${safePage === 0 ? (dark ? "bg-white/5 border border-white/15 opacity-40" : "bg-bg border border-border opacity-40") : "bg-primary"}`}
           style={safePage !== 0 ? { shadowColor: "#2563EB", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 6, elevation: 3 } : {}}
         >
-          <Text className={`text-sm font-bold font-inter ${safePage === 0 ? "text-text-muted" : "text-white"}`}>‹ Prev</Text>
+          <Text className={`text-sm font-bold font-inter ${safePage === 0 ? (dark ? "text-white/50" : "text-text-muted") : "text-white"}`}>‹ Prev</Text>
         </Pressable>
-        <Text className="text-sm text-text-muted font-inter">
-          Page <Text className="font-bold text-text font-inter">{safePage + 1}</Text> of {totalPages} · <Text className="font-bold text-text font-inter">{filtered.length} user{filtered.length === 1 ? "" : "s"}</Text>
+        <Text className={`text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>
+          Page <Text className={`font-bold font-inter ${dark ? "text-white" : "text-text"}`}>{safePage + 1}</Text> of {totalPages} · <Text className={`font-bold font-inter ${dark ? "text-white" : "text-text"}`}>{filtered.length} user{filtered.length === 1 ? "" : "s"}</Text>
         </Text>
         <Pressable
           onPress={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
           disabled={safePage >= totalPages - 1}
-          className={`px-4 py-1.5 rounded-btn ${safePage >= totalPages - 1 ? "bg-bg border border-border opacity-40" : "bg-primary"}`}
+          className={`px-4 py-1.5 rounded-btn ${safePage >= totalPages - 1 ? (dark ? "bg-white/5 border border-white/15 opacity-40" : "bg-bg border border-border opacity-40") : "bg-primary"}`}
           style={safePage < totalPages - 1 ? { shadowColor: "#2563EB", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 6, elevation: 3 } : {}}
         >
-          <Text className={`text-sm font-bold font-inter ${safePage >= totalPages - 1 ? "text-text-muted" : "text-white"}`}>Next ›</Text>
+          <Text className={`text-sm font-bold font-inter ${safePage >= totalPages - 1 ? (dark ? "text-white/50" : "text-text-muted") : "text-white"}`}>Next ›</Text>
         </Pressable>
       </View>
     );
@@ -194,13 +194,13 @@ export default function UsersScreen() {
                   <Pressable
                     key={tab.label}
                     onPress={() => pickRole(tab.key)}
-                    className={`px-3 py-1.5 rounded-chip flex-row items-center gap-1.5 ${active ? "bg-primary" : "bg-bg"}`}
+                    className={`px-3 py-1.5 rounded-chip flex-row items-center gap-1.5 ${active ? "bg-primary" : dark ? "bg-white/5 border border-white/15" : "bg-bg"}`}
                   >
-                    <Text className={`text-xs font-medium font-inter ${active ? "text-white" : "text-text-muted"}`}>
+                    <Text className={`text-xs font-medium font-inter ${active ? "text-white" : dark ? "text-white/60" : "text-text-muted"}`}>
                       {tab.label}
                     </Text>
-                    <View className={`min-w-[18px] h-[18px] rounded-full items-center justify-center px-1 ${active ? "bg-white/20" : "bg-border"}`}>
-                      <Text className={`text-[10px] font-bold font-inter ${active ? "text-white" : "text-text-muted"}`}>
+                    <View className={`min-w-[18px] h-[18px] rounded-full items-center justify-center px-1 ${active ? "bg-white/20" : dark ? "bg-white/10" : "bg-border"}`}>
+                      <Text className={`text-[10px] font-bold font-inter ${active ? "text-white" : dark ? "text-white/60" : "text-text-muted"}`}>
                         {roleCount(tab.key)}
                       </Text>
                     </View>
@@ -208,10 +208,10 @@ export default function UsersScreen() {
                 );
               })}
             </View>
-            <View className="flex-row items-center bg-bg border border-border rounded-btn px-3 py-2 gap-2" style={{ width: 220 }}>
-              <Text className="text-text-muted text-sm">🔍</Text>
+            <View className={`flex-row items-center border rounded-btn px-3 py-2 gap-2 ${dark ? "bg-white/5 border-white/15" : "bg-bg border-border"}`} style={{ width: 220 }}>
+              <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
               <TextInput
-                className="flex-1 text-sm text-text font-inter"
+                className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
                 placeholder="Search users..."
                 placeholderTextColor="#94A3B8"
                 value={searchInput}
@@ -233,7 +233,7 @@ export default function UsersScreen() {
           {isLoading && (
             <Card>
               {[1, 2, 3, 4].map((i) => (
-                <View key={i} className="flex-row items-center gap-4 py-3 border-b border-border">
+                <View key={i} className={`flex-row items-center gap-4 py-3 border-b ${dark ? "border-white/10" : "border-border"}`}>
                   <Skeleton width={120} height={14} />
                   <Skeleton width={160} height={14} />
                   <Skeleton width={80} height={14} />
@@ -254,31 +254,31 @@ export default function UsersScreen() {
 
           {!isLoading && !isEmpty && !isError && (
             <Card className="overflow-hidden p-0">
-              <View className="flex-row items-center px-4 py-3 border-b border-border bg-bg">
-                <Text className="flex-1 text-xs font-semibold text-text-muted font-inter">Name</Text>
-                <Text className="w-56 text-xs font-semibold text-text-muted font-inter">Email</Text>
-                <Text className="w-32 text-xs font-semibold text-text-muted font-inter">Role</Text>
-                <Text className="w-24 text-xs font-semibold text-text-muted font-inter">Status</Text>
-                <Text className="w-28 text-xs font-semibold text-text-muted font-inter">Actions</Text>
+              <View className={`flex-row items-center px-4 py-3 border-b ${dark ? "border-white/10 bg-white/5" : "border-border bg-bg"}`}>
+                <Text className={`flex-1 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Name</Text>
+                <Text className={`w-56 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Email</Text>
+                <Text className={`w-32 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Role</Text>
+                <Text className={`w-24 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Status</Text>
+                <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Actions</Text>
               </View>
               {pageItems.map((u, idx) => (
                 <View
                   key={u.id || idx}
-                  className={`flex-row items-center px-4 py-3 border-b border-border ${idx % 2 === 0 ? "bg-surface" : "bg-bg/50"}`}
+                  className={`flex-row items-center px-4 py-3 border-b ${dark ? "border-white/10" : "border-border"} ${dark ? (idx % 2 === 0 ? "" : "bg-white/5") : idx % 2 === 0 ? "bg-surface" : "bg-bg/50"}`}
                 >
                   <View className="flex-1 flex-row items-center gap-2">
                     <Avatar name={`${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email} size="sm" />
-                    <Text className="text-sm text-text font-inter" numberOfLines={1}>
+                    <Text className={`text-sm font-inter ${dark ? "text-white" : "text-text"}`} numberOfLines={1}>
                       {u.firstName} {u.lastName}
                     </Text>
                   </View>
-                  <Text className="w-56 text-sm text-text-muted font-inter" numberOfLines={1}>{u.email}</Text>
+                  <Text className={`w-56 text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>{u.email}</Text>
                   <View className="w-32">
                     <View className="bg-primary-soft px-2 py-0.5 rounded-chip self-start">
                       <Text className="text-xs text-primary font-medium font-inter">{ROLE_LABEL[u.role] || u.role}</Text>
                     </View>
                   </View>
-                  <Text className="w-24 text-sm text-text-muted font-inter">{u.status}</Text>
+                  <Text className={`w-24 text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>{u.status}</Text>
                   <View className="w-28 flex-row gap-2">
                     <Pressable onPress={() => openEdit(u)} className="px-2 py-1">
                       <Text className="text-sm text-primary font-medium font-inter">Edit</Text>
@@ -311,10 +311,10 @@ export default function UsersScreen() {
           </Pressable>
         </View>
 
-        <View className="flex-row items-center bg-surface border border-border rounded-btn px-3 py-2 gap-2 mb-3">
-          <Text className="text-text-muted text-sm">🔍</Text>
+        <View className={`flex-row items-center border rounded-btn px-3 py-2 gap-2 mb-3 ${dark ? "bg-white/5 border-white/15" : "bg-surface border-border"}`}>
+          <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
           <TextInput
-            className="flex-1 text-sm text-text font-inter"
+            className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
             placeholder="Search users..."
             placeholderTextColor="#94A3B8"
             value={searchInput}
@@ -330,13 +330,13 @@ export default function UsersScreen() {
               <Pressable
                 key={tab.label}
                 onPress={() => pickRole(tab.key)}
-                className={`px-3 py-2 rounded-chip flex-row items-center gap-1.5 ${active ? "bg-primary" : "bg-surface border border-border"}`}
+                className={`px-3 py-2 rounded-chip flex-row items-center gap-1.5 ${active ? "bg-primary" : dark ? "bg-white/5 border border-white/15" : "bg-surface border border-border"}`}
               >
-                <Text className={`text-xs font-medium font-inter ${active ? "text-white" : "text-text-muted"}`}>
+                <Text className={`text-xs font-medium font-inter ${active ? "text-white" : dark ? "text-white/60" : "text-text-muted"}`}>
                   {tab.label}
                 </Text>
-                <View className={`min-w-[18px] h-[18px] rounded-full items-center justify-center px-1 ${active ? "bg-white/20" : "bg-border"}`}>
-                  <Text className={`text-[10px] font-bold font-inter ${active ? "text-white" : "text-text-muted"}`}>
+                <View className={`min-w-[18px] h-[18px] rounded-full items-center justify-center px-1 ${active ? "bg-white/20" : dark ? "bg-white/10" : "bg-border"}`}>
+                  <Text className={`text-[10px] font-bold font-inter ${active ? "text-white" : dark ? "text-white/60" : "text-text-muted"}`}>
                     {roleCount(tab.key)}
                   </Text>
                 </View>
@@ -381,8 +381,8 @@ export default function UsersScreen() {
                 <View className="flex-row items-center gap-3">
                   <Avatar name={`${item.firstName || ""} ${item.lastName || ""}`.trim() || item.email} size="sm" />
                   <View className="flex-1">
-                    <Text className="text-sm font-bold text-text font-inter">{item.firstName} {item.lastName}</Text>
-                    <Text className="text-xs text-text-muted font-inter">{item.email}</Text>
+                    <Text className={`text-sm font-bold font-inter ${dark ? "text-white" : "text-text"}`}>{item.firstName} {item.lastName}</Text>
+                    <Text className={`text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>{item.email}</Text>
                     <Text className="text-xs text-primary font-inter mt-0.5">{ROLE_LABEL[item.role] || item.role} · {item.status}</Text>
                   </View>
                   <Pressable onPress={() => openEdit(item)} className="px-2 py-1">

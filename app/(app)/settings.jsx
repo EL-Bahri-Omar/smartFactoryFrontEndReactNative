@@ -97,7 +97,7 @@ export default function SettingsScreen() {
   function renderGeneralTab() {
     return (
       <Card className="mb-4">
-        <Text className="text-base font-bold text-text font-inter mb-4">
+        <Text className={`text-base font-bold font-inter mb-4 ${dark ? "text-white" : "text-text"}`}>
           General Settings
         </Text>
         <View className="gap-4">
@@ -132,7 +132,7 @@ export default function SettingsScreen() {
               value={notifications.darkMode}
               onChange={(v) => dispatch(setNotifications({ darkMode: v }))}
             />
-            <Text className="text-xs text-text-muted font-inter mt-1.5 ml-0">
+            <Text className={`text-xs font-inter mt-1.5 ml-0 ${dark ? "text-white/50" : "text-text-muted"}`}>
               Applies instantly — also available from the sun/moon button in the top bar
             </Text>
           </View>
@@ -144,7 +144,7 @@ export default function SettingsScreen() {
   function renderNotificationsTab() {
     return (
       <Card className="mb-4">
-        <Text className="text-base font-bold text-text font-inter mb-4">
+        <Text className={`text-base font-bold font-inter mb-4 ${dark ? "text-white" : "text-text"}`}>
           Notifications
         </Text>
         <View className="gap-5">
@@ -161,14 +161,14 @@ export default function SettingsScreen() {
   function renderMachinesTab() {
     return (
       <Card className="mb-4">
-        <Text className="text-base font-bold text-text font-inter mb-2">
+        <Text className={`text-base font-bold font-inter mb-2 ${dark ? "text-white" : "text-text"}`}>
           Machine Configuration
         </Text>
-        <Text className="text-sm text-text-muted font-inter mb-4">
+        <Text className={`text-sm font-inter mb-4 ${dark ? "text-white/60" : "text-text-muted"}`}>
           Configure global machine settings and thresholds.
         </Text>
-        <View className="bg-bg rounded-btn p-4 items-center">
-          <Text className="text-sm text-text-muted font-inter">
+        <View className={`rounded-btn p-4 items-center ${dark ? "bg-white/5" : "bg-bg"}`}>
+          <Text className={`text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>
             Machine configuration will be available in a future sprint.
           </Text>
         </View>
@@ -200,7 +200,7 @@ export default function SettingsScreen() {
           </View>
 
           {/* Tabs */}
-          <View className="flex-row border-b border-border mb-5">
+          <View className={`flex-row border-b mb-5 ${dark ? "border-white/10" : "border-border"}`}>
             {visibleTabs.map((tab) => {
               const active = activeTab === tab.key;
               return (
@@ -215,7 +215,7 @@ export default function SettingsScreen() {
                     className={`text-sm font-inter ${
                       active
                         ? "text-primary font-semibold"
-                        : "text-text-muted font-medium"
+                        : dark ? "text-white/50 font-medium" : "text-text-muted font-medium"
                     }`}
                   >
                     {tab.label}
@@ -359,7 +359,7 @@ export default function SettingsScreen() {
                 <>
                   <SectionHeader title="Machines" />
                   <Card className="mb-4">
-                    <Text className="text-sm text-text-muted font-inter">
+                    <Text className={`text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>
                       Machine configuration available in a future sprint.
                     </Text>
                   </Card>
@@ -389,7 +389,7 @@ export default function SettingsScreen() {
         {/* Sticky Save button (success arrives via dialog — no extra box) */}
         {!isLoading && (
           <View
-            className="px-0 pb-2 pt-2 border-t border-border"
+            className={`px-0 pb-2 pt-2 border-t ${dark ? "border-white/10" : "border-border"}`}
             style={{ backgroundColor: dark ? "#060F24" : "#F6F8FB" }}
           >
             <Button

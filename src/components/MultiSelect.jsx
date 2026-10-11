@@ -4,6 +4,7 @@
 
 import { useState } from "react";
 import { View, Text, TextInput, Pressable, Modal, FlatList } from "react-native";
+import { useDark } from "../hooks/useDark";
 
 export default function MultiSelect({
   label,
@@ -16,6 +17,7 @@ export default function MultiSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const dark = useDark();
   const selectedSet = new Set(values);
 
   const filtered = query.trim()
@@ -39,35 +41,35 @@ export default function MultiSelect({
   return (
     <View className="gap-1">
       {label && (
-        <Text className="text-sm font-medium text-text font-inter">{label}</Text>
+        <Text className={`text-sm font-medium font-inter ${dark ? "text-white" : "text-text"}`}>{label}</Text>
       )}
       <Pressable
         onPress={() => !disabled && setOpen(true)}
-        className={`flex-row items-center justify-between bg-surface border border-border rounded-btn px-3 py-2.5 ${disabled ? "opacity-50" : ""}`}
+        className={`flex-row items-center justify-between border rounded-btn px-3 py-2.5 ${dark ? "bg-white/5 border-white/15" : "bg-surface border-border"} ${disabled ? "opacity-50" : ""}`}
       >
         <Text
-          className={`text-sm font-inter flex-1 ${values.length ? "text-text" : "text-offline"}`}
+          className={`text-sm font-inter flex-1 ${values.length ? (dark ? "text-white" : "text-text") : "text-offline"}`}
           numberOfLines={1}
         >
           {values.length ? `${values.length} selected — ${selectedLabels.slice(0, 2).join(", ")}${selectedLabels.length > 2 ? "…" : ""}` : placeholder}
         </Text>
-        <Text className="text-text-muted text-xs">▼</Text>
+        <Text className={`text-xs ${dark ? "text-white/50" : "text-text-muted"}`}>▼</Text>
       </Pressable>
-      {hint && <Text className="text-xs text-text-muted font-inter">{hint}</Text>}
+      {hint && <Text className={`text-xs font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>{hint}</Text>}
 
       <Modal visible={open} transparent animationType="fade">
         <Pressable
           className="flex-1 bg-black/30 justify-center items-center px-8"
           onPress={() => setOpen(false)}
         >
-          <View className="bg-surface rounded-card w-full max-w-sm border border-border overflow-hidden">
-            <Text className="text-sm font-bold text-text px-4 pt-3 pb-2 font-inter">
+          <View className={`rounded-card w-full max-w-sm border overflow-hidden ${dark ? "bg-darkcard border-white/15" : "bg-surface border-border"}`}>
+            <Text className={`text-sm font-bold px-4 pt-3 pb-2 font-inter ${dark ? "text-white" : "text-text"}`}>
               {label || "Select"} ({values.length} selected)
             </Text>
-            <View className="mx-4 mb-2 flex-row items-center bg-bg border border-border rounded-btn px-3 py-2 gap-2">
-              <Text className="text-text-muted text-sm">🔍</Text>
+            <View className={`mx-4 mb-2 flex-row items-center border rounded-btn px-3 py-2 gap-2 ${dark ? "bg-white/5 border-white/15" : "bg-bg border-border"}`}>
+              <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
               <TextInput
-                className="flex-1 text-sm text-text font-inter"
+                className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
                 placeholder="Search..."
                 placeholderTextColor="#94A3B8"
                 value={query}
@@ -80,7 +82,7 @@ export default function MultiSelect({
               keyExtractor={(item) => String(item.value)}
               style={{ maxHeight: 280 }}
               ListEmptyComponent={
-                <Text className="text-sm text-text-muted font-inter text-center py-6 px-4">
+                <Text className={`text-sm font-inter text-center py-6 px-4 ${dark ? "text-white/50" : "text-text-muted"}`}>
                   No matching users.
                 </Text>
               }
@@ -89,26 +91,26 @@ export default function MultiSelect({
                 return (
                   <Pressable
                     onPress={() => toggle(item.value)}
-                    className={`px-4 py-3 border-t border-border flex-row items-center gap-3 ${checked ? "bg-primary-soft" : ""}`}
+                    className={`px-4 py-3 border-t flex-row items-center gap-3 ${dark ? "border-white/10" : "border-border"} ${checked ? "bg-primary-soft" : ""}`}
                   >
                     <View
-                      className={`w-5 h-5 rounded border-2 items-center justify-center ${checked ? "bg-primary border-primary" : "border-border"}`}
+                      className={`w-5 h-5 rounded border-2 items-center justify-center ${checked ? "bg-primary border-primary" : dark ? "border-white/30" : "border-border"}`}
                     >
                       {checked && <Text className="text-white text-[10px] font-bold">✓</Text>}
                     </View>
                     <View className="flex-1">
-                      <Text className={`text-sm font-inter ${checked ? "text-primary font-bold" : "text-text"}`}>
+                      <Text className={`text-sm font-inter ${checked ? "text-primary font-bold" : dark ? "text-white" : "text-text"}`}>
                         {item.label}
                       </Text>
                       {!!item.sublabel && (
-                        <Text className="text-xs text-text-muted font-inter">{item.sublabel}</Text>
+                        <Text className={`text-xs font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>{item.sublabel}</Text>
                       )}
                     </View>
                   </Pressable>
                 );
               }}
             />
-            <View className="p-3 border-t border-border">
+            <View className={`p-3 border-t ${dark ? "border-white/10" : "border-border"}`}>
               <Pressable onPress={() => { setOpen(false); setQuery(""); }} className="bg-primary rounded-btn px-4 py-2.5 items-center">
                 <Text className="text-white font-bold text-sm font-inter">Done</Text>
               </Pressable>

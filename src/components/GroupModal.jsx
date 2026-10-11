@@ -11,6 +11,7 @@ import Select from "./Select";
 import MultiSelect from "./MultiSelect";
 import Button from "./Button";
 import { useAppDispatch } from "../hooks/useAppDispatch";
+import { useDark } from "../hooks/useDark";
 import { useAppSelector } from "../hooks/useAppSelector";
 import { createGroup, updateGroup, fetchGroups } from "../store/slices/groupSlice";
 import { fetchUsers } from "../store/slices/userSlice";
@@ -18,6 +19,7 @@ import { ROLES } from "../constants/roles";
 
 export default function GroupModal({ visible, group, onClose }) {
   const dispatch = useAppDispatch();
+  const dark = useDark();
   const { list: users, listStatus } = useAppSelector((s) => s.user);
   const isEdit = !!group;
 
@@ -78,16 +80,16 @@ export default function GroupModal({ visible, group, onClose }) {
     <Modal visible={visible} transparent animationType="fade">
       <Pressable className="flex-1 bg-black/40 justify-center items-center px-4" onPress={onClose}>
         <Pressable
-          className="bg-surface rounded-card w-full border border-border"
+          className={`rounded-card w-full border ${dark ? "bg-darkcard border-white/15" : "bg-surface border-border"}`}
           style={{ maxWidth: 520 }}
           onPress={() => {}} // prevent bubbling
         >
           <ScrollView>
             <View className="p-6">
-              <Text className="text-lg font-bold text-text font-inter mb-1">
+              <Text className={`text-lg font-bold font-inter mb-1 ${dark ? "text-white" : "text-text"}`}>
                 {isEdit ? "Edit Group" : "Add Group"}
               </Text>
-              <Text className="text-sm text-text-muted font-inter mb-5">
+              <Text className={`text-sm font-inter mb-5 ${dark ? "text-white/60" : "text-text-muted"}`}>
                 {isEdit ? "Rename the group and adjust its members." : "Organize operators into a supervised team."}
               </Text>
 

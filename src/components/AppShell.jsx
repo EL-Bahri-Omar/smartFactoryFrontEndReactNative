@@ -3,7 +3,7 @@
 // Smaller screens: TopBar (+ BottomTabs on mobile) with the Sidebar
 // available as an overlay drawer via the hamburger button.
 // Uses useBreakpoint() for responsive switching. Dark mode flips the
-// background; cards stay light so content text remains readable.
+// background and all card surfaces (smooth slate) with light text.
 
 import { useState } from "react";
 import { View, Pressable } from "react-native";

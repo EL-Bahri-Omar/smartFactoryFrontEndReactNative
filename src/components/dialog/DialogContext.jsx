@@ -15,6 +15,7 @@
 import { createContext, useCallback, useContext, useRef, useState } from "react";
 import { View, Text, Pressable, Modal, ActivityIndicator } from "react-native";
 import Button from "../Button";
+import { useDark } from "../../hooks/useDark";
 
 const DialogContext = createContext({
   alert: async () => {},
@@ -28,6 +29,7 @@ let dialogId = 0;
 export function DialogProvider({ children }) {
   const [dialog, setDialog] = useState(null);
   const resolver = useRef(null);
+  const dark = useDark();
 
   const close = useCallback((value) => {
     setDialog(null);
@@ -88,7 +90,7 @@ export function DialogProvider({ children }) {
         >
           <Pressable
             onPress={() => {}}
-            className="bg-white w-full p-6 items-center"
+            className={`w-full p-6 items-center border ${dark ? "bg-darkcard border-white/15" : "bg-white border-transparent"}`}
             style={{ maxWidth: 380, borderRadius: 16, shadowColor: "#000", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.3, shadowRadius: 40, elevation: 12 }}
           >
             <View
@@ -100,10 +102,10 @@ export function DialogProvider({ children }) {
               </Text>
             </View>
             {!!dialog?.title && (
-              <Text className="text-lg font-bold text-text font-inter text-center mb-1">{dialog.title}</Text>
+              <Text className={`text-lg font-bold font-inter text-center mb-1 ${dark ? "text-white" : "text-text"}`}>{dialog.title}</Text>
             )}
             {!!dialog?.message && (
-              <Text className="text-sm text-text-muted font-inter text-center mb-5 leading-5">{dialog.message}</Text>
+              <Text className={`text-sm font-inter text-center mb-5 leading-5 ${dark ? "text-white/60" : "text-text-muted"}`}>{dialog.message}</Text>
             )}
             <View className="flex-row gap-3 w-full justify-center">
               {(dialog?.buttons || []).map((b) => (

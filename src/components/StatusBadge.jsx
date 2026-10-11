@@ -4,14 +4,16 @@
 
 import { View, Text } from "react-native";
 import { getMachineStatus } from "../lib/status";
+import { useDark } from "../hooks/useDark";
 
 export default function StatusBadge({ status, className = "" }) {
+  const dark = useDark();
   const { label, dotColor } = getMachineStatus(status);
 
   return (
-    <View className={`flex-row items-center gap-1.5 px-2 py-1 rounded-chip bg-bg ${className}`}>
+    <View className={`flex-row items-center gap-1.5 px-2 py-1 rounded-chip ${dark ? "bg-white/10" : "bg-bg"} ${className}`}>
       <View className="w-2 h-2 rounded-full" style={{ backgroundColor: dotColor }} />
-      <Text className="text-xs font-medium text-text font-inter">{label}</Text>
+      <Text className={`text-xs font-medium font-inter ${dark ? "text-white" : "text-text"}`}>{label}</Text>
     </View>
   );
 }

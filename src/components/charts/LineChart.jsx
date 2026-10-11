@@ -7,8 +7,17 @@ import { Animated, View } from "react-native";
 import Svg, { Circle, G, Line, Path, Text as SvgText } from "react-native-svg";
 import { COLORS } from "../../constants/colors";
 import { formatTime } from "../../lib/time";
+import { useDark } from "../../hooks/useDark";
 
-const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+// RN's Animated injects `collapsable={false}` into animated props. On web
+// that leaks onto the SVG <circle> DOM node and React warns ("non-boolean
+// attribute") — divs swallow it silently, SVG does not. Strip both spellings
+// before they reach the host element. Leaf circles are never flattened, so
+// this is safe on native too.
+function CleanCircle({ collapsable, collapsible, ...rest }) {
+  return <Circle {...rest} />;
+}
+const AnimatedCleanCircle = Animated.createAnimatedComponent(CleanCircle);
 
 const PAD = { top: 12, right: 12, bottom: 28, left: 36 };
 
@@ -75,6 +84,7 @@ export default function LineChart({
   pulseLast = false,
 }) {
   const [width, setWidth] = useState(0);
+  const dark = useDark();
   const pulse = useRef(new Animated.Value(0.35)).current;
 
   useEffect(() => {
@@ -155,14 +165,14 @@ export default function LineChart({
                   x2={PAD.left + innerW}
                   y1={y}
                   y2={y}
-                  stroke={COLORS.border}
+                  stroke={dark ? "rgba(255,255,255,0.12)" : COLORS.border}
                   strokeWidth={1}
                 />
                 <SvgText
                   x={PAD.left - 6}
                   y={y + 3}
                   fontSize={10}
-                  fill={COLORS.textMuted}
+                  fill={dark ? "#94A3B8" : COLORS.textMuted}
                   textAnchor="end"
                 >
                   {Math.round(tick)}
@@ -179,7 +189,7 @@ export default function LineChart({
                 x={x}
                 y={height - 8}
                 fontSize={10}
-                fill={COLORS.textMuted}
+                fill={dark ? "#94A3B8" : COLORS.textMuted}
                 textAnchor="middle"
               >
                 {formatTime(tick)}
@@ -203,7 +213,7 @@ export default function LineChart({
                 />
                 <Circle cx={last.x} cy={last.y} r={3.5} fill={s.color} />
                 {pulseLast && (
-                  <AnimatedCircle
+                  <AnimatedCleanCircle
                     cx={last.x}
                     cy={last.y}
                     r={pulse.interpolate({

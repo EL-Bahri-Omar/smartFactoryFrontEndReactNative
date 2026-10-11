@@ -162,7 +162,7 @@ export default function MapScreen() {
 
     return (
       <Card className="mb-4">
-        <Text className="text-base font-bold text-text font-inter mb-3">
+        <Text className={`text-base font-bold font-inter mb-3 ${dark ? "text-white" : "text-text"}`}>
           Zone Details
         </Text>
         {slotZones.map((z) => {
@@ -176,7 +176,7 @@ export default function MapScreen() {
               key={z.id}
               onPress={() => setSelectedZone(isSelected ? null : z.slot)}
               className={`flex-row items-center py-2.5 px-2 rounded-btn mb-1 ${
-                isSelected ? "bg-bg" : ""
+                isSelected ? (dark ? "bg-white/10" : "bg-bg") : ""
               }`}
             >
               {/* Zone chip */}
@@ -193,7 +193,7 @@ export default function MapScreen() {
               </View>
 
               <View className="flex-1">
-                <Text className="text-sm text-text font-inter">
+                <Text className={`text-sm font-inter ${dark ? "text-white" : "text-text"}`}>
                   {machineCount} machine{machineCount !== 1 ? "s" : ""}
                   {alertCount > 0 && (
                     <Text className="text-danger font-inter">
@@ -203,7 +203,7 @@ export default function MapScreen() {
                 </Text>
               </View>
 
-              <Text className="text-text-muted text-sm">›</Text>
+              <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>›</Text>
             </Pressable>
           );
         })}
@@ -225,7 +225,7 @@ export default function MapScreen() {
 
     return (
       <Card>
-        <Text className="text-base font-bold text-text font-inter mb-3">
+        <Text className={`text-base font-bold font-inter mb-3 ${dark ? "text-white" : "text-text"}`}>
           Recent Activity
         </Text>
         {events.map((event, idx) => {
@@ -244,16 +244,16 @@ export default function MapScreen() {
                 />
                 {idx < events.length - 1 && (
                   <View
-                    className="bg-border mt-1"
+                    className={`mt-1 ${dark ? "bg-white/15" : "bg-border"}`}
                     style={{ width: 1, height: 24 }}
                   />
                 )}
               </View>
               <View className="flex-1">
-                <Text className="text-sm text-text font-inter" numberOfLines={1}>
+                <Text className={`text-sm font-inter ${dark ? "text-white" : "text-text"}`} numberOfLines={1}>
                   {event.message || event.description || "Event"}
                 </Text>
-                <Text className="text-xs text-text-muted font-inter mt-0.5">
+                <Text className={`text-xs font-inter mt-0.5 ${dark ? "text-white/50" : "text-text-muted"}`}>
                   {event.createdAt ? relativeTime(event.createdAt) : "—"}
                 </Text>
               </View>
@@ -319,7 +319,7 @@ export default function MapScreen() {
                   <Text className={`text-xs font-inter font-bold mb-2 ${dark ? "text-white/80" : "text-text-muted"}`}>
                     {selectedMachine
                       ? `Moving ${selectedMachine.machine?.code || ""} — drop it on a zone, or click the machine again to cancel.`
-                      : " ** Hold-click a machine dot and drag it to another zone to move it."}
+                      : "Hold-click a machine dot and drag it to another zone to move it (ADMIN)."}
                   </Text>
                 )}
                 <FactoryMap

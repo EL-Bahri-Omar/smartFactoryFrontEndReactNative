@@ -9,7 +9,6 @@ import Svg, { Path } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useAppDispatch } from "../hooks/useAppDispatch";
-import { useAppSelector } from "../hooks/useAppSelector";
 import { useDark } from "../hooks/useDark";
 import { useDialog } from "./dialog/DialogContext";
 import { setNotifications } from "../store/slices/settingsSlice";
@@ -60,7 +59,9 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
   const dispatch = useAppDispatch();
   const dialog = useDialog();
   const dark = useDark();
-  const unreadCount = useAppSelector((state) => state.live.unreadCount);
+  // NOTE: no unread badge — the alerts/notifications screens are not built
+  // yet, and the live counter counts every sensor reading (hits 99+ in
+  // seconds). The bell returns with the alerts screen (Sprint 5).
   // Push content below the phone status bar / notch (0 on web).
   const insets = useSafeAreaInsets();
 
@@ -104,18 +105,9 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
         <Text style={{ fontSize: 18 }}>{dark ? "☀️" : "🌙"}</Text>
       </IconButton>
 
-      {/* Notification bell */}
+      {/* Notification bell (no badge until the alerts screen ships) */}
       <IconButton onPress={() => {}} label="Notifications">
-        <View>
-          <Text style={{ fontSize: 18 }}>🔔</Text>
-          {unreadCount > 0 && (
-            <View className="absolute -top-2 -right-2 bg-danger rounded-full min-w-[18px] h-[18px] items-center justify-center px-1">
-              <Text className="text-[10px] text-white font-bold font-inter">
-                {unreadCount > 99 ? "99+" : unreadCount}
-              </Text>
-            </View>
-          )}
-        </View>
+        <Text style={{ fontSize: 18 }}>🔔</Text>
       </IconButton>
 
       {/* Logout — red exit icon */}

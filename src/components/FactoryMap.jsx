@@ -21,6 +21,7 @@ import { useRef, useState } from "react";
 import { View, Text, Pressable, Platform } from "react-native";
 import { getMachineStatus } from "../lib/status";
 import { MACHINE_STATUS } from "../constants/roles";
+import { useDark } from "../hooks/useDark";
 
 // Status → dot color, from the single source of truth (lib/status.js).
 function statusDot(status) {
@@ -52,6 +53,7 @@ export default function FactoryMap({
   const isCompact = variant === "compact";
   const mapHeight = isCompact ? 220 : 380;
   const isWeb = Platform.OS === "web";
+  const dark = useDark();
   const [dragOverZone, setDragOverZone] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
   const [cursor, setCursor] = useState(null); // { x, y, code } — floating badge on web
@@ -92,8 +94,8 @@ export default function FactoryMap({
   }
 
   return (
+    <View className={`rounded-card border overflow-hidden ${dark ? "bg-darkcard border-white/10" : "bg-bg border-border"}`}>
     <View
-      className="bg-bg rounded-card border border-border overflow-hidden"
       style={{ height: mapHeight, position: "relative" }}
       // Web: clear a tap-selection when clicking empty map space.
       {...(isWeb
@@ -103,10 +105,10 @@ export default function FactoryMap({
       {/* Grid lines background */}
       <View className="absolute inset-0 opacity-30" pointerEvents="none">
         {[...Array(6)].map((_, i) => (
-          <View key={`h${i}`} className="absolute left-0 right-0 bg-border" style={{ top: `${(i + 1) * 16}%`, height: 1 }} />
+          <View key={`h${i}`} className={`absolute left-0 right-0 ${dark ? "bg-white/10" : "bg-border"}`} style={{ top: `${(i + 1) * 16}%`, height: 1 }} />
         ))}
         {[...Array(6)].map((_, i) => (
-          <View key={`v${i}`} className="absolute top-0 bottom-0 bg-border" style={{ left: `${(i + 1) * 16}%`, width: 1 }} />
+          <View key={`v${i}`} className={`absolute top-0 bottom-0 ${dark ? "bg-white/10" : "bg-border"}`} style={{ left: `${(i + 1) * 16}%`, width: 1 }} />
         ))}
       </View>
 
@@ -128,7 +130,7 @@ export default function FactoryMap({
           top: solo ? "4%" : zone.top,
           left: solo ? "4%" : zone.left,
           width: solo ? "92%" : zone.width,
-          height: solo ? "84%" : zone.height,
+          height: solo ? "92%" : zone.height,
           backgroundColor: isDragOver ? bgColor + "35" : bgColor + "18",
           borderWidth: isSelected || isDragOver ? 2 : 1,
           borderColor: isSelected || isDragOver ? bgColor : bgColor + "40",
@@ -302,7 +304,7 @@ export default function FactoryMap({
                       <View className="rounded-full" style={{ width: isCompact ? 6 : 8, height: isCompact ? 6 : 8, backgroundColor: dotColor }} />
                     </View>
                     {!isCompact && (
-                      <Text className="text-text-muted font-inter mt-0.5" style={{ fontSize: 7 }} numberOfLines={1}>
+                      <Text className={`font-inter mt-0.5 ${dark ? "text-white/60" : "text-text-muted"}`} style={{ fontSize: 7 }} numberOfLines={1}>
                         {m.code || m.machineCode || m.name || ""}
                       </Text>
                     )}
@@ -342,10 +344,11 @@ export default function FactoryMap({
           {cursor.code || "Moving…"}
         </div>
       )}
+    </View>
 
-      {/* Legend (full only) */}
+      {/* Legend (full only) — own row below the map so it never overlaps zones */}
       {!isCompact && (
-        <View className="absolute bottom-2 left-3 flex-row gap-3">
+        <View className="flex-row flex-wrap gap-x-3 gap-y-1 px-3 pt-2 pb-2.5">
           {[
             { label: "Running", color: statusDot(MACHINE_STATUS.RUNNING) },
             { label: "Idle", color: statusDot(MACHINE_STATUS.IDLE) },
@@ -355,7 +358,7 @@ export default function FactoryMap({
           ].map((item) => (
             <View key={item.label} className="flex-row items-center gap-1">
               <View className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
-              <Text className="text-text-muted font-inter" style={{ fontSize: 9 }}>
+              <Text className={`font-inter ${dark ? "text-white/60" : "text-text-muted"}`} style={{ fontSize: 9 }}>
                 {item.label}
               </Text>
             </View>

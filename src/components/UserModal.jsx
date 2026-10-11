@@ -9,6 +9,7 @@ import Input from "./Input";
 import Select from "./Select";
 import Button from "./Button";
 import { useAppDispatch } from "../hooks/useAppDispatch";
+import { useDark } from "../hooks/useDark";
 import { createUser, updateUserById, fetchUsers } from "../store/slices/userSlice";
 import { ROLES } from "../constants/roles";
 
@@ -26,6 +27,7 @@ const STATUS_OPTIONS = [
 
 export default function UserModal({ visible, user, onClose }) {
   const dispatch = useAppDispatch();
+  const dark = useDark();
   const isEdit = !!user;
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -88,13 +90,13 @@ export default function UserModal({ visible, user, onClose }) {
   return (
     <Modal visible={visible} transparent animationType="fade">
       <Pressable className="flex-1 bg-black/40 justify-center items-center px-4" onPress={onClose}>
-        <Pressable className="bg-surface rounded-card w-full border border-border" style={{ maxWidth: 480 }} onPress={() => {}}>
+        <Pressable className={`rounded-card w-full border ${dark ? "bg-darkcard border-white/15" : "bg-surface border-border"}`} style={{ maxWidth: 480 }} onPress={() => {}}>
           <ScrollView>
             <View className="p-6">
-              <Text className="text-lg font-bold text-text font-inter mb-1">
+              <Text className={`text-lg font-bold font-inter mb-1 ${dark ? "text-white" : "text-text"}`}>
                 {isEdit ? "Edit User" : "Add User"}
               </Text>
-              <Text className="text-sm text-text-muted font-inter mb-5">
+              <Text className={`text-sm font-inter mb-5 ${dark ? "text-white/60" : "text-text-muted"}`}>
                 {isEdit ? "Update role, status and details." : "New users start as Operator."}
               </Text>
 

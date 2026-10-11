@@ -54,7 +54,7 @@ export const SENSOR_UNIT = Object.freeze({
   TEMPERATURE: "°C",
   VIBRATION: "mm/s",
   CURRENT: "A",
-  RPM: "rpm",
+  RPM: "RPM",
 });
 
 export const NOTIFICATION_TYPE = Object.freeze({

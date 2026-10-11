@@ -4,8 +4,10 @@
 import { View } from "react-native";
 import { useEffect, useRef } from "react";
 import { Animated } from "react-native";
+import { useDark } from "../hooks/useDark";
 
 export default function Skeleton({ width, height = 16, rounded = false, className = "" }) {
+  const dark = useDark();
   const opacity = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -21,7 +23,7 @@ export default function Skeleton({ width, height = 16, rounded = false, classNam
 
   return (
     <Animated.View
-      className={`bg-border ${rounded ? "rounded-full" : "rounded-btn"} ${className}`}
+      className={`${dark ? "bg-white/10" : "bg-border"} ${rounded ? "rounded-full" : "rounded-btn"} ${className}`}
       style={{
         width,
         height,

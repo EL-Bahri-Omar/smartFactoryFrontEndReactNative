@@ -17,6 +17,7 @@ import EmptyState from "../../../src/components/EmptyState";
 import Avatar from "../../../src/components/Avatar";
 import GroupModal from "../../../src/components/GroupModal";
 import { useBreakpoint } from "../../../src/hooks/useBreakpoint";
+import { useDark } from "../../../src/hooks/useDark";
 import { useRole } from "../../../src/hooks/useRole";
 import { useAppDispatch } from "../../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../../src/hooks/useAppSelector";
@@ -29,6 +30,7 @@ export default function GroupsScreen() {
   const dialog = useDialog();
   const router = useRouter();
   const breakpoint = useBreakpoint();
+  const dark = useDark();
   const { isAdmin, canAccess, homeRoute } = useRole();
   const isDesktop = breakpoint === "desktop";
   const { list, totalElements, status, error, filters } = useAppSelector((s) => s.group);
@@ -100,7 +102,7 @@ export default function GroupsScreen() {
       <AppShell>
         <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
           <View className="flex-row items-center justify-between mb-5">
-            <Text className="text-2xl font-bold text-text font-inter">
+            <Text className={`text-2xl font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
               Groups{totalElements ? ` (${totalElements})` : ""}
             </Text>
             {isAdmin && (
@@ -108,10 +110,10 @@ export default function GroupsScreen() {
             )}
           </View>
 
-          <View className="flex-row items-center bg-bg border border-border rounded-btn px-3 py-2 gap-2 mb-4" style={{ width: 260 }}>
-            <Text className="text-text-muted text-sm">🔍</Text>
+          <View className={`flex-row items-center border rounded-btn px-3 py-2 gap-2 mb-4 ${dark ? "bg-white/5 border-white/15" : "bg-bg border-border"}`} style={{ width: 260 }}>
+            <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
             <TextInput
-              className="flex-1 text-sm text-text font-inter"
+              className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
               placeholder="Search groups..."
               placeholderTextColor="#94A3B8"
               value={searchInput}
@@ -132,7 +134,7 @@ export default function GroupsScreen() {
           {isLoading && (
             <Card>
               {[1, 2, 3].map((i) => (
-                <View key={i} className="flex-row items-center gap-4 py-3 border-b border-border">
+                <View key={i} className={`flex-row items-center gap-4 py-3 border-b ${dark ? "border-white/10" : "border-border"}`}>
                   <Skeleton width={140} height={14} />
                   <Skeleton width={160} height={14} />
                   <Skeleton width={80} height={14} />
@@ -156,26 +158,26 @@ export default function GroupsScreen() {
 
           {!isLoading && !isEmpty && !isError && (
             <Card className="overflow-hidden p-0">
-              <View className="flex-row items-center px-4 py-3 border-b border-border bg-bg">
-                <Text className="flex-1 text-xs font-semibold text-text-muted font-inter">Group</Text>
-                <Text className="w-48 text-xs font-semibold text-text-muted font-inter">Supervisor</Text>
-                <Text className="w-28 text-xs font-semibold text-text-muted font-inter">Operators</Text>
-                <Text className="w-28 text-xs font-semibold text-text-muted font-inter">Created</Text>
+              <View className={`flex-row items-center px-4 py-3 border-b ${dark ? "border-white/10 bg-white/5" : "border-border bg-bg"}`}>
+                <Text className={`flex-1 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Group</Text>
+                <Text className={`w-48 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Supervisor</Text>
+                <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Operators</Text>
+                <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Created</Text>
                 {isAdmin && (
-                  <Text className="w-28 text-xs font-semibold text-text-muted font-inter">Actions</Text>
+                  <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Actions</Text>
                 )}
               </View>
               {list.map((g, idx) => (
                 <Pressable
                   key={g.id || idx}
                   onPress={() => openDetail(g)}
-                  className={`flex-row items-center px-4 py-3 border-b border-border ${idx % 2 === 0 ? "bg-surface" : "bg-bg/50"}`}
-                  style={({ pressed }) => (pressed ? { backgroundColor: "#F0F4FA" } : {})}
+                  className={`flex-row items-center px-4 py-3 border-b ${dark ? "border-white/10" : "border-border"} ${dark ? (idx % 2 === 0 ? "" : "bg-white/5") : idx % 2 === 0 ? "bg-surface" : "bg-bg/50"}`}
+                  style={({ pressed }) => (pressed ? { backgroundColor: dark ? "rgba(255,255,255,0.08)" : "#F0F4FA" } : {})}
                 >
                   <Text className="flex-1 text-sm font-semibold text-primary font-inter" numberOfLines={1}>
                     {g.name}
                   </Text>
-                  <Text className="w-48 text-sm text-text-muted font-inter" numberOfLines={1}>
+                  <Text className={`w-48 text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>
                     {g.supervisorName || "—"}
                   </Text>
                   <View className="w-28">
@@ -185,7 +187,7 @@ export default function GroupsScreen() {
                       </Text>
                     </View>
                   </View>
-                  <Text className="w-28 text-xs text-text-muted font-inter" numberOfLines={1}>
+                  <Text className={`w-28 text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>
                     {g.createdAt ? formatDate(g.createdAt) : "—"}
                   </Text>
                   {isAdmin && (
@@ -214,7 +216,7 @@ export default function GroupsScreen() {
     <AppShell>
       <View className="flex-1">
         <View className="flex-row items-center justify-between mb-3">
-          <Text className="text-xl font-bold text-text font-inter">Groups</Text>
+          <Text className={`text-xl font-bold font-inter ${dark ? "text-white" : "text-text"}`}>Groups</Text>
           {isAdmin && (
             <Pressable onPress={openCreate} className="px-4 py-2 rounded-chip bg-primary">
               <Text className="text-xs font-semibold text-white font-inter">+ Add Group</Text>
@@ -222,10 +224,10 @@ export default function GroupsScreen() {
           )}
         </View>
 
-        <View className="flex-row items-center bg-surface border border-border rounded-btn px-3 py-2 gap-2 mb-3">
-          <Text className="text-text-muted text-sm">🔍</Text>
+        <View className={`flex-row items-center border rounded-btn px-3 py-2 gap-2 mb-3 ${dark ? "bg-white/5 border-white/15" : "bg-surface border-border"}`}>
+          <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
           <TextInput
-            className="flex-1 text-sm text-text font-inter"
+            className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
             placeholder="Search groups..."
             placeholderTextColor="#94A3B8"
             value={searchInput}
@@ -270,8 +272,8 @@ export default function GroupsScreen() {
                   <View className="flex-row items-center gap-3">
                     <Avatar name={item.name} size="sm" />
                     <View className="flex-1">
-                      <Text className="text-sm font-bold text-text font-inter">{item.name}</Text>
-                      <Text className="text-xs text-text-muted font-inter" numberOfLines={1}>
+                      <Text className={`text-sm font-bold font-inter ${dark ? "text-white" : "text-text"}`}>{item.name}</Text>
+                      <Text className={`text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>
                         {item.supervisorName ? `Supervised by ${item.supervisorName}` : "No supervisor"}
                       </Text>
                       <Text className="text-xs text-primary font-inter mt-0.5">

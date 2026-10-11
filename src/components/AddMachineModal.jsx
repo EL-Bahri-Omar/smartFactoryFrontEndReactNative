@@ -10,6 +10,7 @@ import Input from "./Input";
 import Select from "./Select";
 import Button from "./Button";
 import { useAppDispatch } from "../hooks/useAppDispatch";
+import { useDark } from "../hooks/useDark";
 import { useAppSelector } from "../hooks/useAppSelector";
 import { createMachine, updateMachine, fetchMachines, fetchMachineCounts } from "../store/slices/machineSlice";
 import { fetchZones } from "../store/slices/zoneSlice";
@@ -26,6 +27,7 @@ const STATUS_OPTIONS = [
 
 export default function AddMachineModal({ visible, machine, onClose }) {
   const dispatch = useAppDispatch();
+  const dark = useDark();
   const { list: zones } = useAppSelector((s) => s.zone);
   const isEdit = !!machine;
   const [name, setName] = useState("");
@@ -101,16 +103,16 @@ export default function AddMachineModal({ visible, machine, onClose }) {
         onPress={onClose}
       >
         <Pressable
-          className="bg-surface rounded-card w-full border border-border"
+          className={`rounded-card w-full border ${dark ? "bg-darkcard border-white/15" : "bg-surface border-border"}`}
           style={{ maxWidth: 480 }}
           onPress={() => {}} // prevent bubbling
         >
           <ScrollView>
             <View className="p-6">
-              <Text className="text-lg font-bold text-text font-inter mb-1">
+              <Text className={`text-lg font-bold font-inter mb-1 ${dark ? "text-white" : "text-text"}`}>
                 {isEdit ? "Edit Machine" : "Add Machine"}
               </Text>
-              <Text className="text-sm text-text-muted font-inter mb-5">
+              <Text className={`text-sm font-inter mb-5 ${dark ? "text-white/60" : "text-text-muted"}`}>
                 {isEdit ? "Update the machine details." : "Register a new machine to the monitoring system."}
               </Text>
 

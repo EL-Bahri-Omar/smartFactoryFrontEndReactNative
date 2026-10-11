@@ -1,23 +1,29 @@
 // src/store/services/readingService.js
 //
-// URLs are ASSUMED. Update + move to CONFIRMED in docs/api-contract.md
-// once the Sprint 4 monitoring endpoints ship.
+// CONFIRMED Sprint 3 against smartFactoryBackEndSpringBoot SensorReadingController.
+// GET /api/machines/{id}/readings?from=&to=&sensorType=&page=&size=&sort=
+// -> paginated { content, page, size, totalElements, totalPages }.
+// Accepts the Mongo id OR the code. Size caps at 100 server-side;
+// sort defaults to timestamp,desc — the chart requests timestamp,asc.
 
 import api from "../../lib/axios";
 import { ENDPOINTS, buildUrl } from "../../constants/api";
 import { SENSOR_UNIT } from "../../constants/roles";
 
 /**
- * GET /api/machines/{id}/readings?from=&to=&sensorType=
- * @param {{ machineId: string, from?: string, to?: string, sensorType?: string }} params
+ * GET /api/machines/{id}/readings
+ * @param {{ machineId: string, from?: string, to?: string, sensorType?: string, page?: number, size?: number, sort?: string }} params
  */
-export async function getByMachine({ machineId, from, to, sensorType } = {}) {
+export async function getByMachine({ machineId, from, to, sensorType, page = 0, size = 100, sort = "timestamp,asc" } = {}) {
   const url = buildUrl(ENDPOINTS.MACHINE_READINGS, { id: machineId });
   const response = await api.get(url, {
     params: {
       from,
       to,
       sensorType: sensorType || undefined,
+      page,
+      size,
+      sort,
     },
   });
   return normalizeReadings(response.data);

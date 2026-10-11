@@ -19,7 +19,7 @@ export function rangeToWindow(range = "6h") {
 
 export const fetchReadings = createAsyncThunk(
   "reading/fetch",
-  async ({ machineId, range = "6h", sensorType } = {}, { rejectWithValue }) => {
+  async ({ machineId, range = "6h", sensorType, size = 100 } = {}, { rejectWithValue }) => {
     try {
       const { from, to } = rangeToWindow(range);
       const list = await readingService.getByMachine({
@@ -27,6 +27,7 @@ export const fetchReadings = createAsyncThunk(
         from,
         to,
         sensorType,
+        size,
       });
       return { list, range, machineId };
     } catch (error) {

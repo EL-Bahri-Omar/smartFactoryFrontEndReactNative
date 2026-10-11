@@ -194,24 +194,24 @@ export default function MachinesListScreen() {
                     key={tab.label}
                     onPress={() => handleTabPress(tab.key)}
                     className={`px-3 py-1.5 rounded-chip flex-row items-center gap-1.5 ${
-                      active ? "bg-primary" : "bg-bg"
+                      active ? "bg-primary" : dark ? "bg-white/5 border border-white/15" : "bg-bg"
                     }`}
                   >
                     <Text
                       className={`text-xs font-medium font-inter ${
-                        active ? "text-white" : "text-text-muted"
+                        active ? "text-white" : dark ? "text-white/60" : "text-text-muted"
                       }`}
                     >
                       {tab.label}
                     </Text>
                     <View
                       className={`min-w-[18px] h-[18px] rounded-full items-center justify-center px-1 ${
-                        active ? "bg-white/20" : "bg-border"
+                        active ? "bg-white/20" : dark ? "bg-white/10" : "bg-border"
                       }`}
                     >
                       <Text
                         className={`text-[10px] font-semibold font-inter ${
-                          active ? "text-white" : "text-text-muted"
+                          active ? "text-white" : dark ? "text-white/60" : "text-text-muted"
                         }`}
                       >
                         {count}
@@ -232,10 +232,10 @@ export default function MachinesListScreen() {
                   options={[{ value: null, label: "All Zones" }, ...(zones || []).map((z) => ({ value: z.id, label: z.name }))]}
                 />
               </View>
-              <View className="flex-row items-center bg-bg border border-border rounded-btn px-3 py-2 gap-2" style={{ width: 220 }}>
-                <Text className="text-text-muted text-sm">🔍</Text>
+              <View className={`flex-row items-center border rounded-btn px-3 py-2 gap-2 ${dark ? "bg-white/5 border-white/15" : "bg-bg border-border"}`} style={{ width: 220 }}>
+                <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
                 <TextInput
-                  className="flex-1 text-sm text-text font-inter"
+                  className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
                   placeholder="Search machines..."
                   placeholderTextColor="#94A3B8"
                   value={searchInput}
@@ -267,7 +267,7 @@ export default function MachinesListScreen() {
           {isLoading && (
             <Card>
               {[1, 2, 3, 4, 5].map((i) => (
-                <View key={i} className="flex-row items-center gap-4 py-3 border-b border-border">
+                <View key={i} className={`flex-row items-center gap-4 py-3 border-b ${dark ? "border-white/10" : "border-border"}`}>
                   <Skeleton width={60} height={14} />
                   <Skeleton width={120} height={14} />
                   <Skeleton width={60} height={14} />
@@ -303,16 +303,16 @@ export default function MachinesListScreen() {
           {!isLoading && !isEmpty && !isError && (
             <Card className="overflow-hidden p-0">
               {/* Header */}
-              <View className="flex-row items-center px-4 py-3 border-b border-border bg-bg">
-                <Text className="w-20 text-xs font-semibold text-text-muted font-inter">ID</Text>
-                <Text className="flex-1 text-xs font-semibold text-text-muted font-inter">Name</Text>
-                <Text className="w-24 text-xs font-semibold text-text-muted font-inter">Type</Text>
-                <Text className="w-20 text-xs font-semibold text-text-muted font-inter">Zone</Text>
-                <Text className="w-28 text-xs font-semibold text-text-muted font-inter">Status</Text>
-                <Text className="w-32 text-xs font-semibold text-text-muted font-inter">Health</Text>
-                <Text className="w-28 text-xs font-semibold text-text-muted font-inter">Last Update</Text>
+              <View className={`flex-row items-center px-4 py-3 border-b ${dark ? "border-white/10 bg-white/5" : "border-border bg-bg"}`}>
+                <Text className={`w-20 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>ID</Text>
+                <Text className={`flex-1 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Name</Text>
+                <Text className={`w-24 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Type</Text>
+                <Text className={`w-20 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Zone</Text>
+                <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Status</Text>
+                <Text className={`w-32 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Health</Text>
+                <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Last Update</Text>
                 {isAdmin && (
-                  <Text className="w-24 text-xs font-semibold text-text-muted font-inter">Actions</Text>
+                  <Text className={`w-24 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Actions</Text>
                 )}
               </View>
               {/* Rows */}
@@ -320,21 +320,21 @@ export default function MachinesListScreen() {
                 <Pressable
                   key={machine.id || idx}
                   onPress={() => handleRowPress(machine)}
-                  className={`flex-row items-center px-4 py-3 border-b border-border ${
-                    idx % 2 === 0 ? "bg-surface" : "bg-bg/50"
+                  className={`flex-row items-center px-4 py-3 border-b ${dark ? "border-white/10" : "border-border"} ${
+                    dark ? (idx % 2 === 0 ? "" : "bg-white/5") : idx % 2 === 0 ? "bg-surface" : "bg-bg/50"
                   }`}
-                  style={({ pressed }) => (pressed ? { backgroundColor: "#F0F4FA" } : {})}
+                  style={({ pressed }) => (pressed ? { backgroundColor: dark ? "rgba(255,255,255,0.08)" : "#F0F4FA" } : {})}
                 >
                   <Text className="w-20 text-sm font-semibold text-primary font-inter" numberOfLines={1}>
                     {machine.code || machine.machineCode || machine.id}
                   </Text>
-                  <Text className="flex-1 text-sm text-text font-inter" numberOfLines={1}>
+                  <Text className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`} numberOfLines={1}>
                     {machine.name}
                   </Text>
-                  <Text className="w-24 text-sm text-text-muted font-inter" numberOfLines={1}>
+                  <Text className={`w-24 text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>
                     {machine.type || "—"}
                   </Text>
-                  <Text className="w-20 text-sm text-text-muted font-inter" numberOfLines={1}>
+                  <Text className={`w-20 text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>
                     {machine.zoneName || machine.zone || "—"}
                   </Text>
                   <View className="w-28">
@@ -343,7 +343,7 @@ export default function MachinesListScreen() {
                   <View className="w-32">
                     <HealthBar value={machine.health} />
                   </View>
-                  <Text className="w-28 text-xs text-text-muted font-inter" numberOfLines={1}>
+                  <Text className={`w-28 text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>
                     {machine.updatedAt || machine.lastUpdate ? relativeTime(machine.updatedAt || machine.lastUpdate) : "—"}
                   </Text>
                   {isAdmin && (
@@ -393,10 +393,10 @@ export default function MachinesListScreen() {
         </View>
 
         {/* Search bar */}
-        <View className="flex-row items-center bg-surface border border-border rounded-btn px-3 py-2 gap-2 mb-3">
-          <Text className="text-text-muted text-sm">🔍</Text>
+        <View className={`flex-row items-center border rounded-btn px-3 py-2 gap-2 mb-3 ${dark ? "bg-white/5 border-white/15" : "bg-surface border-border"}`}>
+          <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
           <TextInput
-            className="flex-1 text-sm text-text font-inter"
+            className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
             placeholder="Search machines..."
             placeholderTextColor="#94A3B8"
             value={searchInput}
@@ -415,12 +415,12 @@ export default function MachinesListScreen() {
                 key={tab.label}
                 onPress={() => handleTabPress(tab.key)}
                 className={`px-3 py-2 rounded-chip flex-row items-center gap-1.5 ${
-                  active ? "bg-primary" : "bg-surface border border-border"
+                  active ? "bg-primary" : dark ? "bg-white/5 border border-white/15" : "bg-surface border border-border"
                 }`}
               >
                 <Text
                   className={`text-xs font-medium font-inter ${
-                    active ? "text-white" : "text-text-muted"
+                    active ? "text-white" : dark ? "text-white/60" : "text-text-muted"
                   }`}
                 >
                   {tab.label} · {count}
@@ -489,17 +489,17 @@ export default function MachinesListScreen() {
                 <Card>
                   <View className="flex-row items-start justify-between mb-2">
                     <View className="flex-1 mr-3">
-                      <Text className="text-sm font-semibold text-text font-inter">
+                      <Text className={`text-sm font-semibold font-inter ${dark ? "text-white" : "text-text"}`}>
                         {item.code || item.machineCode || item.id}
                       </Text>
-                      <Text className="text-xs text-text-muted font-inter mt-0.5">
+                      <Text className={`text-xs font-inter mt-0.5 ${dark ? "text-white/60" : "text-text-muted"}`}>
                         {item.name || item.type || "—"}
                       </Text>
                     </View>
                     <StatusBadge status={item.status} />
                   </View>
                   <HealthBar value={item.health} />
-                  <Text className="text-[11px] text-text-muted font-inter mt-2">
+                  <Text className={`text-[11px] font-inter mt-2 ${dark ? "text-white/50" : "text-text-muted"}`}>
                     Last update {item.updatedAt || item.lastUpdate ? relativeTime(item.updatedAt || item.lastUpdate) : "—"}
                   </Text>
                   {isAdmin && (

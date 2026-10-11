@@ -3,6 +3,7 @@
 import { View, Text } from "react-native";
 import Card from "./Card";
 import DeltaChip from "./DeltaChip";
+import { useDark } from "../hooks/useDark";
 
 export default function MetricCard({
   label,
@@ -12,15 +13,16 @@ export default function MetricCard({
   icon,
   iconBgClass = "bg-primary-soft",
 }) {
+  const dark = useDark();
   return (
     <Card className="flex-1 min-w-[140px]">
       <View className="flex-row items-start justify-between">
         <View className="flex-1 mr-2">
-          <Text className="text-xs text-text-muted font-inter mb-1">{label}</Text>
+          <Text className={`text-xs font-inter mb-1 ${dark ? "text-white/60" : "text-text-muted"}`}>{label}</Text>
           <View className="flex-row items-baseline gap-1">
-            <Text className="text-2xl font-bold text-text font-inter">{value}</Text>
+            <Text className={`text-2xl font-bold font-inter ${dark ? "text-white" : "text-text"}`}>{value}</Text>
             {unit ? (
-              <Text className="text-sm text-text-muted font-inter">{unit}</Text>
+              <Text className={`text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>{unit}</Text>
             ) : null}
           </View>
           {delta != null && !Number.isNaN(delta) ? (

@@ -50,6 +50,18 @@ export function getAlertStatus(status) {
   return ALERT_STATUS_MAP[status] || { label: status, color: COLORS.offline };
 }
 
+// ── Sensor status (Sprint 3 — backend SensorStatus) ─────────────────────
+
+const SENSOR_STATUS_MAP = {
+  ONLINE: { label: "Online", color: COLORS.success, dotColor: COLORS.success },
+  OFFLINE: { label: "Offline", color: COLORS.offline, dotColor: COLORS.offline },
+  MAINTENANCE: { label: "Maintenance", color: COLORS.warning, dotColor: COLORS.warning },
+};
+
+export function getSensorStatus(status) {
+  return SENSOR_STATUS_MAP[status] || { label: status, color: COLORS.offline, dotColor: COLORS.offline };
+}
+
 // ── Ticket status ───────────────────────────────────────────────────────
 
 const TICKET_STATUS_MAP = {

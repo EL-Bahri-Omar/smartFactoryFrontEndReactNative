@@ -86,8 +86,8 @@ export default function MyGroupScreen() {
           <>
             <View className="flex-row items-start justify-between mb-4 gap-3">
               <View className="flex-1">
-                <Text className="text-2xl font-bold text-text font-inter">{myGroup.name}</Text>
-                <Text className="text-sm text-text-muted font-inter mt-0.5">
+                <Text className={`text-2xl font-bold font-inter ${dark ? "text-white" : "text-text"}`}>{myGroup.name}</Text>
+                <Text className={`text-sm font-inter mt-0.5 ${dark ? "text-white/60" : "text-text-muted"}`}>
                   {(myGroup.operatorCount ?? (myGroup.operators || []).length)} operators
                   {myGroup.supervisorName ? ` · Supervised by ${myGroup.supervisorName}` : ""}
                 </Text>
@@ -102,23 +102,23 @@ export default function MyGroupScreen() {
             <View className={isDesktop ? "flex-row gap-6 items-stretch" : "gap-0"}>
               <View className={isDesktop ? "flex-1" : ""}>
                 <Card className="mb-4">
-                  <Text className="text-base font-bold text-text font-inter mb-3">Supervisor</Text>
+                  <Text className={`text-base font-bold font-inter mb-3 ${dark ? "text-white" : "text-text"}`}>Supervisor</Text>
                   {supervisor ? (
                     <View className="flex-row items-center gap-3">
                       <Avatar name={fullName(supervisor)} size="sm" />
                       <View className="flex-1">
-                        <Text className="text-sm font-bold text-text font-inter">{fullName(supervisor)}</Text>
-                        <Text className="text-xs text-text-muted font-inter">{supervisor.email}</Text>
+                        <Text className={`text-sm font-bold font-inter ${dark ? "text-white" : "text-text"}`}>{fullName(supervisor)}</Text>
+                        <Text className={`text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>{supervisor.email}</Text>
                       </View>
                     </View>
                   ) : (
-                    <Text className="text-sm text-text-muted font-inter">No supervisor assigned.</Text>
+                    <Text className={`text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>No supervisor assigned.</Text>
                   )}
                 </Card>
               </View>
               <View className={isDesktop ? "flex-1" : ""}>
                 <Card>
-                  <Text className="text-base font-bold text-text font-inter mb-3">
+                  <Text className={`text-base font-bold font-inter mb-3 ${dark ? "text-white" : "text-text"}`}>
                     Operators ({operators.length})
                   </Text>
                   {membersStatus === "loading" && (
@@ -133,19 +133,19 @@ export default function MyGroupScreen() {
                   )}
                   <View className="gap-2">
                     {operators.map((u) => (
-                      <View key={u.id} className="flex-row items-center gap-3 bg-bg rounded-btn px-3 py-2.5">
+                      <View key={u.id} className={`flex-row items-center gap-3 rounded-btn px-3 py-2.5 ${dark ? "bg-white/5" : "bg-bg"}`}>
                         <Avatar name={fullName(u)} size="sm" />
                         <View className="flex-1">
-                          <Text className="text-sm font-bold text-text font-inter" numberOfLines={1}>
+                          <Text className={`text-sm font-bold font-inter ${dark ? "text-white" : "text-text"}`} numberOfLines={1}>
                             {fullName(u)}
                             {myGroup.supervisorId === u.id && (
                               <Text className="text-xs text-primary font-inter"> · Supervisor</Text>
                             )}
                             {u.id === user?.id && (
-                              <Text className="text-xs text-text-muted font-inter"> · You</Text>
+                              <Text className={`text-xs font-inter ${dark ? "text-white/50" : "text-text-muted"}`}> · You</Text>
                             )}
                           </Text>
-                          <Text className="text-xs text-text-muted font-inter" numberOfLines={1}>{u.email}</Text>
+                          <Text className={`text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>{u.email}</Text>
                         </View>
                       </View>
                     ))}

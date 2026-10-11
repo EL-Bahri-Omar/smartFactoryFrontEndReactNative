@@ -19,6 +19,7 @@ export const COLORS = Object.freeze({
   text: "#0F172A", // Primary text
   textMuted: "#64748B", // Secondary text
   border: "#E2E8F0", // Card borders, dividers
+  darkCard: "#1E293B", // Card surface in dark mode (smooth slate, not black)
   chartTemp: "#EA580C", // Temperature series (orange/red)
   chartVibration: "#7C3AED", // Vibration series (purple)
   chartCurrent: "#2563EB", // Current series (blue)

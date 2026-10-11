@@ -27,8 +27,8 @@ export const ENDPOINTS = Object.freeze({
   // --- Machines (CONFIRMED Sprint 1 — MachineController) ---
   MACHINES: "/api/machines", // CONFIRMED — GET paginated { content, page, size, totalElements, totalPages }, params zoneId/status/search/page/size/sort
   MACHINE_BY_ID: "/api/machines/:id", // CONFIRMED — GET one; PUT update (ADMIN); DELETE 204 (ADMIN)
-  MACHINE_SENSORS: "/api/machines/:id/sensors", // CONFIRMED — Sprint 1 returns [] (sensors ship in Sprint 2)
-  MACHINE_READINGS: "/api/machines/:id/readings", // ASSUMED — no backend yet (Sprint 4)
+  MACHINE_SENSORS: "/api/machines/:id/sensors", // CONFIRMED Sprint 3 — GET array [{ id, machineId, type, unit, status, lastSeen, ... }]. NOTE: resolve with the Mongo id, not the code
+  MACHINE_READINGS: "/api/machines/:id/readings", // CONFIRMED Sprint 3 — GET paginated { content, ... }, params from/to/sensorType/page/size/sort. Accepts Mongo id OR code
 
   // --- Zones (CONFIRMED Sprint 1 — ZoneController) ---
   ZONES: "/api/zones", // CONFIRMED — GET returns array [{ id, name, machineCount, ... }]
@@ -42,13 +42,10 @@ export const ENDPOINTS = Object.freeze({
   GROUP_OPERATOR: "/api/groups/:groupId/operators/:userId", // CONFIRMED — POST add / DELETE remove (ADMIN). Backend validates OPERATOR role, dedupes, clears supervisor if removed
   GROUP_SUPERVISOR: "/api/groups/:groupId/supervisor", // CONFIRMED — GET supervisor (any role, 204 if none); PUT { supervisorId } (ADMIN, OPERATOR or RESPONSABLE_INDUSTRIEL)
 
-  // --- Sensors ---
-  SENSORS: "/api/sensors", // ASSUMED — confirm with backend
-  SENSOR_BY_ID: "/api/sensors/:id", // ASSUMED — confirm with backend
-
-  // --- Readings ---
-  READINGS: "/api/readings", // ASSUMED — confirm with backend
-  READINGS_BY_SENSOR: "/api/readings/sensor/:sensorId", // ASSUMED — confirm with backend
+  // NOTE: no /api/sensors or /api/readings top-level routes on the backend.
+  // Sensors and readings are always addressed through their machine:
+  // MACHINE_SENSORS and MACHINE_READINGS above. No per-machine seuil
+  // endpoints exist either — thresholds are hardcoded server-side (Sprint 3).
 
   // --- Alerts ---
   ALERTS: "/api/alerts", // ASSUMED — confirm with backend
