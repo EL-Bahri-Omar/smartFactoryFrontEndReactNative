@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { View, Text, ScrollView, Pressable } from "react-native";
+import { useRouter } from "expo-router";
 import AppShell from "../../src/components/AppShell";
 import Card from "../../src/components/Card";
 import FactoryMap from "../../src/components/FactoryMap";
@@ -19,7 +20,7 @@ import { useBreakpoint } from "../../src/hooks/useBreakpoint";
 import { useDark } from "../../src/hooks/useDark";
 import { useAppDispatch } from "../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../src/hooks/useAppSelector";
-import { useRole } from "../../src/hooks/useRole";
+import { useRole, PERMISSIONS } from "../../src/hooks/useRole";
 import { fetchZones, fetchZoneMachines } from "../../src/store/slices/zoneSlice";
 import { updateMachine } from "../../src/store/slices/machineSlice";
 import { fetchRecentEvents } from "../../src/store/slices/eventSlice";
@@ -46,10 +47,14 @@ const EVENT_DOTS = {
 
 export default function MapScreen() {
   const dispatch = useAppDispatch();
+  const router = useRouter();
   const dialog = useDialog();
   const breakpoint = useBreakpoint();
   const dark = useDark();
-  const { isAdmin } = useRole();
+  // Zone moves are machine updates (MACHINE_WRITE); viewing needs ZONE_READ.
+  const { canAccess, homeRoute, hasPermission } = useRole();
+  const isAdmin = hasPermission(PERMISSIONS.MACHINE_WRITE);
+  const canView = canAccess("map");
   const isDesktop = breakpoint === "desktop";
 
   const { list: zones, machinesByZone, status: zoneStatus, error: zoneError } =
@@ -63,21 +68,21 @@ export default function MapScreen() {
   // Subscribe to live zone updates
   useLiveTopic("/topic/zones");
 
-  // Fetch on mount
+  // Fetch on mount + when viewing permission flips (granted elsewhere).
   useEffect(() => {
+    if (!canView) return;
     dispatch(fetchZones());
     dispatch(fetchRecentEvents({ limit: 10 }));
-  }, [dispatch]);
+  }, [dispatch, canView]);
 
   // Fetch machines for each zone once zones load
   useEffect(() => {
-    if (zones.length > 0) {
-      zones.forEach((z) => {
-        const zoneId = z.id || z.zoneId || z.name;
-        if (zoneId) dispatch(fetchZoneMachines(zoneId));
-      });
-    }
-  }, [dispatch, zones]);
+    if (!canView || zones.length === 0) return;
+    zones.forEach((z) => {
+      const zoneId = z.id || z.zoneId || z.name;
+      if (zoneId) dispatch(fetchZoneMachines(zoneId));
+    });
+  }, [dispatch, zones, canView]);
 
   const isLoading = zoneStatus === "loading";
   const isError = zoneStatus === "error";
@@ -104,7 +109,7 @@ export default function MapScreen() {
   async function handleMoveMachine(machine, fromSlot, toSlot) {
     if (!machine || !fromSlot || !toSlot || fromSlot === toSlot) return;
     if (!isAdmin) {
-      await dialog.alert("Not allowed", "Only administrators can move machines between zones.");
+      await dialog.alert("Not allowed", "Moving machines requires the MACHINE_WRITE permission.");
       return;
     }
     const fromZone = realZoneBySlot[fromSlot];
@@ -150,6 +155,20 @@ export default function MapScreen() {
   }
 
   // ── ZONE DETAILS ────────────────────────────────────────────────────
+
+  if (!canView) {
+    return (
+      <AppShell>
+        <Card>
+          <EmptyState
+            title="Restricted area"
+            message="The factory map requires the ZONE_READ permission."
+            action={<Button title="Go Home" variant="primary" size="sm" onPress={() => router.replace(homeRoute)} />}
+          />
+        </Card>
+      </AppShell>
+    );
+  }
 
   function ZoneDetailsList() {
     if (slotZones.length === 0) {

@@ -97,13 +97,51 @@ export const updateUserById = createAsyncThunk(
   }
 );
 
-/** DELETE /api/users/:id (ADMIN) */
+/** DELETE /api/users/:id (USER_WRITE) */
 export const deleteUser = createAsyncThunk(
   "user/delete",
   async (id, { rejectWithValue }) => {
     try {
       await userService.remove(id);
       return id;
+    } catch (error) {
+      return rejectWithValue(error);
+    }
+  }
+);
+
+/** GET /api/users/permissions/catalog (any authenticated role) */
+export const fetchPermissionsCatalog = createAsyncThunk(
+  "user/fetchPermissionsCatalog",
+  async (_, { rejectWithValue }) => {
+    try {
+      return await userService.getPermissionsCatalog();
+    } catch (error) {
+      return rejectWithValue(error);
+    }
+  }
+);
+
+/** GET /api/users/:id/permissions (USER_READ) -> UserPermissionsDto */
+export const fetchUserPermissions = createAsyncThunk(
+  "user/fetchPermissions",
+  async (id, { rejectWithValue }) => {
+    try {
+      const dto = await userService.getUserPermissions(id);
+      return dto;
+    } catch (error) {
+      return rejectWithValue(error);
+    }
+  }
+);
+
+/** PUT /api/users/:id/permissions { permissions } (USER_PERMISSIONS_MANAGE) */
+export const updateUserPermissions = createAsyncThunk(
+  "user/updatePermissions",
+  async ({ id, permissions }, { rejectWithValue }) => {
+    try {
+      const dto = await userService.updateUserPermissions(id, permissions);
+      return dto;
     } catch (error) {
       return rejectWithValue(error);
     }
@@ -125,6 +163,14 @@ const userSlice = createSlice({
     totalElements: 0,
     listStatus: "idle",   // 'idle' | 'loading' | 'succeeded' | 'error'
     listError: null,
+    catalog: null,        // permissions catalog { permissions, roles }
+    catalogStatus: "idle",
+    catalogError: null,
+    permsDetail: null,    // UserPermissionsDto for the user being edited
+    permsStatus: "idle",  // 'idle' | 'loading' | 'succeeded' | 'error'
+    permsError: null,
+    permsSaveStatus: "idle", // 'idle' | 'saving' | 'saved' | 'error'
+    permsSaveError: null,
   },
   reducers: {
     clearSaveStatus(state) {
@@ -133,6 +179,13 @@ const userSlice = createSlice({
     clearPasswordStatus(state) {
       state.passwordStatus = "idle";
       state.passwordError = null;
+    },
+    clearPermsDetail(state) {
+      state.permsDetail = null;
+      state.permsStatus = "idle";
+      state.permsError = null;
+      state.permsSaveStatus = "idle";
+      state.permsSaveError = null;
     },
   },
   extraReducers: (builder) => {
@@ -212,8 +265,56 @@ const userSlice = createSlice({
     builder.addCase(deleteUser.fulfilled, (state, action) => {
       state.list = state.list.filter((u) => u.id !== action.payload);
     });
+
+    // Permissions catalog
+    builder
+      .addCase(fetchPermissionsCatalog.pending, (state) => {
+        state.catalogStatus = "loading";
+        state.catalogError = null;
+      })
+      .addCase(fetchPermissionsCatalog.fulfilled, (state, action) => {
+        state.catalogStatus = "succeeded";
+        state.catalog = action.payload;
+      })
+      .addCase(fetchPermissionsCatalog.rejected, (state, action) => {
+        state.catalogStatus = "error";
+        state.catalogError = action.payload || { message: "Failed to load permissions catalog" };
+      });
+
+    // One user's permissions detail
+    builder
+      .addCase(fetchUserPermissions.pending, (state) => {
+        state.permsStatus = "loading";
+        state.permsError = null;
+        state.permsSaveStatus = "idle";
+        state.permsSaveError = null;
+      })
+      .addCase(fetchUserPermissions.fulfilled, (state, action) => {
+        state.permsStatus = "succeeded";
+        state.permsDetail = action.payload;
+      })
+      .addCase(fetchUserPermissions.rejected, (state, action) => {
+        state.permsStatus = "error";
+        state.permsError = action.payload || { message: "Failed to load permissions" };
+        state.permsDetail = null;
+      });
+
+    // Save permissions checklist
+    builder
+      .addCase(updateUserPermissions.pending, (state) => {
+        state.permsSaveStatus = "saving";
+        state.permsSaveError = null;
+      })
+      .addCase(updateUserPermissions.fulfilled, (state, action) => {
+        state.permsSaveStatus = "saved";
+        state.permsDetail = action.payload;
+      })
+      .addCase(updateUserPermissions.rejected, (state, action) => {
+        state.permsSaveStatus = "error";
+        state.permsSaveError = action.payload || { message: "Failed to save permissions" };
+      });
   },
 });
 
-export const { clearSaveStatus, clearPasswordStatus } = userSlice.actions;
+export const { clearSaveStatus, clearPasswordStatus, clearPermsDetail } = userSlice.actions;
 export default userSlice.reducer;

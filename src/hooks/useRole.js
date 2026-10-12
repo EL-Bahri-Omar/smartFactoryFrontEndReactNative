@@ -1,14 +1,16 @@
 // src/hooks/useRole.js
-// UI-only role gating (RB10). Never rely on this for security.
+// UI-only gating (RB10). Never rely on this for security — the backend
+// enforces every permission server-side (403 otherwise).
 //
-// Page access map (per product rule):
-// - Dashboard, Machines, Maintenance → ADMIN + RESPONSABLE_INDUSTRIEL only
-//   (writes inside Machines stay ADMIN-only).
-// - Users → ADMIN only.
-// - Map, Alerts, Profile, Settings → every authenticated role.
+// Two gating dimensions:
+// - Roles (legacy page rules): can(...roles), canAccess(pageKey).
+// - Granular permissions (backend Permission catalog): hasPermission(...perms)
+//   reads the signed-in user's `effectivePermissions` (login/me payloads carry
+//   it; falls back to role defaults when absent).
 
 import { useAppSelector } from "./useAppSelector";
 import { ROLES } from "../constants/roles";
+import { PERMISSIONS, hasPermission as checkPerms, hasAnyPermission as checkAnyPerms } from "../constants/permissions";
 
 const SUPERVISORS = [ROLES.ADMIN, ROLES.RESPONSABLE_INDUSTRIEL];
 
@@ -19,6 +21,18 @@ export const ACCESS = Object.freeze({
   users: [ROLES.ADMIN],
   groups: [ROLES.ADMIN],
 });
+
+// Page -> required permission(s). When present, canAccess checks effective
+// permissions instead of roles. Pages without an entry keep role rules.
+export const PERMISSION_ACCESS = Object.freeze({
+  machines: [PERMISSIONS.MACHINE_READ],
+  map: [PERMISSIONS.ZONE_READ],
+  users: [PERMISSIONS.USER_READ],
+  groups: [PERMISSIONS.GROUP_READ],
+  myGroup: [PERMISSIONS.GROUP_READ],
+});
+
+export { PERMISSIONS };
 
 export function homeRouteFor(role) {
   return SUPERVISORS.includes(role) ? "/(app)/dashboard" : "/(app)/map";
@@ -35,19 +49,30 @@ export function useRole() {
 
   /**
    * Check if the current user's role is in the allowed list.
-   * @param  {...string} allowedRoles  e.g. can(ROLES.ADMIN, ROLES.TECHNICIAN)
-   * @returns {boolean}
+   * e.g. can(ROLES.ADMIN, ROLES.TECHNICIAN)
    */
   function can(...allowedRoles) {
     if (!role) return false;
     return allowedRoles.includes(role);
   }
 
+  /** True when the user effectively holds EVERY listed permission. */
+  function hasPermission(...perms) {
+    return checkPerms(user, ...perms);
+  }
+
+  /** True when the user effectively holds AT LEAST ONE listed permission. */
+  function hasAnyPermission(...perms) {
+    return checkAnyPerms(user, ...perms);
+  }
+
   /**
-   * Check page access by key: dashboard | machines | maintenance | users.
-   * Everything else is open to any authenticated role.
+   * Check page access by key. Permission-mapped pages use effective
+   * permissions; dashboard/maintenance keep the supervisor role rule.
    */
   function canAccess(key) {
+    const perms = PERMISSION_ACCESS[key];
+    if (perms) return hasPermission(...perms);
     const allowed = ACCESS[key];
     if (!allowed) return true;
     return can(...allowed);
@@ -55,11 +80,14 @@ export function useRole() {
 
   return {
     role,
+    user,
     isAdmin,
     isOperator,
     isTechnician,
     isResponsable,
     can,
+    hasPermission,
+    hasAnyPermission,
     canAccess,
     homeRoute: homeRouteFor(role),
   };

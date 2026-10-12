@@ -26,6 +26,7 @@ import groupReducer from "./slices/groupSlice";
 import settingsReducer from "./slices/settingsSlice";
 import aiReducer from "./slices/aiSlice";
 import liveReducer from "./slices/liveSlice";
+import thresholdReducer from "./slices/thresholdSlice";
 
 // ── Configure the store ────────────────────────────────────────────────
 
@@ -49,6 +50,7 @@ export const store = configureStore({
     settings: settingsReducer,
     ai: aiReducer,
     live: liveReducer,
+    threshold: thresholdReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

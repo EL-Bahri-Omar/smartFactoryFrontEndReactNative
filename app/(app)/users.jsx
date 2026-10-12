@@ -1,9 +1,10 @@
 // app/(app)/users.jsx
 //
-// Users — ADMIN only, web + mobile, same file.
-// Web: table Name · Email · Role · Status · Verified · actions (Edit/Delete).
+// Users — web + mobile, same file.
+// Gating is permission-based (backend USER_* authorities, UI-only mirroring):
+// view = USER_READ, Add/Edit/Delete = USER_WRITE, checklist = USER_PERMISSIONS_MANAGE.
+// Web: table Name · Email · Role · Status · Verified · actions.
 // Mobile: search + card list.
-// Non-admins see an "Administrators only" empty state (RB10, UI-only gating).
 
 import { useEffect, useMemo, useState } from "react";
 import { View, Text, ScrollView, Pressable, TextInput, FlatList } from "react-native";
@@ -14,9 +15,10 @@ import Skeleton from "../../src/components/Skeleton";
 import EmptyState from "../../src/components/EmptyState";
 import Avatar from "../../src/components/Avatar";
 import UserModal from "../../src/components/UserModal";
+import PermissionsModal from "../../src/components/PermissionsModal";
 import { useBreakpoint } from "../../src/hooks/useBreakpoint";
 import { useDark } from "../../src/hooks/useDark";
-import { useRole } from "../../src/hooks/useRole";
+import { useRole, PERMISSIONS } from "../../src/hooks/useRole";
 import { useAppDispatch } from "../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../src/hooks/useAppSelector";
 import { fetchUsers, deleteUser } from "../../src/store/slices/userSlice";
@@ -34,27 +36,35 @@ export default function UsersScreen() {
   const dispatch = useAppDispatch();
   const dialog = useDialog();
   const breakpoint = useBreakpoint();
-  const { isAdmin } = useRole();
+  const { hasPermission } = useRole();
   const dark = useDark();
   const isDesktop = breakpoint === "desktop";
   const { list, listStatus, listError } = useAppSelector((s) => s.user);
 
+  const canRead = hasPermission(PERMISSIONS.USER_READ);
+  const canWrite = hasPermission(PERMISSIONS.USER_WRITE);
+  const canManagePerms = hasPermission(PERMISSIONS.USER_PERMISSIONS_MANAGE);
+
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  // The backend has no ?role= filter, so role filtering + paging happen
-  // client-side over one full fetch (backend caps size at 100).
+  // Role filtering + paging happen client-side over one full fetch
+  // (backend caps size at 100; a ?role= param exists but counts stay
+  // stable only from the full list — same pattern as the machines tabs).
   const [roleFilter, setRoleFilter] = useState(null);
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 10;
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [permsUser, setPermsUser] = useState(null);
 
-  const refresh = () => dispatch(fetchUsers({ page: 0, size: 100 }));
+  const refresh = () => {
+    if (canRead) dispatch(fetchUsers({ page: 0, size: 100 }));
+  };
 
   useEffect(() => {
-    if (isAdmin) refresh();
+    if (canRead) refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dispatch, isAdmin]);
+  }, [dispatch, canRead]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -164,11 +174,14 @@ export default function UsersScreen() {
     );
   }
 
-  if (!isAdmin) {
+  if (!canRead) {
     return (
       <AppShell>
         <Card>
-          <EmptyState title="Administrators only" message="User management is restricted to administrators." />
+          <EmptyState
+            title="Restricted area"
+            message="User management requires the USER_READ permission."
+          />
         </Card>
       </AppShell>
     );
@@ -183,7 +196,9 @@ export default function UsersScreen() {
             <Text className={`text-2xl font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
               Users{filtered.length ? ` (${filtered.length})` : ""}
             </Text>
-            <Button title="+ Add User" variant="primary" size="sm" onPress={openCreate} />
+            {canWrite && (
+              <Button title="+ Add User" variant="primary" size="sm" onPress={openCreate} />
+            )}
           </View>
 
           <View className="flex-row items-center justify-between mb-4 gap-3">
@@ -259,7 +274,7 @@ export default function UsersScreen() {
                 <Text className={`w-56 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Email</Text>
                 <Text className={`w-32 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Role</Text>
                 <Text className={`w-24 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Status</Text>
-                <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Actions</Text>
+                <Text className={`w-60 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Actions</Text>
               </View>
               {pageItems.map((u, idx) => (
                 <View
@@ -279,13 +294,22 @@ export default function UsersScreen() {
                     </View>
                   </View>
                   <Text className={`w-24 text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>{u.status}</Text>
-                  <View className="w-28 flex-row gap-2">
-                    <Pressable onPress={() => openEdit(u)} className="px-2 py-1">
-                      <Text className="text-sm text-primary font-medium font-inter">Edit</Text>
-                    </Pressable>
-                    <Pressable onPress={() => handleDelete(u)} className="px-2 py-1">
-                      <Text className="text-sm text-danger font-medium font-inter">Delete</Text>
-                    </Pressable>
+                  <View className="w-60 flex-row items-center gap-3 flex-nowrap">
+                    {canManagePerms && (
+                      <Pressable onPress={() => setPermsUser(u)} className="py-1">
+                        <Text className="text-xs text-primary font-medium font-inter">Permissions</Text>
+                      </Pressable>
+                    )}
+                    {canWrite && (
+                      <Pressable onPress={() => openEdit(u)} className="py-1">
+                        <Text className="text-xs text-primary font-medium font-inter">Edit</Text>
+                      </Pressable>
+                    )}
+                    {canWrite && (
+                      <Pressable onPress={() => handleDelete(u)} className="py-1">
+                        <Text className="text-xs text-danger font-medium font-inter">Delete</Text>
+                      </Pressable>
+                    )}
                   </View>
                 </View>
               ))}
@@ -295,7 +319,8 @@ export default function UsersScreen() {
           {!isLoading && !isError && <Pagination />}
         </ScrollView>
 
-        <UserModal visible={modalVisible} user={editing} onClose={() => setModalVisible(false)} />
+        <UserModal visible={modalVisible} user={editing} onClose={() => { setModalVisible(false); refresh(); }} />
+        <PermissionsModal visible={!!permsUser} user={permsUser} onClose={() => { setPermsUser(null); refresh(); }} />
       </AppShell>
     );
   }
@@ -306,9 +331,11 @@ export default function UsersScreen() {
       <View className="flex-1">
         <View className="flex-row items-center justify-between mb-3">
           <Text className={`text-xl font-bold font-inter ${dark ? "text-white" : "text-text"}`}>Users</Text>
+          {canWrite && (
           <Pressable onPress={openCreate} className="px-3 py-1.5 rounded-chip bg-primary">
             <Text className="text-xs font-semibold text-white font-inter">+ Add</Text>
           </Pressable>
+          )}
         </View>
 
         <View className={`flex-row items-center border rounded-btn px-3 py-2 gap-2 mb-3 ${dark ? "bg-white/5 border-white/15" : "bg-surface border-border"}`}>
@@ -385,12 +412,21 @@ export default function UsersScreen() {
                     <Text className={`text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>{item.email}</Text>
                     <Text className="text-xs text-primary font-inter mt-0.5">{ROLE_LABEL[item.role] || item.role} · {item.status}</Text>
                   </View>
-                  <Pressable onPress={() => openEdit(item)} className="px-2 py-1">
-                    <Text className="text-sm text-primary font-medium font-inter">Edit</Text>
-                  </Pressable>
-                  <Pressable onPress={() => handleDelete(item)} className="px-2 py-1">
-                    <Text className="text-sm text-danger font-medium font-inter">Del</Text>
-                  </Pressable>
+                  {canManagePerms && (
+                    <Pressable onPress={() => setPermsUser(item)} className="px-2 py-1">
+                      <Text className="text-xs text-primary font-medium font-inter">Perms</Text>
+                    </Pressable>
+                  )}
+                  {canWrite && (
+                    <Pressable onPress={() => openEdit(item)} className="px-2 py-1">
+                      <Text className="text-sm text-primary font-medium font-inter">Edit</Text>
+                    </Pressable>
+                  )}
+                  {canWrite && (
+                    <Pressable onPress={() => handleDelete(item)} className="px-2 py-1">
+                      <Text className="text-sm text-danger font-medium font-inter">Del</Text>
+                    </Pressable>
+                  )}
                 </View>
               </Card>
             )}
@@ -398,7 +434,8 @@ export default function UsersScreen() {
         )}
       </View>
 
-      <UserModal visible={modalVisible} user={editing} onClose={() => setModalVisible(false)} />
+      <UserModal visible={modalVisible} user={editing} onClose={() => { setModalVisible(false); refresh(); }} />
+      <PermissionsModal visible={!!permsUser} user={permsUser} onClose={() => { setPermsUser(null); refresh(); }} />
     </AppShell>
   );
 }

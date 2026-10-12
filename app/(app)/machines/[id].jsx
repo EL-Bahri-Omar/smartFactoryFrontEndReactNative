@@ -26,19 +26,20 @@ import LineChart from "../../../src/components/charts/LineChart";
 import ChartLegend from "../../../src/components/charts/ChartLegend";
 import { useBreakpoint } from "../../../src/hooks/useBreakpoint";
 import { useDark } from "../../../src/hooks/useDark";
-import { useRole } from "../../../src/hooks/useRole";
+import { useRole, PERMISSIONS } from "../../../src/hooks/useRole";
 import { useDialog } from "../../../src/components/dialog/DialogContext";
 import { useAppDispatch } from "../../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../../src/hooks/useAppSelector";
 import { useLiveTopic } from "../../../src/hooks/useLiveTopic";
-import { fetchMachineById, deleteMachine, updateMachine } from "../../../src/store/slices/machineSlice";
+import { fetchMachineById, deleteMachine } from "../../../src/store/slices/machineSlice";
 import { fetchReadings } from "../../../src/store/slices/readingSlice";
 import { fetchMachineSensors } from "../../../src/store/slices/sensorSlice";
+import { fetchThresholds, saveThreshold, deleteThreshold } from "../../../src/store/slices/thresholdSlice";
 import { getSensorStatus } from "../../../src/lib/status";
 import { relativeTime } from "../../../src/lib/time";
-import { getThresholds, withThresholds, validateThresholds } from "../../../src/lib/thresholds";
-import { SENSOR_TYPE } from "../../../src/constants/roles";
+import { SENSOR_TYPE, SENSOR_UNIT } from "../../../src/constants/roles";
 import Input from "../../../src/components/Input";
+import Toggle from "../../../src/components/Toggle";
 import {
   SERIES_META,
   mergeReadings,
@@ -63,16 +64,70 @@ const MOBILE_TABS = [
   { key: "settings", label: "Settings" },
 ];
 
+const THRESHOLD_TYPES = [
+  SENSOR_TYPE.TEMPERATURE,
+  SENSOR_TYPE.VIBRATION,
+  SENSOR_TYPE.CURRENT,
+  SENSOR_TYPE.RPM,
+];
+
+/** Build the editor form from the fetched threshold list. */
+function formFromThresholds(list) {
+  const out = {};
+  for (const type of THRESHOLD_TYPES) {
+    const found = (list || []).find((t) => t.sensorType === type);
+    out[type] = {
+      warningMin: found?.warningMin ?? "",
+      warningMax: found?.warningMax ?? "",
+      criticalMin: found?.criticalMin ?? "",
+      criticalMax: found?.criticalMax ?? "",
+      active: found?.active ?? true,
+      configured: !!found,
+    };
+  }
+  return out;
+}
+
+function numOrNull(x) {
+  if (x === "" || x == null) return null;
+  const n = Number(x);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+/** Mirror of the backend validation (criticalMin<=warningMin<=warningMax<=criticalMax). */
+function validateApiThresholds(values) {
+  for (const type of THRESHOLD_TYPES) {
+    const v = values?.[type] || {};
+    const wMin = numOrNull(v.warningMin);
+    const wMax = numOrNull(v.warningMax);
+    const cMin = numOrNull(v.criticalMin);
+    const cMax = numOrNull(v.criticalMax);
+    for (const [key, n] of [["warning min", wMin], ["warning max", wMax], ["critical min", cMin], ["critical max", cMax]]) {
+      if (Number.isNaN(n)) return `${type}: ${key} must be a number.`;
+    }
+    if (wMin != null && wMax != null && wMin > wMax) return `${type}: warning min cannot exceed warning max.`;
+    if (cMin != null && cMax != null && cMin > cMax) return `${type}: critical min cannot exceed critical max.`;
+    if (cMin != null && wMin != null && cMin > wMin) return `${type}: critical min cannot exceed warning min.`;
+    if (wMax != null && cMax != null && wMax > cMax) return `${type}: warning max cannot exceed critical max.`;
+  }
+  return null;
+}
+
 export default function MachineDetailScreen() {
   const { id } = useLocalSearchParams();
   const machineId = Array.isArray(id) ? id[0] : id;
   const dispatch = useAppDispatch();
   const router = useRouter();
   const dialog = useDialog();
-  const { isAdmin } = useRole();
-  const { canAccess, homeRoute } = useRole();
+  const { canAccess, homeRoute, hasPermission } = useRole();
   const isDesktop = useBreakpoint() === "desktop";
   const dark = useDark();
+
+  const canWriteMachines = hasPermission(PERMISSIONS.MACHINE_WRITE);
+  const canReadMachines = canAccess("machines");
+  const canReadTelemetry = hasPermission(PERMISSIONS.READINGS_READ);
+  const canReadThresholds = hasPermission(PERMISSIONS.THRESHOLD_READ);
+  const canWriteThresholds = hasPermission(PERMISSIONS.THRESHOLD_WRITE);
 
   const {
     current,
@@ -83,6 +138,7 @@ export default function MachineDetailScreen() {
   const { list: readings, status: readingStatus, error: readingError } =
     useAppSelector((s) => s.reading);
   const { list: sensors, status: sensorStatus } = useAppSelector((s) => s.sensor);
+  const { list: thresholdList, status: thresholdStatus } = useAppSelector((s) => s.threshold);
   const liveConnected = useAppSelector((s) => s.live.connected);
 
   const [tab, setTab] = useState("overview");
@@ -114,8 +170,8 @@ export default function MachineDetailScreen() {
     }
   }
 
-  // Threshold (seuil) editor state — initialized from the machine once loaded
-  // (effect placed after the `machine` const below).
+  // Threshold editor state — API model per type:
+  // { warningMin, warningMax, criticalMin, criticalMax, active }.
   const [thr, setThr] = useState(null);
   const [thrError, setThrError] = useState(null);
   const [thrSaving, setThrSaving] = useState(false);
@@ -135,29 +191,32 @@ export default function MachineDetailScreen() {
     : machineId
       ? `/topic/machines/${machineId}/readings`
       : null;
-  const liveMessage = useLiveTopic(destination, { enabled: Boolean(destination) });
+  const liveMessage = useLiveTopic(destination, { enabled: Boolean(destination) && canReadTelemetry });
   // Sensor ONLINE/OFFLINE flips arrive here (US19) — refresh the chips.
   const sensorTopic = machine?.code ? `/topic/machines/${machine.code}/sensors` : null;
   const sensorLiveMessage = useLiveTopic(sensorTopic, { enabled: Boolean(sensorTopic) });
 
   useEffect(() => {
-    if (!machineId) return;
+    if (!machineId || !canReadMachines) return;
     dispatch(fetchMachineById(machineId));
-    dispatch(fetchReadings({ machineId, range: chartRange }));
-  }, [dispatch, machineId, chartRange]);
+    if (canReadTelemetry) dispatch(fetchReadings({ machineId, range: chartRange }));
+  }, [dispatch, machineId, chartRange, canReadTelemetry, canReadMachines]);
 
   // Sensors resolve by Mongo id only — wait until the machine is loaded.
   useEffect(() => {
-    if (machine?.id) dispatch(fetchMachineSensors(machine.id));
-  }, [dispatch, machine?.id]);
+    if (machine?.id && canReadMachines) dispatch(fetchMachineSensors(machine.id));
+  }, [dispatch, machine?.id, canReadMachines]);
 
-  // Threshold editor starts from the machine's stored seuils (or defaults).
+  // Thresholds live in the `machine_thresholds` collection (THRESHOLD_READ).
   useEffect(() => {
-    if (machine?.id) {
-      setThr(getThresholds(machine).values);
-      setThrError(null);
-    }
-  }, [machine?.id]);
+    if (machine?.id && canReadThresholds) dispatch(fetchThresholds(machine.id));
+  }, [dispatch, machine?.id, canReadThresholds]);
+
+  // Threshold editor starts from the fetched thresholds.
+  useEffect(() => {
+    setThr(formFromThresholds(thresholdList));
+    setThrError(null);
+  }, [thresholdList]);
 
   // A sensor status push means something flipped — re-read the list.
   useEffect(() => {
@@ -267,12 +326,11 @@ export default function MachineDetailScreen() {
     }
   }
 
-  // Save per-machine seuils into caracteristiques (PUT /machines/:id, ADMIN).
-  // Stored in the database immediately; the backend enforces them once the
-  // coworker switches checkThresholdsAndAlert to read seuil entries.
+  // Save per-machine thresholds via PUT .../thresholds/:sensorType
+  // (THRESHOLD_WRITE, upsert). Effective on the very next MQTT reading.
   async function handleSaveThresholds() {
-    if (!machine || !thr) return;
-    const validationError = validateThresholds(thr);
+    if (!machine?.id || !thr) return;
+    const validationError = validateApiThresholds(thr);
     if (validationError) {
       setThrError(validationError);
       return;
@@ -280,26 +338,46 @@ export default function MachineDetailScreen() {
     setThrError(null);
     setThrSaving(true);
     try {
-      await dispatch(
-        updateMachine({
-          id: machine.id,
-          body: {
-            name: machine.name,
-            code: machine.code,
-            type: machine.type,
-            zoneId: machine.zoneId || null,
-            status: machine.status,
-            description: machine.description ?? null,
-            caracteristiques: withThresholds(machine, thr),
-          },
-        })
-      ).unwrap();
-      await dispatch(fetchMachineById(machine.id));
-      dialog.alert("Thresholds saved", `Alert limits for ${code} are stored in the database.`, "success");
+      for (const type of THRESHOLD_TYPES) {
+        const v = thr[type];
+        await dispatch(
+          saveThreshold({
+            machineId: machine.id,
+            sensorType: type,
+            body: {
+              sensorType: type,
+              warningMin: numOrNull(v.warningMin),
+              warningMax: numOrNull(v.warningMax),
+              criticalMin: numOrNull(v.criticalMin),
+              criticalMax: numOrNull(v.criticalMax),
+              unit: SENSOR_UNIT[type],
+              active: v.active !== false,
+            },
+          })
+        ).unwrap();
+      }
+      await dispatch(fetchThresholds(machine.id));
+      dialog.alert("Thresholds saved", `Alert limits for ${code} apply from the next reading.`, "success");
     } catch (e) {
       setThrError(e?.message || "Failed to save thresholds.");
     } finally {
       setThrSaving(false);
+    }
+  }
+
+  async function handleResetThreshold(type) {
+    if (!machine?.id) return;
+    const ok = await dialog.confirm(
+      "Reset threshold",
+      `Remove the stored ${type} limits for ${code}? The backend falls back to its reference defaults.`,
+      { confirmText: "Reset" }
+    );
+    if (!ok) return;
+    try {
+      await dispatch(deleteThreshold({ machineId: machine.id, sensorType: type })).unwrap();
+      await dispatch(fetchThresholds(machine.id));
+    } catch (e) {
+      setThrError(e?.message || "Failed to reset threshold.");
     }
   }
 
@@ -405,8 +483,16 @@ export default function MachineDetailScreen() {
           )}
         </View>
 
-        <SensorChips />
+        {SensorChips()}
 
+        {!canReadTelemetry ? (
+          <Card>
+            <EmptyState
+              title="Restricted area"
+              message="Telemetry requires the READINGS_READ permission."
+            />
+          </Card>
+        ) : (
         <Card>
           <View className={`${isDesktop ? "flex-row items-center justify-between mb-3" : "mb-3"}`}>
             <View className="flex-row items-center gap-2 mb-2">
@@ -476,6 +562,7 @@ export default function MachineDetailScreen() {
             </>
           )}
         </Card>
+        )}
       </View>
     );
   }
@@ -496,13 +583,24 @@ export default function MachineDetailScreen() {
         </Card>
       );
     }
-    const { custom } = getThresholds(machine);
+    if (!canReadThresholds) {
+      return (
+        <Card>
+          <EmptyState
+            title="Restricted area"
+            message="Viewing thresholds requires the THRESHOLD_READ permission."
+          />
+        </Card>
+      );
+    }
+    const custom = thresholdList.length > 0;
     const units = {
       [SENSOR_TYPE.TEMPERATURE]: "°C",
       [SENSOR_TYPE.VIBRATION]: "mm/s",
       [SENSOR_TYPE.CURRENT]: "A",
       [SENSOR_TYPE.RPM]: "RPM",
     };
+    const editable = canWriteThresholds && !thrSaving;
     function setThrValue(type, key, text) {
       setThr((prev) => ({ ...prev, [type]: { ...prev?.[type], [key]: text } }));
     }
@@ -514,11 +612,49 @@ export default function MachineDetailScreen() {
           <Input
             label={`${label} (${units[type]})`}
             placeholder="—"
-            value={thr?.[type]?.[fieldKey] != null ? String(thr[type][fieldKey]) : ""}
+            value={thr?.[type]?.[fieldKey] === "" || thr?.[type]?.[fieldKey] == null ? "" : String(thr[type][fieldKey])}
             onChangeText={(t) => setThrValue(type, fieldKey, t)}
             keyboardType="numeric"
-            disabled={!isAdmin || thrSaving}
+            disabled={!editable}
           />
+        </View>
+      );
+    }
+    function TypeSection({ type, fields }) {
+      const configured = (thresholdList || []).some((t) => t.sensorType === type);
+      return (
+        <View key={type} className="mb-4">
+          <View className="flex-row items-center justify-between mb-2">
+            <View className="flex-row items-center gap-2">
+              <View
+                className="w-2 h-2 rounded-full"
+                style={{ backgroundColor: configured ? "#16A34A" : "#94A3B8" }}
+              />
+              <Text className={`text-sm font-bold font-inter capitalize ${dark ? "text-white" : "text-text"}`}>
+                {type.toLowerCase()}
+              </Text>
+            </View>
+            <View className="flex-row items-center gap-3">
+              {configured && canWriteThresholds && (
+                <Pressable onPress={() => handleResetThreshold(type)}>
+                  <Text className="text-xs text-danger font-medium font-inter">Reset</Text>
+                </Pressable>
+              )}
+              <Toggle
+                value={thr?.[type]?.active !== false}
+                onChange={(v) => setThrValue(type, "active", v)}
+                disabled={!editable}
+              />
+            </View>
+          </View>
+          <View className="flex-row gap-3 mb-3">
+            {fields.slice(0, 2).map((f) => ThrField({ type, fieldKey: f.key, label: f.label }))}
+          </View>
+          {fields.length > 2 && (
+            <View className="flex-row gap-3">
+              {fields.slice(2).map((f) => ThrField({ type, fieldKey: f.key, label: f.label }))}
+            </View>
+          )}
         </View>
       );
     }
@@ -533,11 +669,17 @@ export default function MachineDetailScreen() {
           </View>
         </View>
         <Text className={`text-xs font-inter mb-4 ${dark ? "text-white/60" : "text-text-muted"}`}>
-          Per-machine alert limits, stored in the database with the machine.
-          {isAdmin
-            ? " The backend enforces its defaults until it is updated to read these values."
-            : " Only administrators can change them."}
+          Per-machine alert limits, stored in the database. The backend enforces
+          them from the very next reading.
+          {!canWriteThresholds && " Only users with THRESHOLD_WRITE can change them."}
         </Text>
+
+        {thresholdStatus === "loading" && !thr && (
+          <View className="gap-3 mb-4">
+            <Skeleton width="100%" height={52} />
+            <Skeleton width="100%" height={52} />
+          </View>
+        )}
 
         {thrError && (
           <View className="rounded-btn px-3 py-2.5 mb-4" style={{ backgroundColor: "rgba(220,38,38,0.1)", borderWidth: 1, borderColor: "rgba(220,38,38,0.3)" }}>
@@ -545,29 +687,26 @@ export default function MachineDetailScreen() {
           </View>
         )}
 
-        {[SENSOR_TYPE.TEMPERATURE, SENSOR_TYPE.VIBRATION, SENSOR_TYPE.CURRENT].map((type) => (
-          <View key={type} className="mb-4">
-            <Text className={`text-sm font-bold font-inter mb-2 capitalize ${dark ? "text-white" : "text-text"}`}>{type.toLowerCase()}</Text>
-            <View className="flex-row gap-3">
-              {ThrField({ type, fieldKey: "warning", label: "Warning ≥" })}
-              {ThrField({ type, fieldKey: "critical", label: "Critical ≥" })}
-            </View>
-          </View>
-        ))}
+        {[SENSOR_TYPE.TEMPERATURE, SENSOR_TYPE.VIBRATION, SENSOR_TYPE.CURRENT].map((type) =>
+          TypeSection({
+            type,
+            fields: [
+              { key: "warningMax", label: "Warning ≥" },
+              { key: "criticalMax", label: "Critical ≥" },
+            ],
+          })
+        )}
+        {TypeSection({
+          type: SENSOR_TYPE.RPM,
+          fields: [
+            { key: "warningMin", label: "Warn low ≤" },
+            { key: "warningMax", label: "Warn high ≥" },
+            { key: "criticalMin", label: "Critical low ≤" },
+            { key: "criticalHigh", label: "Critical high ≥" },
+          ],
+        })}
 
-        <View className="mb-5">
-          <Text className={`text-sm font-bold font-inter mb-2 ${dark ? "text-white" : "text-text"}`}>RPM</Text>
-          <View className="flex-row gap-3 mb-3">
-            {ThrField({ type: SENSOR_TYPE.RPM, fieldKey: "warningLow", label: "Warn low <" })}
-            {ThrField({ type: SENSOR_TYPE.RPM, fieldKey: "warningHigh", label: "Warn high >" })}
-          </View>
-          <View className="flex-row gap-3">
-            {ThrField({ type: SENSOR_TYPE.RPM, fieldKey: "criticalLow", label: "Critical low <" })}
-            {ThrField({ type: SENSOR_TYPE.RPM, fieldKey: "criticalHigh", label: "Critical high >" })}
-          </View>
-        </View>
-
-        {isAdmin && (
+        {canWriteThresholds && (
           <Button
             title="Save Thresholds"
             variant="primary"
@@ -586,7 +725,7 @@ export default function MachineDetailScreen() {
         <Card>
           <EmptyState
             title="Restricted area"
-            message="Machine details are visible to administrators and responsables industriels."
+            message="Machine details require the MACHINE_READ permission."
             action={<Button title="Go to Factory Map" variant="primary" size="sm" onPress={() => router.replace(homeRoute)} />}
           />
         </Card>
@@ -676,7 +815,7 @@ export default function MachineDetailScreen() {
           />
         </View>
 
-        {tab === "overview" ? <OverviewBody /> : tab === "settings" ? <SettingsBody /> : <ComingSoon />}
+        {tab === "overview" ? OverviewBody() : tab === "settings" ? SettingsBody() : ComingSoon()}
       </ScrollView>
       {/* ⋮ dropdown — Modal so it floats above everything (never clipped)
           and any tap outside closes it. */}
@@ -699,7 +838,7 @@ export default function MachineDetailScreen() {
               elevation: 8,
             }}
           >
-            {isAdmin && (
+            {canWriteMachines && (
               <Pressable
                 onPress={() => { setMenuOpen(false); setEditOpen(true); }}
                 className={`px-4 py-3 border-b ${dark ? "border-white/10" : "border-border"}`}
@@ -710,12 +849,12 @@ export default function MachineDetailScreen() {
             )}
             <Pressable
               onPress={handleCopyCode}
-              className={isAdmin ? `px-4 py-3 border-b ${dark ? "border-white/10" : "border-border"}` : "px-4 py-3"}
+              className={canWriteMachines ? `px-4 py-3 border-b ${dark ? "border-white/10" : "border-border"}` : "px-4 py-3"}
               style={({ pressed }) => (pressed ? { backgroundColor: dark ? "rgba(255,255,255,0.08)" : "#F0F4FA" } : {})}
             >
               <Text className={`text-sm font-inter ${dark ? "text-white" : "text-text"}`}>Copy machine code</Text>
             </Pressable>
-            {isAdmin && (
+            {canWriteMachines && (
               <Pressable
                 onPress={handleDelete}
                 className="px-4 py-3"

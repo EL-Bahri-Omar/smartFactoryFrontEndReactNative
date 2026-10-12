@@ -18,7 +18,7 @@ import Avatar from "../../../src/components/Avatar";
 import GroupModal from "../../../src/components/GroupModal";
 import { useBreakpoint } from "../../../src/hooks/useBreakpoint";
 import { useDark } from "../../../src/hooks/useDark";
-import { useRole } from "../../../src/hooks/useRole";
+import { useRole, PERMISSIONS } from "../../../src/hooks/useRole";
 import { useAppDispatch } from "../../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../../src/hooks/useAppSelector";
 import { fetchGroups, deleteGroup, setGroupFilters } from "../../../src/store/slices/groupSlice";
@@ -31,7 +31,9 @@ export default function GroupsScreen() {
   const router = useRouter();
   const breakpoint = useBreakpoint();
   const dark = useDark();
-  const { isAdmin, canAccess, homeRoute } = useRole();
+  const { canAccess, homeRoute, hasPermission } = useRole();
+  const canWrite = hasPermission(PERMISSIONS.GROUP_WRITE);
+  const canViewGroups = canAccess("groups");
   const isDesktop = breakpoint === "desktop";
   const { list, totalElements, status, error, filters } = useAppSelector((s) => s.group);
 
@@ -40,8 +42,9 @@ export default function GroupsScreen() {
   const [editing, setEditing] = useState(null);
 
   useEffect(() => {
+    if (!canViewGroups) return;
     dispatch(fetchGroups({ search: filters.search || undefined, page: 0, size: 20 }));
-  }, [dispatch, filters.search]);
+  }, [dispatch, filters.search, canViewGroups]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -105,7 +108,7 @@ export default function GroupsScreen() {
             <Text className={`text-2xl font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
               Groups{totalElements ? ` (${totalElements})` : ""}
             </Text>
-            {isAdmin && (
+            {canWrite && (
               <Button title="+ Add Group" variant="primary" size="sm" onPress={openCreate} />
             )}
           </View>
@@ -149,7 +152,7 @@ export default function GroupsScreen() {
               <EmptyState
                 title={filters.search ? "No groups match" : "No groups yet"}
                 message={filters.search ? "Try a different search term." : "Create your first operator group to get started."}
-                action={isAdmin && !filters.search ? (
+                action={canWrite && !filters.search ? (
                   <Button title="+ Add Group" variant="primary" size="sm" onPress={openCreate} />
                 ) : null}
               />
@@ -163,7 +166,7 @@ export default function GroupsScreen() {
                 <Text className={`w-48 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Supervisor</Text>
                 <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Operators</Text>
                 <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Created</Text>
-                {isAdmin && (
+                {canWrite && (
                   <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Actions</Text>
                 )}
               </View>
@@ -190,7 +193,7 @@ export default function GroupsScreen() {
                   <Text className={`w-28 text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>
                     {g.createdAt ? formatDate(g.createdAt) : "—"}
                   </Text>
-                  {isAdmin && (
+                  {canWrite && (
                     <View className="w-28 flex-row gap-1">
                       <Pressable onPress={(e) => { e.stopPropagation?.(); openEdit(g); }} className="px-2 py-1">
                         <Text className="text-xs text-primary font-medium font-inter">Edit</Text>
@@ -217,7 +220,7 @@ export default function GroupsScreen() {
       <View className="flex-1">
         <View className="flex-row items-center justify-between mb-3">
           <Text className={`text-xl font-bold font-inter ${dark ? "text-white" : "text-text"}`}>Groups</Text>
-          {isAdmin && (
+          {canWrite && (
             <Pressable onPress={openCreate} className="px-4 py-2 rounded-chip bg-primary">
               <Text className="text-xs font-semibold text-white font-inter">+ Add Group</Text>
             </Pressable>
@@ -280,7 +283,7 @@ export default function GroupsScreen() {
                         {item.operatorCount ?? (item.operators || []).length} operators
                       </Text>
                     </View>
-                    {isAdmin && (
+                    {canWrite && (
                       <Pressable onPress={() => openEdit(item)} className="px-2 py-1">
                         <Text className="text-sm text-primary font-medium font-inter">Edit</Text>
                       </Pressable>

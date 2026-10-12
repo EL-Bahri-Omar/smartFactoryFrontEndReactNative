@@ -24,23 +24,25 @@ export const ENDPOINTS = Object.freeze({
   // NOTE: no /api/auth/refresh on the backend (stateless JWT, 24h expiry).
   // The app keeps the access token until it expires; a 401 forces re-login.
 
-  // --- Machines (CONFIRMED Sprint 1 — MachineController) ---
-  MACHINES: "/api/machines", // CONFIRMED — GET paginated { content, page, size, totalElements, totalPages }, params zoneId/status/search/page/size/sort
-  MACHINE_BY_ID: "/api/machines/:id", // CONFIRMED — GET one; PUT update (ADMIN); DELETE 204 (ADMIN)
+  // --- Machines (CONFIRMED — MachineController, permission-guarded) ---
+  MACHINES: "/api/machines", // CONFIRMED — GET paginated { content, page, size, totalElements, totalPages }, params zoneId/status/search/page/size/sort (MACHINE_READ)
+  MACHINE_BY_ID: "/api/machines/:id", // CONFIRMED — GET one (MACHINE_READ); PUT update / DELETE 204 (MACHINE_WRITE)
   MACHINE_SENSORS: "/api/machines/:id/sensors", // CONFIRMED Sprint 3 — GET array [{ id, machineId, type, unit, status, lastSeen, ... }]. NOTE: resolve with the Mongo id, not the code
-  MACHINE_READINGS: "/api/machines/:id/readings", // CONFIRMED Sprint 3 — GET paginated { content, ... }, params from/to/sensorType/page/size/sort. Accepts Mongo id OR code
+  MACHINE_READINGS: "/api/machines/:id/readings", // CONFIRMED Sprint 3 — GET paginated { content, ... }, params from/to/sensorType/page/size/sort. Accepts Mongo id OR code (READINGS_READ)
+  MACHINE_THRESHOLDS: "/api/machines/:id/thresholds", // CONFIRMED — GET array (THRESHOLD_READ); POST upsert body (THRESHOLD_WRITE) -> 201
+  MACHINE_THRESHOLD_BY_TYPE: "/api/machines/:id/thresholds/:sensorType", // CONFIRMED — GET one / PUT upsert / DELETE 204. machineId accepts id OR code
 
-  // --- Zones (CONFIRMED Sprint 1 — ZoneController) ---
-  ZONES: "/api/zones", // CONFIRMED — GET returns array [{ id, name, machineCount, ... }]
-  ZONE_BY_ID: "/api/zones/:id", // CONFIRMED — GET one; PUT update (ADMIN); DELETE 204 (ADMIN)
-  ZONE_MACHINES: "/api/zones/:id/machines", // CONFIRMED — machines in a zone
+  // --- Zones (CONFIRMED — ZoneController, permission-guarded) ---
+  ZONES: "/api/zones", // CONFIRMED — GET returns array (ZONE_READ)
+  ZONE_BY_ID: "/api/zones/:id", // CONFIRMED — GET one (ZONE_READ); PUT update / DELETE 204 (ZONE_WRITE)
+  ZONE_MACHINES: "/api/zones/:id/machines", // CONFIRMED — machines in a zone (ZONE_READ)
 
-  // --- Groups (CONFIRMED — GroupController) ---
-  GROUPS: "/api/groups", // CONFIRMED — GET paginated (?search=&page=&size=&sort=, any role); POST (ADMIN) { name, operators?, supervisorId? }
-  GROUP_BY_ID: "/api/groups/:id", // CONFIRMED — GET one; PUT (ADMIN); DELETE 204 (ADMIN)
-  GROUP_OPERATORS: "/api/groups/:groupId/operators", // CONFIRMED — GET members (any role)
-  GROUP_OPERATOR: "/api/groups/:groupId/operators/:userId", // CONFIRMED — POST add / DELETE remove (ADMIN). Backend validates OPERATOR role, dedupes, clears supervisor if removed
-  GROUP_SUPERVISOR: "/api/groups/:groupId/supervisor", // CONFIRMED — GET supervisor (any role, 204 if none); PUT { supervisorId } (ADMIN, OPERATOR or RESPONSABLE_INDUSTRIEL)
+  // --- Groups (CONFIRMED — GroupController, permission-guarded) ---
+  GROUPS: "/api/groups", // CONFIRMED — GET paginated (?search=&page=&size=&sort=, GROUP_READ); POST (GROUP_WRITE) { name, operators?, supervisorId? }
+  GROUP_BY_ID: "/api/groups/:id", // CONFIRMED — GET one (GROUP_READ); PUT / DELETE 204 (GROUP_WRITE)
+  GROUP_OPERATORS: "/api/groups/:groupId/operators", // CONFIRMED — GET members (GROUP_READ)
+  GROUP_OPERATOR: "/api/groups/:groupId/operators/:userId", // CONFIRMED — POST add / DELETE remove (GROUP_WRITE). Backend validates OPERATOR role, dedupes, clears supervisor if removed
+  GROUP_SUPERVISOR: "/api/groups/:groupId/supervisor", // CONFIRMED — GET supervisor (GROUP_READ, 204 if none); PUT { supervisorId } (GROUP_WRITE, OPERATOR or RESPONSABLE_INDUSTRIEL)
 
   // NOTE: no /api/sensors or /api/readings top-level routes on the backend.
   // Sensors and readings are always addressed through their machine:
@@ -81,16 +83,18 @@ export const ENDPOINTS = Object.freeze({
   REPORT_BY_ID: "/api/reports/:id", // ASSUMED — confirm with backend
   REPORT_GENERATE: "/api/reports/generate", // ASSUMED — confirm with backend
 
-  // --- Users (CONFIRMED Sprint 1 — UserController, ADMIN only) ---
-  USERS: "/api/users", // CONFIRMED — GET paginated, params search/page/size/sort; POST create (ADMIN)
-  USER_BY_ID: "/api/users/:id", // CONFIRMED — GET one; PUT update (ADMIN); DELETE 204 (ADMIN). NEVER widened: no self-check, anyone could edit anyone.
-  USER_PASSWORD: "/api/users/change-password/:id", // CONFIRMED — PUT ?newPassword=&oldPassword= -> 204 (ADMIN role required server-side)
+  // --- Users (CONFIRMED — UserController, permission-guarded) ---
+  USERS: "/api/users", // CONFIRMED — GET paginated (?search=&role=&page=&size=&sort=, USER_READ); POST create (USER_WRITE)
+  USER_BY_ID: "/api/users/:id", // CONFIRMED — GET one (USER_READ); PUT update (USER_WRITE); DELETE 204 (USER_WRITE)
+  USER_PASSWORD: "/api/users/change-password/:id", // CONFIRMED — PUT ?newPassword=&oldPassword= -> 204 (USER_WRITE)
+  USER_PERMISSIONS_CATALOG: "/api/users/permissions/catalog", // CONFIRMED — GET { permissions: [{code,description,category}], roles: {...} } (any authenticated role)
   // --- Self-service profile (CONFIRMED — UserController /me methods) ---
   // Identity comes from the JWT: no :id to tamper with. Backend reuses
   // UpdateUserRequest (role/status validated but ignored) and query params
   // for the password route, like the legacy change-password endpoint.
   USER_ME: "/api/users/me", // CONFIRMED — PUT { firstName, lastName, email, role, status } -> user (any role)
   USER_ME_PASSWORD: "/api/users/me/password", // CONFIRMED — PUT ?newPassword=&oldPassword= -> 204 (any role)
+  USER_PERMISSIONS: "/api/users/:id/permissions", // CONFIRMED — GET UserPermissionsDto (USER_READ); PUT { permissions: [...] } -> UserPermissionsDto (USER_PERMISSIONS_MANAGE)
   // NOTE: no /api/users/me, no change-password endpoint in Sprint 1.
   // Profile reads GET /api/auth/me; self-edit goes through PUT /api/users/:id (ADMIN only).
 

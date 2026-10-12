@@ -27,7 +27,7 @@ import Select from "../../../src/components/Select";
 import AddMachineModal from "../../../src/components/AddMachineModal";
 import { useBreakpoint } from "../../../src/hooks/useBreakpoint";
 import { useDark } from "../../../src/hooks/useDark";
-import { useRole } from "../../../src/hooks/useRole";
+import { useRole, PERMISSIONS } from "../../../src/hooks/useRole";
 import { useAppDispatch } from "../../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../../src/hooks/useAppSelector";
 import {
@@ -54,15 +54,29 @@ export default function MachinesListScreen() {
   const dialog = useDialog();
   const router = useRouter();
   const breakpoint = useBreakpoint();
-  const { isAdmin, canAccess, homeRoute } = useRole();
+  const { canAccess, homeRoute, hasPermission } = useRole();
   const dark = useDark();
   const isDesktop = breakpoint === "desktop";
+  const canWrite = hasPermission(PERMISSIONS.MACHINE_WRITE);
+  const canReadMachines = canAccess("machines");
 
-  const { list, status, error, filters, counts } = useAppSelector((s) => s.machine);
+  const { list, status, error, filters, counts, pagination } = useAppSelector((s) => s.machine);
   const { list: zones } = useAppSelector((s) => s.zone);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingMachine, setEditingMachine] = useState(null);
   const [searchInput, setSearchInput] = useState(filters.search || "");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 10;
+
+  function query(nextPage = page) {
+    return {
+      status: filters.status || undefined,
+      search: filters.search || undefined,
+      zoneId: filters.zoneId || undefined,
+      page: nextPage,
+      size: PAGE_SIZE,
+    };
+  }
 
   // Keep the visible input in sync when search is set elsewhere (e.g. TopBar).
   useEffect(() => {
@@ -71,25 +85,25 @@ export default function MachinesListScreen() {
 
   // Zones for the zone filter + create/edit modal dropdown
   useEffect(() => {
+    if (!canReadMachines) return;
     dispatch(fetchZones());
     dispatch(fetchMachineCounts());
-  }, [dispatch]);
+  }, [dispatch, canReadMachines]);
 
-  // Fetch on mount and on filter change (status/search/zone all server-side)
+  // Fetch on mount and on filter/page/permission change (all server-side).
+  // Re-runs when permissions flip (e.g. granted from another device) so
+  // data appears without any reload.
   useEffect(() => {
-    dispatch(
-      fetchMachines({
-        status: filters.status || undefined,
-        search: filters.search || undefined,
-        zoneId: filters.zoneId || undefined,
-      })
-    );
-  }, [dispatch, filters.status, filters.search, filters.zoneId]);
+    if (!canReadMachines) return;
+    dispatch(fetchMachines(query()));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dispatch, filters.status, filters.search, filters.zoneId, page, canReadMachines]);
 
   // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => {
       if (searchInput !== filters.search) {
+        setPage(0);
         dispatch(setFilters({ search: searchInput }));
       }
     }, 400);
@@ -97,7 +111,13 @@ export default function MachinesListScreen() {
   }, [searchInput, dispatch, filters.search]);
 
   function handleTabPress(statusKey) {
+    setPage(0);
     dispatch(setFilters({ status: statusKey }));
+  }
+
+  function handleZoneChange(zoneId) {
+    setPage(0);
+    dispatch(setFilters({ zoneId }));
   }
 
   function handleRowPress(machine) {
@@ -117,6 +137,10 @@ export default function MachinesListScreen() {
   function handleCloseModal() {
     setShowAddModal(false);
     setEditingMachine(null);
+    // Server is truth after any save (create/update normalize fields) —
+    // refresh the current page + tab counts so nothing needs a reload.
+    dispatch(fetchMachines(query()));
+    dispatch(fetchMachineCounts());
   }
 
   async function handleDelete(machine) {
@@ -128,11 +152,7 @@ export default function MachinesListScreen() {
     try {
       await dispatch(deleteMachine(machine.id)).unwrap();
       dispatch(fetchMachineCounts());
-      dispatch(fetchMachines({
-        status: filters.status || undefined,
-        search: filters.search || undefined,
-        zoneId: filters.zoneId || undefined,
-      }));
+      dispatch(fetchMachines(query()));
     } catch {
       // Slice error state surfaces the failure.
     }
@@ -147,6 +167,41 @@ export default function MachinesListScreen() {
     return list.filter((m) => m.status === statusKey).length;
   }
 
+  const totalPages = Math.max(1, pagination?.totalPages || 1);
+  const totalElements = pagination?.totalElements ?? list.length;
+  const safePage = Math.min(page, totalPages - 1);
+
+  function goPage(next) {
+    setPage(Math.max(0, Math.min(totalPages - 1, next)));
+  }
+
+  function Pager() {
+    if (totalPages <= 1) return null;
+    const prevDisabled = safePage === 0;
+    const nextDisabled = safePage >= totalPages - 1;
+    return (
+      <View className="flex-row items-center justify-center mt-4 gap-5">
+        <Pressable
+          onPress={() => goPage(safePage - 1)}
+          disabled={prevDisabled}
+          className={`px-4 py-1.5 rounded-btn ${prevDisabled ? (dark ? "bg-white/5 border border-white/15 opacity-40" : "bg-bg border border-border opacity-40") : "bg-primary"}`}
+        >
+          <Text className={`text-sm font-bold font-inter ${prevDisabled ? (dark ? "text-white/50" : "text-text-muted") : "text-white"}`}>‹ Prev</Text>
+        </Pressable>
+        <Text className={`text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>
+          Page <Text className={`font-bold font-inter ${dark ? "text-white" : "text-text"}`}>{safePage + 1}</Text> of {totalPages} · <Text className={`font-bold font-inter ${dark ? "text-white" : "text-text"}`}>{totalElements} machine{totalElements === 1 ? "" : "s"}</Text>
+        </Text>
+        <Pressable
+          onPress={() => goPage(safePage + 1)}
+          disabled={nextDisabled}
+          className={`px-4 py-1.5 rounded-btn ${nextDisabled ? (dark ? "bg-white/5 border border-white/15 opacity-40" : "bg-bg border border-border opacity-40") : "bg-primary"}`}
+        >
+          <Text className={`text-sm font-bold font-inter ${nextDisabled ? (dark ? "text-white/50" : "text-text-muted") : "text-white"}`}>Next ›</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   const isLoading = status === "loading";
   const isEmpty = status === "succeeded" && list.length === 0;
   const isError = status === "error";
@@ -157,7 +212,7 @@ export default function MachinesListScreen() {
         <Card>
           <EmptyState
             title="Restricted area"
-            message="Machines are visible to administrators and responsables industriels."
+            message="Machines require the MACHINE_READ permission."
             action={<Button title="Go to Factory Map" variant="primary" size="sm" onPress={() => router.replace(homeRoute)} />}
           />
         </Card>
@@ -173,7 +228,7 @@ export default function MachinesListScreen() {
           {/* Header */}
           <View className="flex-row items-center justify-between mb-5">
             <Text className={`text-2xl font-bold font-inter ${dark ? "text-white" : "text-text"}`}>Machines</Text>
-            {isAdmin && (
+            {canWrite && (
               <Button
                 title="+ Add Machine"
                 variant="primary"
@@ -227,7 +282,7 @@ export default function MachinesListScreen() {
               <View style={{ width: 160 }}>
                 <Select
                   value={filters.zoneId}
-                  onValueChange={(v) => dispatch(setFilters({ zoneId: v }))}
+                  onValueChange={handleZoneChange}
                   placeholder="All Zones"
                   options={[{ value: null, label: "All Zones" }, ...(zones || []).map((z) => ({ value: z.id, label: z.name }))]}
                 />
@@ -257,7 +312,7 @@ export default function MachinesListScreen() {
                   title="Retry"
                   variant="outline"
                   size="sm"
-                  onPress={() => dispatch(fetchMachines({ status: filters.status, search: filters.search }))}
+                  onPress={() => dispatch(fetchMachines(query()))}
                 />
               </View>
             </Card>
@@ -291,7 +346,7 @@ export default function MachinesListScreen() {
                     : "Add your first machine to get started."
                 }
                 action={
-                  isAdmin && !filters.status && !filters.search ? (
+                  canWrite && !filters.status && !filters.search ? (
                     <Button title="+ Add Machine" variant="primary" size="sm" onPress={openCreate} />
                   ) : null
                 }
@@ -311,7 +366,7 @@ export default function MachinesListScreen() {
                 <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Status</Text>
                 <Text className={`w-32 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Health</Text>
                 <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Last Update</Text>
-                {isAdmin && (
+                {canWrite && (
                   <Text className={`w-24 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Actions</Text>
                 )}
               </View>
@@ -346,7 +401,7 @@ export default function MachinesListScreen() {
                   <Text className={`w-28 text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>
                     {machine.updatedAt || machine.lastUpdate ? relativeTime(machine.updatedAt || machine.lastUpdate) : "—"}
                   </Text>
-                  {isAdmin && (
+                  {canWrite && (
                     <View className="w-24 flex-row gap-1">
                       <Pressable
                         onPress={(e) => { e.stopPropagation?.(); handleEdit(machine); }}
@@ -366,6 +421,8 @@ export default function MachinesListScreen() {
               ))}
             </Card>
           )}
+
+          {!isLoading && !isError && <Pager />}
         </ScrollView>
 
         <AddMachineModal visible={showAddModal} machine={editingMachine} onClose={handleCloseModal} />
@@ -382,7 +439,7 @@ export default function MachinesListScreen() {
           <Text className={`text-xl font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
             Machines
           </Text>
-          {isAdmin && (
+          {canWrite && (
             <Pressable
               onPress={openCreate}
               className="px-4 py-2 rounded-chip bg-primary"
@@ -434,7 +491,7 @@ export default function MachinesListScreen() {
         <View className="mb-3">
           <Select
             value={filters.zoneId}
-            onValueChange={(v) => dispatch(setFilters({ zoneId: v }))}
+            onValueChange={(v) => handleZoneChange(v)}
             placeholder="All Zones"
             options={[{ value: null, label: "All Zones" }, ...(zones || []).map((z) => ({ value: z.id, label: z.name }))]}
           />
@@ -446,7 +503,7 @@ export default function MachinesListScreen() {
             <Text className="text-sm text-danger font-inter mb-2">
               {error?.message || "Failed to load machines"}
             </Text>
-            <Button title="Retry" variant="outline" size="sm" onPress={() => dispatch(fetchMachines({ status: filters.status, search: filters.search }))} />
+            <Button title="Retry" variant="outline" size="sm" onPress={() => dispatch(fetchMachines(query()))} />
           </Card>
         )}
 
@@ -502,7 +559,7 @@ export default function MachinesListScreen() {
                   <Text className={`text-[11px] font-inter mt-2 ${dark ? "text-white/50" : "text-text-muted"}`}>
                     Last update {item.updatedAt || item.lastUpdate ? relativeTime(item.updatedAt || item.lastUpdate) : "—"}
                   </Text>
-                  {isAdmin && (
+                  {canWrite && (
                     <View className="flex-row gap-4 mt-2">
                       <Pressable onPress={() => handleEdit(item)}>
                         <Text className="text-xs text-primary font-medium font-inter">Edit</Text>
@@ -517,6 +574,8 @@ export default function MachinesListScreen() {
             )}
           />
         )}
+
+        {!isLoading && !isError && <Pager />}
       </View>
 
       <AddMachineModal visible={showAddModal} machine={editingMachine} onClose={handleCloseModal} />

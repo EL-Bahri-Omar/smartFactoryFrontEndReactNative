@@ -142,6 +142,25 @@ export const logoutThunk = createAsyncThunk(
   }
 );
 
+/**
+ * Silent session refresh (role/permission/status changes made elsewhere).
+ * Unlike meThunk, a failure changes NOTHING — no logout on transient
+ * network blips. Real expiry still surfaces via 401s on next API call.
+ */
+export const refreshSession = createAsyncThunk(
+  "auth/refreshSession",
+  async (_, { rejectWithValue }) => {
+    try {
+      const token = await storage.getAccessToken();
+      const data = await authService.me();
+      await storage.setUser(data);
+      return { user: data, token: token || null };
+    } catch (error) {
+      return rejectWithValue(error);
+    }
+  }
+);
+
 // ── Slice ───────────────────────────────────────────────────────────────
 
 const authSlice = createSlice({
@@ -247,6 +266,15 @@ const authSlice = createSlice({
         state.status = "idle";
         state.error = action.payload || null;
       });
+
+    // Silent refresh: apply fresh user on success, ignore failures entirely.
+    builder.addCase(refreshSession.fulfilled, (state, action) => {
+      const payload = action.payload || {};
+      state.status = "authenticated";
+      state.user = payload.user || payload;
+      if (payload.token) state.accessToken = payload.token;
+      state.error = null;
+    });
 
     // Logout
     builder.addCase(logoutThunk.fulfilled, (state) => {

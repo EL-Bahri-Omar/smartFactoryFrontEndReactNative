@@ -1,14 +1,16 @@
 // src/store/services/userService.js
 //
-// CONFIRMED Sprint 1 against smartFactoryBackEndSpringBoot UserController.
-// All /api/users/** routes require role ADMIN.
-// - GET    /api/users?search=&page=&size=&sort= -> { content, page, size, totalElements, totalPages }
-// - GET    /api/users/:id -> user
+// CONFIRMED against smartFactoryBackEndSpringBoot UserController.
+// User routes are permission-guarded (USER_READ / USER_WRITE /
+// USER_PERMISSIONS_MANAGE) — see docs/api-contract.md.
+// - GET    /api/users?search=&role=&page=&size=&sort= -> { content, page, size, totalElements, totalPages }
+// - GET    /api/users/:id -> user (includes effectivePermissions + custom lists)
 // - POST   /api/users { firstName, lastName, email, password, role, status? } -> 201 user
 // - PUT    /api/users/:id { firstName, lastName, email, role, status, password? } -> user
 // - DELETE /api/users/:id -> 204
-// NOTE: no self-service profile or change-password endpoint in Sprint 1.
-// The own profile is read via GET /api/auth/me (authService.me).
+// - GET    /api/users/permissions/catalog (any authenticated role)
+// - GET    /api/users/:id/permissions -> UserPermissionsDto
+// - PUT    /api/users/:id/permissions { permissions: [...] } -> UserPermissionsDto
 
 import api from "../../lib/axios";
 import { ENDPOINTS, buildUrl } from "../../constants/api";
@@ -19,30 +21,61 @@ export async function getAll(params = {}) {
   return response.data;
 }
 
-/** GET /api/users/:id (ADMIN) */
+/** GET /api/users/:id (USER_READ) */
 export async function getById(id) {
   const url = buildUrl(ENDPOINTS.USER_BY_ID, { id });
   const response = await api.get(url);
   return response.data;
 }
 
-/** POST /api/users (ADMIN) */
+/** POST /api/users (USER_WRITE) */
 export async function create(body) {
   const response = await api.post(ENDPOINTS.USERS, body);
   return response.data;
 }
 
-/** PUT /api/users/:id (ADMIN). All fields except password are required. */
+/** PUT /api/users/:id (USER_WRITE). All fields except password are required. */
 export async function update(id, body) {
   const url = buildUrl(ENDPOINTS.USER_BY_ID, { id });
   const response = await api.put(url, body);
   return response.data;
 }
 
-/** DELETE /api/users/:id (ADMIN) -> 204 */
+/** DELETE /api/users/:id (USER_WRITE) -> 204 */
 export async function remove(id) {
   const url = buildUrl(ENDPOINTS.USER_BY_ID, { id });
   const response = await api.delete(url);
+  return response.data;
+}
+
+/**
+ * GET /api/users/permissions/catalog (any authenticated role)
+ * -> { permissions: [{ code, description, category }], roles: { ROLE: { label, defaultPermissions } } }
+ */
+export async function getPermissionsCatalog() {
+  const response = await api.get(ENDPOINTS.USER_PERMISSIONS_CATALOG);
+  return response.data;
+}
+
+/**
+ * GET /api/users/:id/permissions (USER_READ)
+ * -> { userId, email, role, roleDefaultPermissions, customGrantedPermissions,
+ *      customRevokedPermissions, effectivePermissions }
+ */
+export async function getUserPermissions(id) {
+  const url = buildUrl(ENDPOINTS.USER_PERMISSIONS, { id });
+  const response = await api.get(url);
+  return response.data;
+}
+
+/**
+ * PUT /api/users/:id/permissions (USER_PERMISSIONS_MANAGE)
+ * Body: { permissions: [...] } full checklist (server recalculates
+ * granted/revoked against the role). Returns the updated UserPermissionsDto.
+ */
+export async function updateUserPermissions(id, permissions) {
+  const url = buildUrl(ENDPOINTS.USER_PERMISSIONS, { id });
+  const response = await api.put(url, { permissions });
   return response.data;
 }
 

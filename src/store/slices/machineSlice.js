@@ -102,6 +102,7 @@ const machineSlice = createSlice({
       zoneId: null,
     },
     counts: {}, // unfiltered per-status totals for tab badges { ALL, RUNNING, ... }
+    pagination: { page: 0, size: 10, totalElements: 0, totalPages: 0 },
   },
   reducers: {
     setFilters(state, action) {
@@ -117,7 +118,14 @@ const machineSlice = createSlice({
       })
       .addCase(fetchMachines.fulfilled, (state, action) => {
         state.status = "succeeded";
-        state.list = Array.isArray(action.payload) ? action.payload : action.payload?.content || [];
+        const payload = action.payload || {};
+        state.list = Array.isArray(payload) ? payload : payload?.content || [];
+        state.pagination = {
+          page: payload?.page ?? action.meta.arg?.page ?? 0,
+          size: payload?.size ?? action.meta.arg?.size ?? state.pagination.size,
+          totalElements: payload?.totalElements ?? state.list.length,
+          totalPages: payload?.totalPages ?? 1,
+        };
       })
       .addCase(fetchMachines.rejected, (state, action) => {
         state.status = "error";

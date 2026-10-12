@@ -15,6 +15,7 @@ import EmptyState from "../../src/components/EmptyState";
 import Avatar from "../../src/components/Avatar";
 import { useBreakpoint } from "../../src/hooks/useBreakpoint";
 import { useDark } from "../../src/hooks/useDark";
+import { useRole } from "../../src/hooks/useRole";
 import { useAppDispatch } from "../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../src/hooks/useAppSelector";
 import { useAuth } from "../../src/hooks/useAuth";
@@ -29,16 +30,19 @@ export default function MyGroupScreen() {
   const dispatch = useAppDispatch();
   const router = useRouter();
   const dark = useDark();
+  const { canAccess, homeRoute } = useRole();
   const isDesktop = useBreakpoint() === "desktop";
   const { user } = useAuth();
   const { list, status, operators, supervisor, membersStatus } = useAppSelector((s) => s.group);
+  const canViewGroups = canAccess("myGroup");
 
   useEffect(() => {
+    if (!canViewGroups) return;
     dispatch(fetchGroups({ page: 0, size: 100 }));
     return () => {
       dispatch(clearGroupCurrent());
     };
-  }, [dispatch]);
+  }, [dispatch, canViewGroups]);
 
   const myGroup = useMemo(() => {
     if (!user || !list.length) return null;
@@ -61,6 +65,16 @@ export default function MyGroupScreen() {
   return (
     <AppShell>
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+        {!canAccess("myGroup") ? (
+          <Card>
+            <EmptyState
+              title="Restricted area"
+              message="Groups require the GROUP_READ permission."
+              action={<Button title="Go Home" variant="primary" size="sm" onPress={() => router.replace(homeRoute)} />}
+            />
+          </Card>
+        ) : (
+          <>
         <Text className={isDesktop ? `${titleClass} mb-5` : `text-xl font-bold font-inter mb-4 ${dark ? "text-white" : "text-text"}`}>
           My Group
         </Text>
@@ -157,6 +171,8 @@ export default function MyGroupScreen() {
             <View className="mt-4">
               <Button title="Back" variant="ghost" size="sm" onPress={() => router.back()} />
             </View>
+          </>
+        )}
           </>
         )}
       </ScrollView>

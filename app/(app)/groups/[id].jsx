@@ -18,7 +18,7 @@ import Select from "../../../src/components/Select";
 import MultiSelect from "../../../src/components/MultiSelect";
 import { useBreakpoint } from "../../../src/hooks/useBreakpoint";
 import { useDark } from "../../../src/hooks/useDark";
-import { useRole } from "../../../src/hooks/useRole";
+import { useRole, PERMISSIONS } from "../../../src/hooks/useRole";
 import { useDialog } from "../../../src/components/dialog/DialogContext";
 import { useAppDispatch } from "../../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../../src/hooks/useAppSelector";
@@ -41,7 +41,9 @@ export default function GroupDetailScreen() {
   const dispatch = useAppDispatch();
   const dialog = useDialog();
   const router = useRouter();
-  const { isAdmin } = useRole();
+  const { canAccess, homeRoute, hasPermission } = useRole();
+  const canWrite = hasPermission(PERMISSIONS.GROUP_WRITE);
+  const canViewGroup = canAccess("groups");
   const dark = useDark();
   const isDesktop = useBreakpoint() === "desktop";
 
@@ -55,18 +57,18 @@ export default function GroupDetailScreen() {
   const [savingSup, setSavingSup] = useState(false);
 
   useEffect(() => {
-    if (!groupId) return;
+    if (!groupId || !canViewGroup) return;
     dispatch(fetchGroupById(groupId));
     dispatch(fetchGroupOperators(groupId));
     dispatch(fetchGroupSupervisor(groupId));
     return () => {
       dispatch(clearGroupCurrent());
     };
-  }, [dispatch, groupId]);
+  }, [dispatch, groupId, canViewGroup]);
 
   useEffect(() => {
-    if (isAdmin && groupId) dispatch(fetchUsers({ page: 0, size: 100 }));
-  }, [dispatch, isAdmin, groupId]);
+    if (canWrite && groupId) dispatch(fetchUsers({ page: 0, size: 100 }));
+  }, [dispatch, canWrite, groupId]);
 
   useEffect(() => {
     setSupervisorPick(current?.supervisorId || "");
@@ -163,7 +165,7 @@ export default function GroupDetailScreen() {
         ) : (
           <Text className={`text-sm font-inter mb-3 ${dark ? "text-white/60" : "text-text-muted"}`}>No supervisor assigned.</Text>
         )}
-        {isAdmin && (
+        {canWrite && (
           <View className="gap-2">
             <Select
               value={supervisorPick}
@@ -195,7 +197,7 @@ export default function GroupDetailScreen() {
           <Text className={`text-base font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
             Operators ({operators.length})
           </Text>
-          {isAdmin && (
+          {canWrite && (
             <Button title="+ Add" variant="outline" size="sm" onPress={() => setAddOpen(true)} />
           )}
         </View>
@@ -225,7 +227,7 @@ export default function GroupDetailScreen() {
                 </Text>
                 <Text className={`text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>{u.email}</Text>
               </View>
-              {isAdmin && (
+              {canWrite && (
                 <Pressable onPress={() => handleRemove(u)} className="px-2 py-1">
                   <Text className="text-xs text-danger font-medium font-inter">Remove</Text>
                 </Pressable>
@@ -256,6 +258,16 @@ export default function GroupDetailScreen() {
   return (
     <AppShell>
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+        {!canAccess("groups") ? (
+          <Card>
+            <EmptyState
+              title="Restricted area"
+              message="Groups require the GROUP_READ permission."
+              action={<Button title="Go Home" variant="primary" size="sm" onPress={() => router.replace(homeRoute)} />}
+            />
+          </Card>
+        ) : (
+          <>
         <Breadcrumb
           items={[
             { label: "Groups", onPress: () => router.push("/(app)/groups") },
@@ -289,7 +301,7 @@ export default function GroupDetailScreen() {
                   {current.supervisorName ? ` · Supervised by ${current.supervisorName}` : ""}
                 </Text>
               </View>
-              {isAdmin && (
+              {canWrite && (
                 <Button title="Delete Groupe" variant="danger" size="sm" onPress={handleDelete} />
               )}
             </View>
@@ -305,6 +317,8 @@ export default function GroupDetailScreen() {
                 {OperatorsCard()}
               </View>
             )}
+          </>
+        )}
           </>
         )}
       </ScrollView>
