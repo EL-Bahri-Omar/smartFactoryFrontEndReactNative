@@ -28,7 +28,14 @@ export const ENDPOINTS = Object.freeze({
   MACHINES: "/api/machines", // CONFIRMED — GET paginated { content, page, size, totalElements, totalPages }, params zoneId/status/search/page/size/sort (MACHINE_READ)
   MACHINE_BY_ID: "/api/machines/:id", // CONFIRMED — GET one (MACHINE_READ); PUT update / DELETE 204 (MACHINE_WRITE)
   MACHINE_SENSORS: "/api/machines/:id/sensors", // CONFIRMED Sprint 3 — GET array [{ id, machineId, type, unit, status, lastSeen, ... }]. NOTE: resolve with the Mongo id, not the code
-  MACHINE_READINGS: "/api/machines/:id/readings", // CONFIRMED Sprint 3 — GET paginated { content, ... }, params from/to/sensorType/page/size/sort. Accepts Mongo id OR code (READINGS_READ)
+  MACHINE_READINGS: "/api/machines/:id/readings", // CONFIRMED Sprint 4 — GET paginated { content, ... } from SmartFactoryHistory, params from/to/sensorType/page/size/sort. Accepts Mongo id OR code (READINGS_READ or SENSOR_HISTORY_READ)
+  MACHINE_READINGS_LATEST: "/api/machines/:id/readings/latest", // CONFIRMED Sprint 4 — GET full telemetry snapshot { machineId, machineCode, status, sensors: { temperature, vibration, current, rpm }, timestamp } (READINGS_READ)
+  MACHINE_TIMESERIES: "/api/machines/:id/readings/timeseries", // CONFIRMED Sprint 4 — GET { machineId, machineCode, sensorType, from, to, period, totalPoints, points: [{ timestamp, value, unit, sensorType }] }. Params sensorType?, period=1h|24h|7d|30d, from/to, aggregate=avg, maxPoints (READINGS_READ). Alias: /charts
+  MACHINE_CURRENT_TEMPERATURE: "/api/machines/:id/sensors/temperature/current", // CONFIRMED Sprint 4 — GET { machineId, machineCode, sensorType, value, unit, timestamp, status, thresholdBreached, severity, breachedThreshold, warningMin/Max, criticalMin/Max } (READINGS_READ)
+  MACHINE_CURRENT_VIBRATION: "/api/machines/:id/sensors/vibration/current", // CONFIRMED Sprint 4 — same shape, VIBRATION
+  MACHINE_CURRENT_CURRENT: "/api/machines/:id/sensors/current/current", // CONFIRMED Sprint 4 — same shape, CURRENT
+  MACHINE_CURRENT_RPM: "/api/machines/:id/sensors/rpm/current", // CONFIRMED Sprint 4 — same shape, RPM. status ∈ OK | WARNING | CRITICAL | NO_DATA (severity NONE when no data)
+  MACHINE_STATUS_INFO: "/api/machines/:id/status", // CONFIRMED Sprint 4 — GET { machineId, machineCode, name, status, lastSeen, isOnline } (MACHINE_READ); PUT { status } full update (MACHINE_WRITE)
   MACHINE_THRESHOLDS: "/api/machines/:id/thresholds", // CONFIRMED — GET array (THRESHOLD_READ); POST upsert body (THRESHOLD_WRITE) -> 201
   MACHINE_THRESHOLD_BY_TYPE: "/api/machines/:id/thresholds/:sensorType", // CONFIRMED — GET one / PUT upsert / DELETE 204. machineId accepts id OR code
 
@@ -95,6 +102,12 @@ export const ENDPOINTS = Object.freeze({
   USER_ME: "/api/users/me", // CONFIRMED — PUT { firstName, lastName, email, role, status } -> user (any role)
   USER_ME_PASSWORD: "/api/users/me/password", // CONFIRMED — PUT ?newPassword=&oldPassword= -> 204 (any role)
   USER_PERMISSIONS: "/api/users/:id/permissions", // CONFIRMED — GET UserPermissionsDto (USER_READ); PUT { permissions: [...] } -> UserPermissionsDto (USER_PERMISSIONS_MANAGE)
+
+  // --- Roles (CONFIRMED — RoleController, dynamic roles in `roles` collection) ---
+  ROLES: "/api/roles", // CONFIRMED — GET array RoleResponseDto (ROLE_ADMIN or ROLE_READ); POST { name (2-50 alphanum/_/-, unique), description?, privileges? } -> 201 (ROLE_ADMIN or ROLE_CREATE)
+  ROLE_BY_NAME: "/api/roles/:name", // CONFIRMED — GET one by id or name (ROLE_ADMIN or ROLE_READ); PUT { description?, privileges? } (ROLE_ADMIN or ROLE_UPDATE); DELETE 204 custom roles only, blocked when system or in use (ROLE_ADMIN or ROLE_DELETE)
+  ROLE_PRIVILEGES_CATALOG: "/api/roles/privileges", // CONFIRMED — GET array [{ code, name, description, category }] (ROLE_ADMIN or ROLE_READ)
+  ROLE_PRIVILEGES: "/api/roles/:name/privileges", // CONFIRMED — GET string[] (ROLE_ADMIN or ROLE_READ); POST string[] merge (ROLE_ADMIN or ROLE_UPDATE)
   // NOTE: no /api/users/me, no change-password endpoint in Sprint 1.
   // Profile reads GET /api/auth/me; self-edit goes through PUT /api/users/:id (ADMIN only).
 

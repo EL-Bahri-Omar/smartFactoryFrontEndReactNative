@@ -24,6 +24,8 @@ import MetricCard from "../../../src/components/MetricCard";
 import AddMachineModal from "../../../src/components/AddMachineModal";
 import LineChart from "../../../src/components/charts/LineChart";
 import ChartLegend from "../../../src/components/charts/ChartLegend";
+import SensorChart from "../../../src/components/charts/SensorChart";
+import DateTimeInput from "../../../src/components/DateTimeInput";
 import { useBreakpoint } from "../../../src/hooks/useBreakpoint";
 import { useDark } from "../../../src/hooks/useDark";
 import { useRole, PERMISSIONS } from "../../../src/hooks/useRole";
@@ -94,6 +96,20 @@ function numOrNull(x) {
   return Number.isFinite(n) ? n : NaN;
 }
 
+/** Evaluate a sensor value against threshold bounds. */
+function evaluateThresholdStatus(value, threshold) {
+  if (!threshold || threshold.active === false) return "OK";
+  const v = Number(value);
+  if (Number.isNaN(v)) return "NO_DATA";
+  const cMax = numOrNull(threshold.criticalMax);
+  const cMin = numOrNull(threshold.criticalMin);
+  const wMax = numOrNull(threshold.warningMax);
+  const wMin = numOrNull(threshold.warningMin);
+  if ((cMax != null && v >= cMax) || (cMin != null && v <= cMin)) return "CRITICAL";
+  if ((wMax != null && v >= wMax) || (wMin != null && v <= wMin)) return "WARNING";
+  return "OK";
+}
+
 /** Mirror of the backend validation (criticalMin<=warningMin<=warningMax<=criticalMax). */
 function validateApiThresholds(values) {
   for (const type of THRESHOLD_TYPES) {
@@ -143,6 +159,9 @@ export default function MachineDetailScreen() {
 
   const [tab, setTab] = useState("overview");
   const [chartRange, setChartRange] = useState("6h");
+  const [showCustomRange, setShowCustomRange] = useState(false);
+  const [customRangeFrom, setCustomRangeFrom] = useState("");
+  const [customRangeTo, setCustomRangeTo] = useState("");
   const [livePoints, setLivePoints] = useState([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState(null); // { top, right } screen coords for the dropdown
@@ -261,6 +280,19 @@ export default function MachineDetailScreen() {
 
   function handleRangeChange(next) {
     setChartRange(next);
+    setShowCustomRange(false);
+  }
+
+  function applyCustomRange() {
+    if (customRangeFrom && customRangeTo) {
+      dispatch(fetchReadings({
+        machineId,
+        range: "custom",
+        size: 500,
+        customFrom: customRangeFrom,
+        customTo: customRangeTo,
+      }));
+    }
   }
 
   function summaryText() {
@@ -493,11 +525,12 @@ export default function MachineDetailScreen() {
             />
           </Card>
         ) : (
-        <Card>
+        <View>
+          {/* Header: title + live badge + range tabs */}
           <View className={`${isDesktop ? "flex-row items-center justify-between mb-3" : "mb-3"}`}>
             <View className="flex-row items-center gap-2 mb-2">
               <Text className={`text-base font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
-                Live Sensor Data
+                Sensor Data
               </Text>
               {!liveConnected && (
                 <View className="px-2 py-0.5 rounded-chip bg-warning/15">
@@ -514,20 +547,58 @@ export default function MachineDetailScreen() {
                 </View>
               )}
             </View>
-            <RangeTabs active={chartRange} onChange={handleRangeChange} />
+            <View className="flex-row items-center gap-2">
+              <RangeTabs active={chartRange} onChange={handleRangeChange} />
+              <Pressable
+                onPress={() => setShowCustomRange(!showCustomRange)}
+                className={`px-3 py-1.5 rounded-chip ${showCustomRange ? "bg-primary" : dark ? "bg-white/5 border border-white/15" : "bg-bg border border-border"}`}
+              >
+                <Text className={`text-xs font-semibold font-inter ${showCustomRange ? "text-white" : dark ? "text-white/60" : "text-text-muted"}`}>{'Custom'}</Text>
+              </Pressable>
+            </View>
           </View>
-
-          {isDesktop && <ChartLegend items={legendItems} className="mb-2" />}
+          {showCustomRange && (
+            <Card className="mb-3">
+              <View className={`${isDesktop ? "flex-row items-end gap-3" : "gap-3"}`}>
+                <View className="flex-1">
+                  <Text className={`text-xs font-inter mb-1 ${dark ? "text-white/60" : "text-text-muted"}`}>{'From'}</Text>
+                  <DateTimeInput value={customRangeFrom} onChange={setCustomRangeFrom} placeholder="Select start date..." />
+                </View>
+                <View className="flex-1">
+                  <Text className={`text-xs font-inter mb-1 ${dark ? "text-white/60" : "text-text-muted"}`}>{'To'}</Text>
+                  <DateTimeInput value={customRangeTo} onChange={setCustomRangeTo} placeholder="Select end date..." />
+                </View>
+              </View>
+              {customRangeFrom && customRangeTo && (
+                <View className={`flex-row items-center gap-2 py-2 px-3 rounded-btn mt-2 ${dark ? "bg-success/10" : "bg-green-50"}`}>
+                  <Text style={{ fontSize: 14, color: "#22C55E" }}>{"✓"}</Text>
+                  <Text className={`text-xs font-inter ${dark ? "text-white/80" : "text-text"}`}>
+                    {`Selected: ${new Date(customRangeFrom).toLocaleString()} → ${new Date(customRangeTo).toLocaleString()}`}
+                  </Text>
+                </View>
+              )}
+              <View className="flex-row gap-2 mt-2">
+                <Button title="Apply Filter" variant="primary" size="sm" disabled={!customRangeFrom || !customRangeTo} onPress={applyCustomRange} />
+                <Button title="Cancel" variant="outline" size="sm" onPress={() => { setShowCustomRange(false); setCustomRangeFrom(""); setCustomRangeTo(""); }} />
+              </View>
+            </Card>
+          )}
 
           {readingsLoading && (
-            <View className="py-4">
-              <Skeleton width="100%" height={16} className="mb-3" />
-              <Skeleton width="100%" height={220} />
+            <View className={`gap-3 ${isDesktop ? "flex-row flex-wrap" : ""}`}>
+              {SERIES_META.map((m) => (
+                <View key={m.id} className={isDesktop ? "w-[48%]" : ""}>
+                  <Card>
+                    <Skeleton width="40%" height={16} className="mb-3" />
+                    <Skeleton width="100%" height={180} />
+                  </Card>
+                </View>
+              ))}
             </View>
           )}
 
           {readingsFailed && (
-            <View className="py-4">
+            <Card>
               <Text className="text-sm text-danger font-inter mb-3">
                 {readingError?.message || "Failed to load readings"}
               </Text>
@@ -539,30 +610,300 @@ export default function MachineDetailScreen() {
                   dispatch(fetchReadings({ machineId, range: chartRange }))
                 }
               />
-            </View>
+            </Card>
           )}
 
           {readingsEmpty && (
-            <EmptyState
-              title="No readings yet"
-              message="Historical and live sensor points will appear here once the backend publishes data."
-            />
+            <Card>
+              <EmptyState
+                title="No readings yet"
+                message="Historical and live sensor points will appear here once the backend publishes data."
+              />
+            </Card>
           )}
 
           {!readingsLoading && !readingsFailed && !readingsEmpty && (
-            <>
-              <LineChart
-                series={chartSeries}
-                height={isDesktop ? 280 : 240}
-                yMin={0}
-                yMax={200}
-                pulseLast={liveConnected}
-              />
-              {!isDesktop && <ChartLegend items={legendItems} className="mt-3" />}
-            </>
+            <View className={isDesktop ? "flex-row flex-wrap gap-3" : "gap-3"}>
+              {SERIES_META.map((meta) => {
+                const pts = (groups[meta.id] || []).map((r) => ({
+                  x: new Date(r.timestamp).getTime(),
+                  y: r.value,
+                }));
+                const thold = (thresholdList || []).find(
+                  (t) => t.sensorType === meta.id
+                );
+                const lastPt = (groups[meta.id] || []).at(-1);
+                const sensorObj = (sensors || []).find(
+                  (s) => s?.type === meta.id
+                );
+                const sStatus = getSensorStatus(sensorObj?.status);
+                return (
+                  <View
+                    key={meta.id}
+                    style={isDesktop ? { width: "48.5%" } : undefined}
+                  >
+                    <SensorChart
+                      sensorType={meta.id}
+                      data={pts}
+                      threshold={thold}
+                      height={isDesktop ? 210 : 180}
+                      pulseLast={liveConnected && pts.length > 0}
+                      currentValue={lastPt?.value}
+                      status={
+                        !lastPt
+                          ? "NO_DATA"
+                          : thold
+                            ? evaluateThresholdStatus(lastPt.value, thold)
+                            : sStatus?.label === "Online"
+                              ? "OK"
+                              : sStatus?.label || null
+                      }
+                      compact={!isDesktop}
+                    />
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </View>
+        )}
+      </View>
+    );
+  }
+
+  // ── Live Data tab ─────────────────────────────────────────────
+  function LiveDataBody() {
+    if (!canReadTelemetry) {
+      return (
+        <Card>
+          <EmptyState title="Restricted" message="Telemetry requires the READINGS_READ permission." />
+        </Card>
+      );
+    }
+    return (
+      <View>
+        {/* Header: live status + global range picker */}
+        <View className={`${isDesktop ? "flex-row items-center justify-between mb-3" : "mb-3"}`}>
+          <View className="flex-row items-center gap-2 mb-2">
+            <Text className={`text-base font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
+              Sensor Data
+            </Text>
+            {!liveConnected && (
+              <View className="px-2 py-0.5 rounded-chip bg-warning/15">
+                <Text className="text-[11px] font-medium text-warning font-inter">reconnecting…</Text>
+              </View>
+            )}
+            {liveConnected && (
+              <View className="px-2 py-0.5 rounded-chip bg-success/15">
+                <Text className="text-[11px] font-medium text-success font-inter">live</Text>
+              </View>
+            )}
+          </View>
+          <View className="flex-row items-center gap-2">
+            <RangeTabs active={chartRange} onChange={handleRangeChange} />
+            <Pressable
+              onPress={() => setShowCustomRange(!showCustomRange)}
+              className={`px-3 py-1.5 rounded-chip ${showCustomRange ? "bg-primary" : dark ? "bg-white/5 border border-white/15" : "bg-bg border border-border"}`}
+            >
+              <Text className={`text-xs font-semibold font-inter ${showCustomRange ? "text-white" : dark ? "text-white/60" : "text-text-muted"}`}>{'Custom'}</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {readingsLoading && (
+          <View className={`gap-3 ${isDesktop ? "flex-row flex-wrap" : ""}`}>
+            {SERIES_META.map((m) => (
+              <View key={m.id} className={isDesktop ? "w-[48%]" : ""}>
+                <Card><Skeleton width="40%" height={16} className="mb-3" /><Skeleton width="100%" height={180} /></Card>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {readingsFailed && (
+          <Card>
+            <Text className="text-sm text-danger font-inter mb-3">{readingError?.message || "Failed to load readings"}</Text>
+            <Button title="Retry" variant="outline" size="sm" onPress={() => dispatch(fetchReadings({ machineId, range: chartRange }))} />
+          </Card>
+        )}
+
+        {readingsEmpty && (
+          <Card>
+            <EmptyState title="No readings yet" message="Historical and live sensor points will appear here once the backend publishes data." />
+          </Card>
+        )}
+
+        {!readingsLoading && !readingsFailed && !readingsEmpty && (
+          <View className={isDesktop ? "flex-row flex-wrap gap-3" : "gap-3"}>
+            {SERIES_META.map((meta) => {
+              const pts = (groups[meta.id] || []).map((r) => ({
+                x: new Date(r.timestamp).getTime(),
+                y: r.value,
+              }));
+              const thold = (thresholdList || []).find((t) => t.sensorType === meta.id);
+              const lastPt = (groups[meta.id] || []).at(-1);
+              const sensorObj = (sensors || []).find((s) => s?.type === meta.id);
+              const sStatus = getSensorStatus(sensorObj?.status);
+              return (
+                <View key={meta.id} style={isDesktop ? { width: "48.5%" } : undefined}>
+                  <SensorChart
+                    sensorType={meta.id}
+                    data={pts}
+                    threshold={thold}
+                    height={isDesktop ? 210 : 180}
+                    pulseLast={liveConnected && pts.length > 0}
+                    currentValue={lastPt?.value}
+                    status={
+                      !lastPt ? "NO_DATA"
+                        : thold ? evaluateThresholdStatus(lastPt.value, thold)
+                        : sStatus?.label === "Online" ? "OK"
+                        : sStatus?.label || null
+                    }
+                    compact={!isDesktop}
+                  />
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  // ── History tab (with measurements table) ────────────────────
+  function HistoryBody() {
+    if (!canReadTelemetry) {
+      return (
+        <Card>
+          <EmptyState title="Restricted" message="Telemetry requires the READINGS_READ permission." />
+        </Card>
+      );
+    }
+
+    // Table data sorted most recent first
+    const tableData = [...merged].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    const PAGE = 15;
+    const totalPages = Math.max(1, Math.ceil(tableData.length / PAGE));
+
+    function formatTs(ts) {
+      if (!ts) return "—";
+      return new Date(ts).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+
+    return (
+      <View>
+        {/* Range picker */}
+        <View className={`${isDesktop ? "flex-row items-center justify-between mb-3" : "mb-3"}`}>
+          <Text className={`text-base font-bold font-inter mb-2 ${dark ? "text-white" : "text-text"}`}>
+            History
+          </Text>
+          <View className="flex-row items-center gap-2">
+            <RangeTabs active={chartRange} onChange={handleRangeChange} />
+            <Pressable
+              onPress={() => setShowCustomRange(!showCustomRange)}
+              className={`px-3 py-1.5 rounded-chip ${showCustomRange ? "bg-primary" : dark ? "bg-white/5 border border-white/15" : "bg-bg border border-border"}`}
+            >
+              <Text className={`text-xs font-semibold font-inter ${showCustomRange ? "text-white" : dark ? "text-white/60" : "text-text-muted"}`}>{'Custom'}</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {/* Charts */}
+        {readingsLoading && (
+          <View className="gap-3 mb-4">
+            <Skeleton width="100%" height={180} />
+            <Skeleton width="100%" height={180} />
+          </View>
+        )}
+
+        {!readingsLoading && !readingsEmpty && !readingsFailed && (
+          <View className={`mb-4 ${isDesktop ? "flex-row flex-wrap gap-3" : "gap-3"}`}>
+            {SERIES_META.map((meta) => {
+              const pts = (groups[meta.id] || []).map((r) => ({
+                x: new Date(r.timestamp).getTime(),
+                y: r.value,
+              }));
+              const thold = (thresholdList || []).find((t) => t.sensorType === meta.id);
+              const lastPt = (groups[meta.id] || []).at(-1);
+              return (
+                <View key={meta.id} style={isDesktop ? { width: "48.5%" } : undefined}>
+                  <SensorChart
+                    sensorType={meta.id}
+                    data={pts}
+                    threshold={thold}
+                    height={isDesktop ? 190 : 170}
+                    currentValue={lastPt?.value}
+                    compact={!isDesktop}
+                  />
+                </View>
+              );
+            })}
+          </View>
+        )}
+
+        {readingsEmpty && (
+          <Card className="mb-4">
+            <EmptyState title="No readings" message="No sensor data found for this period." />
+          </Card>
+        )}
+
+        {/* Measurements table */}
+        <Card>
+          <Text className={`text-base font-bold font-inter mb-3 ${dark ? "text-white" : "text-text"}`}>
+            {"Measurements"}
+            <Text className={`text-sm font-normal ${dark ? "text-white/50" : "text-text-muted"}`}>
+              {` (${tableData.length})`}
+            </Text>
+          </Text>
+
+          {tableData.length === 0 ? (
+            <EmptyState title="No data" message="No measurements for this period." />
+          ) : (
+            <View>
+              {/* Header */}
+              <View className={`flex-row items-center py-2 px-3 border-b ${dark ? "border-white/10 bg-white/[0.03]" : "border-border bg-slate-50"} rounded-t-lg`}>
+                <Text className={`flex-1 text-[11px] font-bold font-inter uppercase ${dark ? "text-white/60" : "text-text-muted"}`}>Timestamp</Text>
+                <Text className={`text-[11px] font-bold font-inter uppercase ${dark ? "text-white/60" : "text-text-muted"}`} style={{ width: 100 }}>Sensor</Text>
+                <Text className={`text-[11px] font-bold font-inter uppercase text-right ${dark ? "text-white/60" : "text-text-muted"}`} style={{ width: 80 }}>Value</Text>
+                <Text className={`text-[11px] font-bold font-inter uppercase text-right ${dark ? "text-white/60" : "text-text-muted"}`} style={{ width: 50 }}>Unit</Text>
+              </View>
+
+              {/* Rows (first page only in detail view) */}
+              {tableData.slice(0, PAGE).map((row, idx) => {
+                const meta = SERIES_META.find((m) => m.id === row.sensorType);
+                return (
+                  <View
+                    key={`${row.sensorType}-${row.timestamp}-${idx}`}
+                    className={`flex-row items-center py-2 px-3 border-b ${dark ? "border-white/5" : "border-border/50"}`}
+                  >
+                    <Text className={`flex-1 text-xs font-inter ${dark ? "text-white/80" : "text-text"}`}>{formatTs(row.timestamp)}</Text>
+                    <View className="flex-row items-center gap-1.5" style={{ width: 100 }}>
+                      <View className="w-2 h-2 rounded-full" style={{ backgroundColor: meta?.color || "#999" }} />
+                      <Text className={`text-xs font-inter ${dark ? "text-white/80" : "text-text"}`}>{meta?.label || row.sensorType}</Text>
+                    </View>
+                    <Text className={`text-xs font-inter font-medium text-right ${dark ? "text-white" : "text-text"}`} style={{ width: 80 }}>
+                      {typeof row.value === "number" ? row.value.toFixed(meta?.id === "RPM" ? 0 : 2) : row.value}
+                    </Text>
+                    <Text className={`text-xs font-inter text-right ${dark ? "text-white/50" : "text-text-muted"}`} style={{ width: 50 }}>
+                      {row.unit || ""}
+                    </Text>
+                  </View>
+                );
+              })}
+
+              {tableData.length > PAGE && (
+                <View className="items-center py-3">
+                  <Button
+                    title={`View all ${tableData.length} readings in History`}
+                    variant="outline"
+                    size="sm"
+                    onPress={() => router.push(`/(app)/history?machineId=${machine?.id || machineId}`)}
+                  />
+                </View>
+              )}
+            </View>
           )}
         </Card>
-        )}
       </View>
     );
   }
@@ -735,7 +1076,7 @@ export default function MachineDetailScreen() {
 
   return (
     <AppShell>
-      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
         {isDesktop ? (
           <View className="mb-4">
             <Breadcrumb
@@ -815,7 +1156,11 @@ export default function MachineDetailScreen() {
           />
         </View>
 
-        {tab === "overview" ? OverviewBody() : tab === "settings" ? SettingsBody() : ComingSoon()}
+        {tab === "overview" ? OverviewBody()
+          : tab === "live" ? LiveDataBody()
+          : tab === "history" ? HistoryBody()
+          : tab === "settings" ? SettingsBody()
+          : ComingSoon()}
       </ScrollView>
       {/* ⋮ dropdown — Modal so it floats above everything (never clipped)
           and any tap outside closes it. */}

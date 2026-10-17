@@ -1,4 +1,4 @@
-﻿// src/store/slices/readingSlice.js
+// src/store/slices/readingSlice.js
 
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import * as readingService from "../services/readingService";
@@ -8,6 +8,7 @@ const RANGE_MS = {
   "6h": 6 * 60 * 60 * 1000,
   "24h": 24 * 60 * 60 * 1000,
   "7d": 7 * 24 * 60 * 60 * 1000,
+  "30d": 30 * 24 * 60 * 60 * 1000,
 };
 
 export function rangeToWindow(range = "6h") {
@@ -19,17 +20,50 @@ export function rangeToWindow(range = "6h") {
 
 export const fetchReadings = createAsyncThunk(
   "reading/fetch",
-  async ({ machineId, range = "6h", sensorType, size = 100 } = {}, { rejectWithValue }) => {
+  async ({ machineId, range = "6h", sensorType, size = 100, customFrom, customTo } = {}, { rejectWithValue }) => {
     try {
-      const { from, to } = rangeToWindow(range);
-      const list = await readingService.getByMachine({
+      let from, to;
+      if (customFrom && customTo) {
+        from = new Date(customFrom).toISOString();
+        to = new Date(customTo).toISOString();
+      } else {
+        ({ from, to } = rangeToWindow(range));
+      }
+      // Fetch first page to get totalPages
+      const firstPage = await readingService.getByMachinePage({
         machineId,
         from,
         to,
         sensorType,
+        page: 0,
         size,
+        sort: "timestamp,asc",
       });
-      return { list, range, machineId };
+      let allReadings = firstPage.list || [];
+
+      // If there are more pages, fetch them all in parallel
+      if (firstPage.totalPages > 1) {
+        const remaining = [];
+        for (let p = 1; p < firstPage.totalPages; p++) {
+          remaining.push(
+            readingService.getByMachinePage({
+              machineId,
+              from,
+              to,
+              sensorType,
+              page: p,
+              size,
+              sort: "timestamp,asc",
+            })
+          );
+        }
+        const pages = await Promise.all(remaining);
+        for (const pg of pages) {
+          allReadings = allReadings.concat(pg.list || []);
+        }
+      }
+
+      return { list: allReadings, range, machineId };
     } catch (error) {
       return rejectWithValue(error);
     }

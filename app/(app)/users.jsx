@@ -15,7 +15,6 @@ import Skeleton from "../../src/components/Skeleton";
 import EmptyState from "../../src/components/EmptyState";
 import Avatar from "../../src/components/Avatar";
 import UserModal from "../../src/components/UserModal";
-import PermissionsModal from "../../src/components/PermissionsModal";
 import { useBreakpoint } from "../../src/hooks/useBreakpoint";
 import { useDark } from "../../src/hooks/useDark";
 import { useRole, PERMISSIONS } from "../../src/hooks/useRole";
@@ -43,7 +42,6 @@ export default function UsersScreen() {
 
   const canRead = hasPermission(PERMISSIONS.USER_READ);
   const canWrite = hasPermission(PERMISSIONS.USER_WRITE);
-  const canManagePerms = hasPermission(PERMISSIONS.USER_PERMISSIONS_MANAGE);
 
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -55,7 +53,6 @@ export default function UsersScreen() {
   const PAGE_SIZE = 10;
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [permsUser, setPermsUser] = useState(null);
 
   const refresh = () => {
     if (canRead) dispatch(fetchUsers({ page: 0, size: 100 }));
@@ -77,13 +74,19 @@ export default function UsersScreen() {
   }, [searchInput, search]);
 
   const filtered = useMemo(() => {
+    // Gmail-like: one box matches every visible column — name, email,
+    // role label + code, status — plus the role tab filter.
     const q = search.trim().toLowerCase();
     return (list || []).filter((u) => {
       if (roleFilter && u.role !== roleFilter) return false;
       if (!q) return true;
-      return `${u.firstName || ""} ${u.lastName || ""} ${u.email || ""}`
-        .toLowerCase()
-        .includes(q);
+      return [
+        u.firstName, u.lastName, u.email,
+        ROLE_LABEL[u.role] || u.role, u.status,
+        u.emailVerified ? "verified" : "unverified",
+      ]
+        .map((f) => String(f || "").toLowerCase())
+        .some((f) => f.includes(q));
     });
   }, [list, search, roleFilter]);
 
@@ -227,7 +230,7 @@ export default function UsersScreen() {
               <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
               <TextInput
                 className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
-                placeholder="Search users..."
+                placeholder="Search by name, email, role, status…"
                 placeholderTextColor="#94A3B8"
                 value={searchInput}
                 onChangeText={setSearchInput}
@@ -274,7 +277,7 @@ export default function UsersScreen() {
                 <Text className={`w-56 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Email</Text>
                 <Text className={`w-32 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Role</Text>
                 <Text className={`w-24 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Status</Text>
-                <Text className={`w-60 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Actions</Text>
+                <Text className={`w-32 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Actions</Text>
               </View>
               {pageItems.map((u, idx) => (
                 <View
@@ -294,12 +297,7 @@ export default function UsersScreen() {
                     </View>
                   </View>
                   <Text className={`w-24 text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>{u.status}</Text>
-                  <View className="w-60 flex-row items-center gap-3 flex-nowrap">
-                    {canManagePerms && (
-                      <Pressable onPress={() => setPermsUser(u)} className="py-1">
-                        <Text className="text-xs text-primary font-medium font-inter">Permissions</Text>
-                      </Pressable>
-                    )}
+                  <View className="w-32 flex-row items-center gap-3 flex-nowrap">
                     {canWrite && (
                       <Pressable onPress={() => openEdit(u)} className="py-1">
                         <Text className="text-xs text-primary font-medium font-inter">Edit</Text>
@@ -320,7 +318,6 @@ export default function UsersScreen() {
         </ScrollView>
 
         <UserModal visible={modalVisible} user={editing} onClose={() => { setModalVisible(false); refresh(); }} />
-        <PermissionsModal visible={!!permsUser} user={permsUser} onClose={() => { setPermsUser(null); refresh(); }} />
       </AppShell>
     );
   }
@@ -342,7 +339,7 @@ export default function UsersScreen() {
           <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
           <TextInput
             className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
-            placeholder="Search users..."
+            placeholder="Search by name, email, role, status…"
             placeholderTextColor="#94A3B8"
             value={searchInput}
             onChangeText={setSearchInput}
@@ -412,11 +409,6 @@ export default function UsersScreen() {
                     <Text className={`text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>{item.email}</Text>
                     <Text className="text-xs text-primary font-inter mt-0.5">{ROLE_LABEL[item.role] || item.role} · {item.status}</Text>
                   </View>
-                  {canManagePerms && (
-                    <Pressable onPress={() => setPermsUser(item)} className="px-2 py-1">
-                      <Text className="text-xs text-primary font-medium font-inter">Perms</Text>
-                    </Pressable>
-                  )}
                   {canWrite && (
                     <Pressable onPress={() => openEdit(item)} className="px-2 py-1">
                       <Text className="text-sm text-primary font-medium font-inter">Edit</Text>
@@ -435,7 +427,6 @@ export default function UsersScreen() {
       </View>
 
       <UserModal visible={modalVisible} user={editing} onClose={() => { setModalVisible(false); refresh(); }} />
-      <PermissionsModal visible={!!permsUser} user={permsUser} onClose={() => { setPermsUser(null); refresh(); }} />
     </AppShell>
   );
 }

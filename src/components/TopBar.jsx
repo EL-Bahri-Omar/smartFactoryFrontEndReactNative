@@ -1,5 +1,5 @@
 // src/components/TopBar.jsx
-// Top bar: menu (drawer), theme toggle, notification bell (unread badge),
+// Top bar: back button, menu (drawer), theme toggle, notification bell (unread badge),
 // logout (red exit icon), avatar -> profile.
 // Icon buttons share one real-button treatment: light surface, light border,
 // subtle shadow, rounded — in both light and dark modes.
@@ -7,7 +7,7 @@
 import { View, Text, Pressable } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, usePathname } from "expo-router";
 import { useAppDispatch } from "../hooks/useAppDispatch";
 import { useDark } from "../hooks/useDark";
 import { useDialog } from "./dialog/DialogContext";
@@ -27,6 +27,17 @@ function LogoutIcon({ size = 22, color = "#DC2626" }) {
       <Path d="M10 11h9v2h-9v3l-4-4 4-4v3z" fill={color} />
       {/* arrow head into bracket */}
       <Path d="M17 5h4a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1h-4v-2h3V7h-3V5z" fill={color} />
+    </Svg>
+  );
+}
+
+function BackIcon({ size = 20, color }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"
+        fill={color}
+      />
     </Svg>
   );
 }
@@ -54,16 +65,18 @@ function IconButton({ onPress, label, children }) {
   );
 }
 
+const ROOT_PATHS = ["/(app)", "/(app)/dashboard", "/dashboard"];
+
 export default function TopBar({ user, onMenuPress, showMenu = false }) {
   const router = useRouter();
+  const pathname = usePathname();
   const dispatch = useAppDispatch();
   const dialog = useDialog();
   const dark = useDark();
-  // NOTE: no unread badge — the alerts/notifications screens are not built
-  // yet, and the live counter counts every sensor reading (hits 99+ in
-  // seconds). The bell returns with the alerts screen (Sprint 5).
-  // Push content below the phone status bar / notch (0 on web).
   const insets = useSafeAreaInsets();
+
+  const isRoot = ROOT_PATHS.includes(pathname) || pathname === "/";
+  const canGoBack = !isRoot;
 
   function toggleTheme() {
     dispatch(setNotifications({ darkMode: !dark }));
@@ -84,7 +97,7 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
   }
 
   const barClass = dark ? "bg-[#0B1D3A] border-white/10" : "bg-surface border-border";
-  const menuColor = dark ? "#FFFFFF" : "#0F172A";
+  const iconColor = dark ? "#FFFFFF" : "#0F172A";
 
   return (
     <View
@@ -94,7 +107,14 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
       {/* Hamburger for smaller screens */}
       {showMenu && (
         <IconButton onPress={onMenuPress} label="Open menu">
-          <Text style={{ fontSize: 18, color: menuColor }}>☰</Text>
+          <Text style={{ fontSize: 18, color: iconColor }}>{"☰"}</Text>
+        </IconButton>
+      )}
+
+      {/* Back button */}
+      {canGoBack && (
+        <IconButton onPress={() => router.back()} label="Go back">
+          <BackIcon size={20} color={iconColor} />
         </IconButton>
       )}
 
@@ -105,9 +125,9 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
         <Text style={{ fontSize: 18 }}>{dark ? "☀️" : "🌙"}</Text>
       </IconButton>
 
-      {/* Notification bell (no badge until the alerts screen ships) */}
+      {/* Notification bell */}
       <IconButton onPress={() => {}} label="Notifications">
-        <Text style={{ fontSize: 18 }}>🔔</Text>
+        <Text style={{ fontSize: 18 }}>{"🔔"}</Text>
       </IconButton>
 
       {/* Logout — red exit icon */}
@@ -125,3 +145,4 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
     </View>
   );
 }
+

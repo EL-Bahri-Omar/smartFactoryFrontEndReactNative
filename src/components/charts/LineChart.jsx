@@ -74,7 +74,8 @@ function yTicks(yMin, yMax, count = 5) {
  *   yMin?: number,
  *   yMax?: number,
  *   pulseLast?: boolean,
- * }} props
+ *   limits?: { value: number, color?: string, label?: string }[],
+ * }} props — limits render as dashed horizontal threshold lines.
  */
 export default function LineChart({
   series = [],
@@ -82,6 +83,7 @@ export default function LineChart({
   yMin = 0,
   yMax = 200,
   pulseLast = false,
+  limits = [],
 }) {
   const [width, setWidth] = useState(0);
   const dark = useDark();
@@ -132,7 +134,11 @@ export default function LineChart({
     }
     if (maxX === minX) maxX = minX + 1;
 
-    // Spec default is 0–200; expand only when a series (e.g. RPM) exceeds it.
+    // Spec default is 0–200; expand when a series, or a limit line
+    // (e.g. RPM thresholds), exceeds it.
+    (limits || []).forEach((l) => {
+      if (Number.isFinite(Number(l?.value)) && Number(l.value) > maxY) maxY = Number(l.value);
+    });
     const niceMax = maxY > yMax ? Math.ceil(maxY / 50) * 50 : yMax;
     return {
       prepared: preparedSeries,
@@ -140,7 +146,7 @@ export default function LineChart({
       xMin: minX,
       xMax: maxX,
     };
-  }, [series, yMax]);
+  }, [series, yMax, limits]);
 
   const xTickCount = 5;
   const xTicks = [];
@@ -196,6 +202,37 @@ export default function LineChart({
               </SvgText>
             );
           })}
+
+          {/* Threshold limit lines (dashed) with value labels */}
+          {(limits || [])
+            .filter((l) => Number.isFinite(Number(l?.value)))
+            .map((l, i) => {
+              const v = Number(l.value);
+              const y = PAD.top + (1 - (v - yMin) / (domainYMax - yMin || 1)) * innerH;
+              if (y < PAD.top - 4 || y > PAD.top + innerH + 4) return null;
+              return (
+                <G key={`limit-${i}`}>
+                  <Line
+                    x1={PAD.left}
+                    x2={PAD.left + innerW}
+                    y1={y}
+                    y2={y}
+                    stroke={l.color || "#F59E0B"}
+                    strokeWidth={1.5}
+                    strokeDasharray="6 4"
+                  />
+                  <SvgText
+                    x={PAD.left + innerW - 2}
+                    y={y - 4}
+                    fontSize={9}
+                    fill={l.color || "#F59E0B"}
+                    textAnchor="end"
+                  >
+                    {l.label || String(v)}
+                  </SvgText>
+                </G>
+              );
+            })}
 
           {prepared.map((s) => {
             const pts = toPxPoints(s.data, xMin, xMax, yMin, domainYMax, innerW, innerH);

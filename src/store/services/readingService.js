@@ -30,8 +30,30 @@ export async function getByMachine({ machineId, from, to, sensorType, page = 0, 
 }
 
 /**
- * Accept array, page, { readings }, or { series: { TYPE: [{t,v}] } }.
+ * GET /api/machines/{id}/readings — paged variant, keeps the envelope meta
+ * for tables: { list, page, size, totalElements, totalPages }.
  */
+export async function getByMachinePage({ machineId, from, to, sensorType, page = 0, size = 20, sort = "timestamp,desc" } = {}) {
+  const url = buildUrl(ENDPOINTS.MACHINE_READINGS, { id: machineId });
+  const response = await api.get(url, {
+    params: {
+      from,
+      to,
+      sensorType: sensorType || undefined,
+      page,
+      size,
+      sort,
+    },
+  });
+  const data = response.data || {};
+  return {
+    list: normalizeReadings(data),
+    page: data.page ?? page,
+    size: data.size ?? size,
+    totalElements: data.totalElements ?? 0,
+    totalPages: data.totalPages ?? 0,
+  };
+}
 export function normalizeReadings(data) {
   if (!data) return [];
   if (Array.isArray(data)) return data.map(normalizeOne).filter(Boolean);

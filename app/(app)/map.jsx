@@ -8,7 +8,7 @@
 // Subscribes to /topic/zones for live updates via liveSlice.
 
 import { useEffect, useState } from "react";
-import { View, Text, ScrollView, Pressable } from "react-native";
+import { View, Text, ScrollView, Pressable, TextInput } from "react-native";
 import { useRouter } from "expo-router";
 import AppShell from "../../src/components/AppShell";
 import Card from "../../src/components/Card";
@@ -64,6 +64,17 @@ export default function MapScreen() {
   const [selectedZone, setSelectedZone] = useState(null);
   const [selectedMachine, setSelectedMachine] = useState(null); // { machine, fromSlot } | null
   const [moving, setMoving] = useState(false);
+  const [zoneQuery, setZoneQuery] = useState("");
+
+  // Gmail-like zone filter: matches zone name, machine codes in the zone.
+  const zoneMatches = (z) => {
+    const q = zoneQuery.trim().toLowerCase();
+    if (!q) return true;
+    const codes = (machinesByZone[z.id] || []).map((m) => m.code || m.machineCode || m.name || "");
+    return [z.name, z.description, z.location, ...codes]
+      .map((f) => String(f || "").toLowerCase())
+      .some((f) => f.includes(q));
+  };
 
   // Subscribe to live zone updates
   useLiveTopic("/topic/zones");
@@ -181,10 +192,21 @@ export default function MapScreen() {
 
     return (
       <Card className="mb-4">
-        <Text className={`text-base font-bold font-inter mb-3 ${dark ? "text-white" : "text-text"}`}>
+        <Text className={`text-base font-bold font-inter mb-2 ${dark ? "text-white" : "text-text"}`}>
           Zone Details
         </Text>
-        {slotZones.map((z) => {
+        <View className={`flex-row items-center border rounded-btn px-3 py-1.5 gap-2 mb-2 ${dark ? "bg-white/5 border-white/15" : "bg-bg border-border"}`}>
+          <Text className={`text-xs ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
+          <TextInput
+            className={`flex-1 text-xs font-inter ${dark ? "text-white" : "text-text"}`}
+            placeholder="Search by zone name, machine code…"
+            placeholderTextColor="#94A3B8"
+            value={zoneQuery}
+            onChangeText={setZoneQuery}
+            style={{ outlineStyle: "none" }}
+          />
+        </View>
+        {slotZones.filter(zoneMatches).map((z) => {
           const color = ZONE_COLORS[z.slot] || ZONE_COLORS.A;
           const machineCount = z.machineCount ?? (machinesByZone[z.id] || []).length;
           const alertCount = z.alertCount || 0; // no alertCount in Sprint 1 — always 0
@@ -336,9 +358,7 @@ export default function MapScreen() {
               <View style={{ flex: 0.65 }}>
                 {isAdmin && slotZones.length > 1 && (
                   <Text className={`text-xs font-inter font-bold mb-2 ${dark ? "text-white/80" : "text-text-muted"}`}>
-                    {selectedMachine
-                      ? `Moving ${selectedMachine.machine?.code || ""} — drop it on a zone, or click the machine again to cancel.`
-                      : "Hold-click a machine dot and drag it to another zone to move it (ADMIN)."}
+                    {"Drag a machine dot and drop it on another zone to move it (ADMIN)."}
                   </Text>
                 )}
                 <FactoryMap
@@ -356,7 +376,7 @@ export default function MapScreen() {
 
               {/* Right: Details + Activity */}
               <View style={{ flex: 0.35 }}>
-                <ZoneDetailsList />
+                {ZoneDetailsList()}
                 <RecentActivity />
               </View>
             </View>
@@ -409,7 +429,7 @@ export default function MapScreen() {
               onMoveMachine={handleMoveMachine}
             />
             <View className="mt-4">
-              <ZoneDetailsList />
+              {ZoneDetailsList()}
               <RecentActivity />
             </View>
           </>

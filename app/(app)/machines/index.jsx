@@ -39,6 +39,7 @@ import {
 import { fetchZones } from "../../../src/store/slices/zoneSlice";
 import { useDialog } from "../../../src/components/dialog/DialogContext";
 import { relativeTime } from "../../../src/lib/time";
+import { useSearch } from "../../../src/hooks/useSearch";
 
 const STATUS_TABS = [
   { key: null, label: "All" },
@@ -67,6 +68,11 @@ export default function MachinesListScreen() {
   const [searchInput, setSearchInput] = useState(filters.search || "");
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 10;
+
+  // Client-side full-text search across all columns (complements server ?search=)
+  const filteredList = useSearch(list, [
+    "name", "code", "machineCode", "type", "status", "zoneName", "description",
+  ], searchInput);
 
   function query(nextPage = page) {
     return {
@@ -291,8 +297,8 @@ export default function MachinesListScreen() {
                 <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
                 <TextInput
                   className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
-                  placeholder="Search machines..."
-                  placeholderTextColor="#94A3B8"
+                placeholder="Search by name, code, type, zone, status…"
+                placeholderTextColor="#94A3B8"
                   value={searchInput}
                   onChangeText={setSearchInput}
                   style={{ outlineStyle: "none" }}
@@ -454,7 +460,7 @@ export default function MachinesListScreen() {
           <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
           <TextInput
             className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
-            placeholder="Search machines..."
+            placeholder="Search by name, code, type, zone, status…"
             placeholderTextColor="#94A3B8"
             value={searchInput}
             onChangeText={setSearchInput}

@@ -6,7 +6,7 @@
 // Web: table Group · Supervisor · Operators · Created · Actions.
 // Mobile: search + card list.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { View, Text, ScrollView, Pressable, TextInput, FlatList } from "react-native";
 import { useRouter } from "expo-router";
 import AppShell from "../../../src/components/AppShell";
@@ -43,7 +43,7 @@ export default function GroupsScreen() {
 
   useEffect(() => {
     if (!canViewGroups) return;
-    dispatch(fetchGroups({ search: filters.search || undefined, page: 0, size: 20 }));
+    dispatch(fetchGroups({ page: 0, size: 100 }));
   }, [dispatch, filters.search, canViewGroups]);
 
   useEffect(() => {
@@ -75,15 +75,31 @@ export default function GroupsScreen() {
     if (!ok) return;
     try {
       await dispatch(deleteGroup(group.id)).unwrap();
-      dispatch(fetchGroups({ search: filters.search || undefined, page: 0, size: 20 }));
+      dispatch(fetchGroups({ page: 0, size: 100 }));
     } catch {
       // Slice error state surfaces the failure.
     }
   }
 
+  // Gmail-like: one box matches every column — name, supervisor,
+  // operator count, creation date.
+  const visibleGroups = useMemo(() => {
+    const q = (filters.search || "").trim().toLowerCase();
+    if (!q) return list;
+    return (list || []).filter((g) =>
+      [
+        g.name, g.supervisorName,
+        String(g.operatorCount ?? (g.operators || []).length),
+        g.createdAt,
+      ]
+        .map((f) => String(f || "").toLowerCase())
+        .some((f) => f.includes(q))
+    );
+  }, [list, filters.search]);
+
   const isLoading = status === "loading";
   const isError = status === "error";
-  const isEmpty = status === "succeeded" && list.length === 0;
+  const isEmpty = status === "succeeded" && visibleGroups.length === 0;
 
   if (!canAccess("groups")) {
     return (
@@ -117,7 +133,7 @@ export default function GroupsScreen() {
             <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
             <TextInput
               className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
-              placeholder="Search groups..."
+              placeholder="Search by name, supervisor, members…"
               placeholderTextColor="#94A3B8"
               value={searchInput}
               onChangeText={setSearchInput}
@@ -129,7 +145,7 @@ export default function GroupsScreen() {
             <Card className="mb-4">
               <View className="flex-row items-center justify-between">
                 <Text className="text-sm text-danger font-inter">{error?.message || "Failed to load groups"}</Text>
-                <Button title="Retry" variant="outline" size="sm" onPress={() => dispatch(fetchGroups({ search: filters.search || undefined, page: 0, size: 20 }))} />
+                <Button title="Retry" variant="outline" size="sm" onPress={() => dispatch(fetchGroups({ page: 0, size: 100 }))} />
               </View>
             </Card>
           )}
@@ -170,7 +186,7 @@ export default function GroupsScreen() {
                   <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Actions</Text>
                 )}
               </View>
-              {list.map((g, idx) => (
+              {visibleGroups.map((g, idx) => (
                 <Pressable
                   key={g.id || idx}
                   onPress={() => openDetail(g)}
@@ -231,7 +247,7 @@ export default function GroupsScreen() {
           <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
           <TextInput
             className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
-            placeholder="Search groups..."
+            placeholder="Search by name, supervisor, members…"
             placeholderTextColor="#94A3B8"
             value={searchInput}
             onChangeText={setSearchInput}
@@ -242,7 +258,7 @@ export default function GroupsScreen() {
         {isError && (
           <Card className="mb-3">
             <Text className="text-sm text-danger font-inter mb-2">{error?.message || "Failed to load groups"}</Text>
-            <Button title="Retry" variant="outline" size="sm" onPress={() => dispatch(fetchGroups({ search: filters.search || undefined, page: 0, size: 20 }))} />
+            <Button title="Retry" variant="outline" size="sm" onPress={() => dispatch(fetchGroups({ page: 0, size: 100 }))} />
           </Card>
         )}
 
@@ -265,7 +281,7 @@ export default function GroupsScreen() {
 
         {!isLoading && !isEmpty && !isError && (
           <FlatList
-            data={list}
+            data={visibleGroups}
             keyExtractor={(item, idx) => item.id || String(idx)}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ gap: 10, paddingBottom: 16 }}

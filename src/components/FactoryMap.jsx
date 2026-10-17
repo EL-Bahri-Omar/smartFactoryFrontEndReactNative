@@ -139,12 +139,8 @@ export default function FactoryMap({
           overflow: "hidden",
         };
 
-        // Tap-to-move fallback (mobile + web click-click).
+        // Zone tap — only for viewing zone details, no click-to-move.
         function handleZoneTap() {
-          if (movable && selectedMachine && selectedMachine.fromSlot !== zone.id) {
-            onMoveMachine?.(selectedMachine.machine, selectedMachine.fromSlot, zone.id);
-            return;
-          }
           onZonePress?.(zone.id);
         }
 
@@ -225,9 +221,6 @@ export default function FactoryMap({
                       onDragEnd={endDrag}
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (!movable || isCompact) return;
-                        if (isPicked) onSelectMachine?.(null);
-                        else onSelectMachine?.({ machine: m, fromSlot: zone.id });
                       }}
                       title={movable && !isCompact ? `Drag ${m.code || ""} to another zone` : m.code || ""}
                       style={{
