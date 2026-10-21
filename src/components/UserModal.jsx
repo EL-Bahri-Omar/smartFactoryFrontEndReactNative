@@ -90,18 +90,31 @@ export default function UserModal({ visible, user, onClose }) {
     <BottomSheet
       visible={visible}
       onClose={onClose}
-      maxWidth={520}
+      maxWidth={560}
       title={isEdit ? "Edit User" : "Add User"}
       subtitle={isEdit ? "Update role, status and details." : "New users start as Operator."}
+      footer={
+        <View className="flex-row gap-2 justify-end">
+          <Button title="Cancel" variant="ghost" size="sm" onPress={onClose} />
+          <Button
+            title={isEdit ? "Save Changes" : "Create User"}
+            variant="primary"
+            size="sm"
+            onPress={handleSave}
+            loading={saving}
+            disabled={saving}
+          />
+        </View>
+      }
     >
       <View>
         {error && (
-          <View className="bg-danger/10 rounded-btn px-3 py-2 mb-4" style={{ borderWidth: 1, borderColor: "rgba(220,38,38,0.25)" }}>
+          <View className="bg-danger/10 rounded-btn px-3 py-2 mb-3" style={{ borderWidth: 1, borderColor: "rgba(220,38,38,0.25)" }}>
             <Text className="text-sm text-danger font-inter">{error}</Text>
           </View>
         )}
 
-        <View className="gap-4">
+        <View className="gap-3">
           <View className="flex-row gap-3">
             <View className="flex-1">
               <Input label="First Name" placeholder="Omar" value={firstName} onChangeText={setFirstName} />
@@ -111,17 +124,25 @@ export default function UserModal({ visible, user, onClose }) {
             </View>
           </View>
           {nameErr && <Text className="text-xs text-danger font-inter -mt-2">{nameErr}</Text>}
-          <Input label="Email" placeholder="name@company.com" value={email} onChangeText={setEmail} keyboardType="email-address" editable={!isEdit} />
-          {emailErr && <Text className="text-xs text-danger font-inter -mt-2">{emailErr}</Text>}
-          <Input label={isEdit ? "New Password (optional)" : "Password"} placeholder="••••••" value={password} onChangeText={setPassword} secureTextEntry />
-          {passwordErr && <Text className="text-xs text-danger font-inter -mt-2">{passwordErr}</Text>}
-          <Select label="Role" value={role} onValueChange={setRole} options={ROLE_OPTIONS} />
-          {isEdit && <Select label="Status" value={status} onValueChange={setStatus} options={STATUS_OPTIONS} />}
-        </View>
 
-        <View className="flex-row gap-3 mt-6 justify-end">
-          <Button title="Cancel" variant="ghost" onPress={onClose} />
-          <Button title={isEdit ? "Save Changes" : "Create User"} variant="primary" onPress={handleSave} loading={saving} disabled={saving} />
+          <Input label="Email" placeholder="name@company.com" value={email} onChangeText={setEmail} keyboardType="email-address" />
+          {emailErr && <Text className="text-xs text-danger font-inter -mt-2">{emailErr}</Text>}
+
+          <View className="flex-row gap-3">
+            <Input
+              className="flex-1"
+              label={isEdit ? "New Password (optional)" : "Password"}
+              placeholder="••••••"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+            />
+            <Select className="flex-1" label="Role" value={role} onValueChange={setRole} options={ROLE_OPTIONS} />
+            {isEdit && (
+              <Select className="flex-1" label="Status" value={status} onValueChange={setStatus} options={STATUS_OPTIONS} />
+            )}
+          </View>
+          {passwordErr && <Text className="text-xs text-danger font-inter -mt-2">{passwordErr}</Text>}
         </View>
       </View>
     </BottomSheet>

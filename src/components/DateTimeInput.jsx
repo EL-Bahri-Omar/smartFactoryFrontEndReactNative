@@ -195,6 +195,13 @@ export default function DateTimeInput({
         title="Scheduled for"
         subtitle="Pick a date, then adjust the time."
         maxWidth={440}
+        footer={
+          <View className="flex-row items-center justify-end gap-2">
+            {value ? <Button title="Clear" variant="ghost" size="sm" onPress={clear} /> : null}
+            <Button title="Cancel" variant="ghost" size="sm" onPress={() => setOpen(false)} />
+            <Button title="Apply" variant="primary" size="sm" onPress={apply} disabled={!draft} />
+          </View>
+        }
       >
         {/* Month navigation */}
         <View className="flex-row items-center justify-between mb-3">
@@ -300,13 +307,6 @@ export default function DateTimeInput({
             </View>
             {stepButton("+", () => bump("minute", 5))}
           </View>
-        </View>
-
-        {/* Footer */}
-        <View className="flex-row items-center justify-end gap-2 mt-6">
-          {value ? <Button title="Clear" variant="ghost" size="sm" onPress={clear} /> : null}
-          <Button title="Cancel" variant="ghost" size="sm" onPress={() => setOpen(false)} />
-          <Button title="Apply" variant="primary" size="sm" onPress={apply} disabled={!draft} />
         </View>
       </BottomSheet>
     </View>

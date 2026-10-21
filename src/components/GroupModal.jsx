@@ -13,12 +13,14 @@ import Button from "./Button";
 import BottomSheet from "./BottomSheet";
 import { useAppDispatch } from "../hooks/useAppDispatch";
 import { useAppSelector } from "../hooks/useAppSelector";
+import { useBreakpoint } from "../hooks/useBreakpoint";
 import { createGroup, updateGroup, fetchGroups } from "../store/slices/groupSlice";
 import { fetchUsers } from "../store/slices/userSlice";
 import { ROLES } from "../constants/roles";
 
 export default function GroupModal({ visible, group, onClose }) {
   const dispatch = useAppDispatch();
+  const isDesktop = useBreakpoint() === "desktop";
   const { list: users, listStatus } = useAppSelector((s) => s.user);
   const isEdit = !!group;
 
@@ -80,31 +82,52 @@ export default function GroupModal({ visible, group, onClose }) {
     <BottomSheet
       visible={visible}
       onClose={onClose}
-      maxWidth={560}
+      maxWidth={600}
       title={isEdit ? "Edit Group" : "Add Group"}
       subtitle={isEdit ? "Rename the group and adjust its members." : "Organize operators into a supervised team."}
+      footer={
+        <View className="flex-row gap-2 justify-end">
+          <Button title="Cancel" variant="ghost" size="sm" onPress={onClose} />
+          <Button
+            title={isEdit ? "Save Changes" : "Create Group"}
+            variant="primary"
+            size="sm"
+            onPress={handleSave}
+            loading={saving}
+            disabled={name.trim().length < 2}
+          />
+        </View>
+      }
     >
       <View>
         {error && (
-          <View className="bg-danger/10 rounded-btn px-3 py-2 mb-4" style={{ borderWidth: 1, borderColor: "rgba(220,38,38,0.25)" }}>
+          <View className="bg-danger/10 rounded-btn px-3 py-2 mb-3" style={{ borderWidth: 1, borderColor: "rgba(220,38,38,0.25)" }}>
             <Text className="text-sm text-danger font-inter">{error}</Text>
           </View>
         )}
 
-        <View className="gap-4">
-          <Input label="Group Name" placeholder="e.g. Group A" value={name} onChangeText={setName} />
+        <View className="gap-3">
+          <View className={isDesktop ? "flex-row gap-3" : "gap-3"}>
+            <Input
+              className={isDesktop ? "flex-1" : ""}
+              label="Group Name"
+              placeholder="e.g. Group A"
+              value={name}
+              onChangeText={setName}
+            />
+            <Select
+              className={isDesktop ? "flex-1" : ""}
+              label="Supervisor"
+              value={supervisorId}
+              onValueChange={setSupervisorId}
+              placeholder={listStatus === "loading" ? "Loading users…" : "Select supervisor (optional)..."}
+              options={[{ value: "", label: "No supervisor" }, ...supervisors.map((u) => ({
+                value: u.id,
+                label: `${fullName(u)} · ${u.role === ROLES.RESPONSABLE_INDUSTRIEL ? "Responsable" : "Operator"}`,
+              }))]}
+            />
+          </View>
           {nameErr && <Text className="text-xs text-danger font-inter -mt-2">{nameErr}</Text>}
-
-          <Select
-            label="Supervisor"
-            value={supervisorId}
-            onValueChange={setSupervisorId}
-            placeholder={listStatus === "loading" ? "Loading users…" : "Select supervisor (optional)..."}
-            options={[{ value: "", label: "No supervisor" }, ...supervisors.map((u) => ({
-              value: u.id,
-              label: `${fullName(u)} · ${u.role === ROLES.RESPONSABLE_INDUSTRIEL ? "Responsable" : "Operator"}`,
-            }))]}
-          />
 
           <MultiSelect
             label={`Operators (${operatorIds.length} selected)`}
@@ -113,17 +136,6 @@ export default function GroupModal({ visible, group, onClose }) {
             placeholder={listStatus === "loading" ? "Loading operators…" : "Select operators..."}
             hint="Only users with the OPERATOR role can join a group."
             options={operators.map((u) => ({ value: u.id, label: fullName(u), sublabel: u.email }))}
-          />
-        </View>
-
-        <View className="flex-row gap-3 mt-6 justify-end">
-          <Button title="Cancel" variant="ghost" onPress={onClose} />
-          <Button
-            title={isEdit ? "Save Changes" : "Create Group"}
-            variant="primary"
-            onPress={handleSave}
-            loading={saving}
-            disabled={name.trim().length < 2}
           />
         </View>
       </View>

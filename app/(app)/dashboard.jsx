@@ -30,6 +30,7 @@ import { useBreakpoint } from "../../src/hooks/useBreakpoint";
 import { fetchDashboard } from "../../src/store/slices/dashboardSlice";
 import { getAlertSeverity, getTicketPriority, getTicketStatus } from "../../src/lib/status";
 import { relativeTime } from "../../src/lib/time";
+import { formatAlertMessage } from "../../src/lib/alertText";
 import { ROLES } from "../../src/constants/roles";
 
 const ROLE_LABELS = {
@@ -295,7 +296,7 @@ export default function DashboardScreen() {
                               numberOfLines={1}
                               className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
                             >
-                              {a.message || `${a.sensorType || "Sensor"} alert`}
+                              {formatAlertMessage(a.message) || `${a.sensorType || "Sensor"} alert`}
                             </Text>
                             <Text className={`text-[10px] font-inter ${dark ? "text-white/40" : "text-text-muted"}`}>
                               {relativeTime(a.timestamp)}

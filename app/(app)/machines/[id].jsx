@@ -41,6 +41,7 @@ import { fetchThresholds, saveThreshold, deleteThreshold } from "../../../src/st
 import { fetchMachineAlerts, acknowledgeAlert } from "../../../src/store/slices/alertSlice";
 import { getSensorStatus, getAlertSeverity, normalizeAlertSeverity, getAlertStatus } from "../../../src/lib/status";
 import { relativeTime } from "../../../src/lib/time";
+import { formatAlertMessage } from "../../../src/lib/alertText";
 import { SENSOR_TYPE, SENSOR_UNIT } from "../../../src/constants/roles";
 import Input from "../../../src/components/Input";
 import Toggle from "../../../src/components/Toggle";
@@ -466,7 +467,7 @@ export default function MachineDetailScreen() {
         <Card className="mb-4">
           <Text className={`text-base font-bold font-inter mb-1 ${dark ? "text-white" : "text-text"}`}>Sensors</Text>
           <Text className={`text-xs font-inter mb-3 ${dark ? "text-white/60" : "text-text-muted"}`}>
-            Live ONLINE / OFFLINE state from the backend (US19).
+            Live ONLINE / OFFLINE state reported by the backend.
           </Text>
           <View className={`${isDesktop ? "flex-row gap-2" : "gap-2"}`}>
             {SERIES_META.map((meta) => {
@@ -1036,7 +1037,7 @@ export default function MachineDetailScreen() {
                   </View>
                   <View className="flex-1">
                     <Text numberOfLines={1} className={`text-sm font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
-                      {a.message || `${a.sensorType || "Sensor"} alert`}
+                      {formatAlertMessage(a.message) || `${a.sensorType || "Sensor"} alert`}
                     </Text>
                     <Text numberOfLines={1} className={`text-xs font-inter mt-0.5 ${dark ? "text-white/60" : "text-text-muted"}`}>
                       {a.sensorType ? `${a.sensorType}: ${a.value ?? "—"}${a.threshold != null ? ` (threshold ${a.threshold})` : ""} · ` : ""}

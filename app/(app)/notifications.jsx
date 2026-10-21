@@ -45,6 +45,7 @@ import { normalizeAlert } from "../../src/store/services/alertService";
 import { markAllRead } from "../../src/store/slices/liveSlice";
 import { getAlertSeverity } from "../../src/lib/status";
 import { relativeTime } from "../../src/lib/time";
+import { formatNotificationTitle, formatNotificationMessage } from "../../src/lib/alertText";
 
 const TABS = [
   { key: "ALL", label: "All" },
@@ -279,11 +280,11 @@ export default function NotificationsScreen() {
             numberOfLines={1}
             className={`text-sm font-inter ${unread ? "font-bold" : "font-medium"} ${darkText}`}
           >
-            {n.title || n.message || "Notification"}
+            {formatNotificationTitle(n.title) || formatNotificationMessage(n.message) || "Notification"}
           </Text>
           <Text numberOfLines={1} className={`text-xs font-inter mt-0.5 ${darkMuted}`}>
             {n.title && n.message
-              ? n.message
+              ? formatNotificationMessage(n.message)
               : [n.machineCode, n.sensorType].filter(Boolean).join(" · ")}
           </Text>
         </View>

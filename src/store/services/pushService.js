@@ -10,9 +10,12 @@
 //
 // expo-notifications is a NATIVE module: every entry point here is guarded
 // (Platform.OS !== 'web' + lazy require) so the web bundle never touches it
-// and never breaks the browser build.
+// and never breaks the browser build. It is also skipped entirely inside
+// Expo Go (SDK 53+), where the push native modules do not exist — see
+// `isExpoGo()` below. Push then simply stays inactive; everything else works.
 
 import { Platform } from "react-native";
+import Constants from "expo-constants";
 import { ENDPOINTS } from "../../constants/api";
 import api from "../../lib/axios";
 import * as notificationService from "./notificationService";
@@ -23,14 +26,50 @@ const DEVICE_TYPE = Platform.OS === "ios" ? "IOS" : Platform.OS === "android" ? 
 let responseSubscription = null;
 let lastResponseKey = null;
 
+// Expo Go (SDK 53+) is not allowed to do remote push: the native modules are
+// stripped from the client, so `require("expo-notifications")` throws
+// "Cannot find native module 'ExpoTopicSubscriptionModule'" while the package
+// initialises — the throw is reported before our try/catch can swallow it and
+// shows up as a redbox on every launch. Detect Expo Go up-front and treat
+// push as unsupported instead of importing the module at all.
+//
+// `executionEnvironment === 'storeClient'` alone is NOT enough: it also
+// matches development builds (expo-dev-client), where push works. Expo Go is
+// either flagged by the legacy `appOwnership === 'expo'`, or by the pair
+// storeClient + a manifest that only Expo Go carries (`extra.expoGo`).
+function isExpoGo() {
+  try {
+    if (Constants?.appOwnership === "expo") return true;
+    return (
+      Constants?.executionEnvironment === "storeClient" &&
+      Constants?.expoGoConfig != null
+    );
+  } catch {
+    return false;
+  }
+}
+
+// undefined = not probed yet, null = unsupported, module = available.
+let notificationsSupport;
+let pushUnavailableNoted = false;
+
 function notificationsModule() {
+  if (Platform.OS === "web") return null;
+  if (notificationsSupport !== undefined) return notificationsSupport;
+
+  if (isExpoGo()) {
+    notificationsSupport = null;
+    return null;
+  }
+
   try {
     // Lazy require: keep expo-notifications out of the web bundle graph.
     // eslint-disable-next-line global-require
-    return require("expo-notifications");
+    notificationsSupport = require("expo-notifications");
   } catch {
-    return null;
+    notificationsSupport = null;
   }
+  return notificationsSupport;
 }
 
 /**
@@ -104,7 +143,20 @@ export async function initPush({ dispatch, router, isAuthenticated = false } = {
   if (Platform.OS === "web" || !isAuthenticated) return false;
 
   const Notifications = notificationsModule();
-  if (!Notifications) return false;
+  if (!Notifications) {
+    // Informative, once per launch — push is simply not available on this
+    // client (Expo Go, or a build without the native module). The rest of the
+    // app must keep working.
+    if (!pushUnavailableNoted) {
+      pushUnavailableNoted = true;
+      console.info(
+        isExpoGo()
+          ? "[push] Expo Go cannot receive remote push notifications (SDK 53+). Use a development build for push; continuing without it."
+          : "[push] expo-notifications native module unavailable; continuing without push."
+      );
+    }
+    return false;
+  }
 
   try {
     // Foreground: show the banner instead of silently dropping it.

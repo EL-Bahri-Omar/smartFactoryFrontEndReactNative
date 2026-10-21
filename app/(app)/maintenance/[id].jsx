@@ -4,10 +4,10 @@
 //   GET   /api/maintenance/:id                    full entity (initial state)
 //   PUT   /api/maintenance/:id/assign             technician assignment (US43)
 //   GET   /api/maintenance/:id/anomaly            anomaly + sensor context (US44)
-//   POST  /api/maintenance/:id/diagnoses          probable cause + details (US45)
-//   POST  /api/maintenance/:id/actions            realized action + parts (US46)
-//   POST  /api/maintenance/:id/observations       technical observation (US47)
-//   PUT   /api/maintenance/:id/close              terminal closure (US48)
+//   POST  /api/maintenance/:id/diagnoses          probable cause + details
+//   POST  /api/maintenance/:id/actions            realized action + parts
+//   POST  /api/maintenance/:id/observations       technical observation
+//   PUT   /api/maintenance/:id/close              terminal closure
 //
 // UI gating mirrors the backend PreAuthorize (server enforces anyway):
 //   assign/close/observations → ADMIN / RESPONSABLE_INDUSTRIEL (+ TECHNICIAN)
@@ -108,9 +108,9 @@ export default function InterventionDetailScreen() {
   const isManager = ["ADMIN", "RESPONSABLE_INDUSTRIEL"].includes(role);
   const isTechnician = role === "TECHNICIAN";
   const canAssign = isManager; // backend guard: RESPONSABLE_INDUSTRIEL / ADMIN (+ MAINTENANCE:MODIFIER)
-  // Backend truth: diagnoses (US45) and actions (US46) accept TECHNICIAN /
+  // Backend truth: diagnoses and actions accept TECHNICIAN /
   // ADMIN (+ MAINTENANCE:MODIFIER) — NOT plain RESPONSABLE_INDUSTRIEL.
-  // Observations (US47) and close (US48) accept all three roles.
+  // Observations and close accept all three roles.
   const canDiagnose = isTechnician || role === "ADMIN";
   const canObserve = isTechnician || isManager;
   const canClose = isTechnician || isManager;
@@ -316,6 +316,23 @@ export default function InterventionDetailScreen() {
 
   const chip = (color) => ({ backgroundColor: color + "1A" });
 
+  // Every action sheet shares one pinned footer: Cancel + the primary action.
+  // It lives outside the body (see BottomSheet) so the buttons are always
+  // visible — no scrolling inside a dialog to reach "Save".
+  const sheetFooter = (label, onPress, { disabled = false, loading = false } = {}) => (
+    <View className="flex-row gap-2 justify-end">
+      <Button title="Cancel" variant="ghost" size="sm" onPress={() => setSheet(null)} />
+      <Button
+        title={label}
+        variant="primary"
+        size="sm"
+        loading={loading}
+        disabled={disabled}
+        onPress={onPress}
+      />
+    </View>
+  );
+
   return (
     <AppShell>
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
@@ -478,7 +495,7 @@ export default function InterventionDetailScreen() {
               </Text>
               {current.diagnoses.length === 0 ? (
                 <Text className={`text-sm font-inter ${darkMuted}`}>
-                  No diagnosis recorded yet (US45).
+                  No diagnosis recorded yet.
                 </Text>
               ) : (
                 <View className="gap-2">
@@ -514,7 +531,7 @@ export default function InterventionDetailScreen() {
               </Text>
               {current.actions.length === 0 ? (
                 <Text className={`text-sm font-inter ${darkMuted}`}>
-                  No maintenance action recorded yet (US46).
+                  No maintenance action recorded yet.
                 </Text>
               ) : (
                 <View className="gap-2">
@@ -554,7 +571,7 @@ export default function InterventionDetailScreen() {
               </Text>
               {current.observations.length === 0 ? (
                 <Text className={`text-sm font-inter ${darkMuted}`}>
-                  No observation recorded yet (US47).
+                  No observation recorded yet.
                 </Text>
               ) : (
                 <View className="gap-2">
@@ -589,7 +606,13 @@ export default function InterventionDetailScreen() {
       </ScrollView>
 
       {/* ── Action sheets ─────────────────────────────────────────────── */}
-      <BottomSheet visible={sheet === "assign"} onClose={() => setSheet(null)} title="Assign technician">
+      <BottomSheet
+        visible={sheet === "assign"}
+        onClose={() => setSheet(null)}
+        title="Assign technician"
+        maxWidth={520}
+        footer={sheetFooter("Assign", submitAssign, { disabled: !assignTech, loading: sheetBusy })}
+      >
         {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
         {technicianOptions.length > 0 ? (
           <Select
@@ -607,22 +630,20 @@ export default function InterventionDetailScreen() {
             onChangeText={setAssignTech}
           />
         )}
-        <View className="flex-row gap-3 mt-6 justify-end">
-          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
-          <Button
-            title="Assign"
-            variant="primary"
-            size="sm"
-            loading={sheetBusy}
-            disabled={!assignTech}
-            onPress={submitAssign}
-          />
-        </View>
       </BottomSheet>
 
-      <BottomSheet visible={sheet === "diagnosis"} onClose={() => setSheet(null)} title="Record diagnosis">
+      <BottomSheet
+        visible={sheet === "diagnosis"}
+        onClose={() => setSheet(null)}
+        title="Record diagnosis"
+        maxWidth={520}
+        footer={sheetFooter("Save diagnosis", submitDiagnosis, {
+          disabled: !diagForm.probableCause.trim(),
+          loading: sheetBusy,
+        })}
+      >
         {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
-        <View className="gap-4">
+        <View className="gap-3">
           <Input
             label="Probable cause *"
             placeholder="e.g. Bearing wear / couplings misaligned"
@@ -637,22 +658,20 @@ export default function InterventionDetailScreen() {
             multiline
           />
         </View>
-        <View className="flex-row gap-3 mt-6 justify-end">
-          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
-          <Button
-            title="Save"
-            variant="primary"
-            size="sm"
-            loading={sheetBusy}
-            disabled={!diagForm.probableCause.trim()}
-            onPress={submitDiagnosis}
-          />
-        </View>
       </BottomSheet>
 
-      <BottomSheet visible={sheet === "action"} onClose={() => setSheet(null)} title="Record action performed">
+      <BottomSheet
+        visible={sheet === "action"}
+        onClose={() => setSheet(null)}
+        title="Record action performed"
+        maxWidth={520}
+        footer={sheetFooter("Save action", submitAction, {
+          disabled: !actionForm.description.trim(),
+          loading: sheetBusy,
+        })}
+      >
         {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
-        <View className="gap-4">
+        <View className="gap-3">
           <Input
             label="Description *"
             placeholder="e.g. Replaced the drive coupling"
@@ -673,22 +692,20 @@ export default function InterventionDetailScreen() {
             keyboardType="number-pad"
           />
         </View>
-        <View className="flex-row gap-3 mt-6 justify-end">
-          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
-          <Button
-            title="Save"
-            variant="primary"
-            size="sm"
-            loading={sheetBusy}
-            disabled={!actionForm.description.trim()}
-            onPress={submitAction}
-          />
-        </View>
       </BottomSheet>
 
-      <BottomSheet visible={sheet === "observation"} onClose={() => setSheet(null)} title="Add observation">
+      <BottomSheet
+        visible={sheet === "observation"}
+        onClose={() => setSheet(null)}
+        title="Add observation"
+        maxWidth={520}
+        footer={sheetFooter("Save observation", submitObservation, {
+          disabled: !obsForm.content.trim(),
+          loading: sheetBusy,
+        })}
+      >
         {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
-        <View className="gap-4">
+        <View className="gap-3">
           <Select
             label="Category"
             value={obsForm.category}
@@ -703,23 +720,21 @@ export default function InterventionDetailScreen() {
             multiline
           />
         </View>
-        <View className="flex-row gap-3 mt-6 justify-end">
-          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
-          <Button
-            title="Save"
-            variant="primary"
-            size="sm"
-            loading={sheetBusy}
-            disabled={!obsForm.content.trim()}
-            onPress={submitObservation}
-          />
-        </View>
       </BottomSheet>
 
-      <BottomSheet visible={sheet === "close"} onClose={() => setSheet(null)} title="Close intervention">
+      <BottomSheet
+        visible={sheet === "close"}
+        onClose={() => setSheet(null)}
+        title="Close intervention"
+        maxWidth={520}
+        footer={sheetFooter("Close intervention", submitClose, {
+          disabled: !!current && current.diagnoses.length === 0 && current.actions.length === 0,
+          loading: sheetBusy,
+        })}
+      >
         {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
         <Text className={`text-xs font-inter mb-3 ${darkMuted}`}>
-          Closing is terminal — the intervention will no longer be editable (US48).
+          Closing is terminal — the intervention will no longer be editable.
         </Text>
         {current && current.diagnoses.length === 0 && current.actions.length === 0 ? (
           <View
@@ -727,12 +742,12 @@ export default function InterventionDetailScreen() {
             style={{ borderWidth: 1, borderColor: "rgba(220,38,38,0.25)" }}
           >
             <Text className="text-xs text-danger font-inter">
-              The server requires at least one recorded diagnosis or action
-              before an intervention can be closed. Record one first.
+              Record at least one diagnosis or action before closing — the
+              server requires it.
             </Text>
           </View>
         ) : null}
-        <View className="gap-4">
+        <View className="gap-3">
           <Input
             label="Closure notes"
             placeholder="Root cause, outcome, recommendations..."
@@ -756,17 +771,6 @@ export default function InterventionDetailScreen() {
             </Pressable>
           )}
         </View>
-        <View className="flex-row gap-3 mt-6 justify-end">
-          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
-          <Button
-            title="Close intervention"
-            variant="primary"
-            size="sm"
-            loading={sheetBusy}
-            disabled={!!current && current.diagnoses.length === 0 && current.actions.length === 0}
-            onPress={submitClose}
-          />
-        </View>
       </BottomSheet>
       {/* ── Item 10 — technician status + edit sheets ────────────────────── */}
       <BottomSheet
@@ -774,40 +778,46 @@ export default function InterventionDetailScreen() {
         onClose={() => setSheet(null)}
         title={statusChoice === "COMPLETED" ? "Complete intervention" : "Start the intervention"}
         maxWidth={480}
+        footer={
+          <View className="flex-row gap-2 justify-end">
+            <Button title="Cancel" variant="ghost" size="sm" onPress={() => setSheet(null)} />
+            <Button
+              title={statusChoice === "COMPLETED" ? "Complete…" : "Start (in progress)"}
+              variant="primary"
+              size="sm"
+              loading={sheetBusy}
+              onPress={() => {
+                if (statusChoice === "COMPLETED") {
+                  setCloseForm((f) => ({ ...f, closureNotes: f.closureNotes }));
+                  setSheet("close");
+                } else {
+                  submitStatus();
+                }
+              }}
+            />
+          </View>
+        }
       >
         {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
-        <Text className={`text-sm font-inter mb-4 ${darkMuted}`}>
+        <Text className={`text-sm font-inter ${darkMuted}`}>
           {statusChoice === "COMPLETED"
             ? "Marking the work as done. If there is no diagnosis or action recorded yet, add one first — the server requires it."
             : "You received this intervention: mark it as In progress to signal the work has started. It starts as \"To do\" (PENDING)."}
         </Text>
-        <View className="flex-row gap-3 mt-2 justify-end">
-          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
-          <Button
-            title={statusChoice === "COMPLETED" ? "Complete" : "Start (in progress)"}
-            variant="primary"
-            size="sm"
-            loading={sheetBusy}
-            onPress={() => {
-              if (statusChoice === "COMPLETED") {
-                setCloseForm((f) => ({ ...f, closureNotes: f.closureNotes }));
-                setSheet("close");
-              } else {
-                submitStatus();
-              }
-            }}
-          />
-        </View>
       </BottomSheet>
 
       <BottomSheet
         visible={sheet === "details"}
         onClose={() => setSheet(null)}
         title="Edit intervention details"
-        maxWidth={560}
+        maxWidth={520}
+        footer={sheetFooter("Save changes", submitDetails, {
+          disabled: !detailsForm.title.trim(),
+          loading: sheetBusy,
+        })}
       >
         {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
-        <View className="gap-4">
+        <View className="gap-3">
           <Input
             label="Title *"
             placeholder="e.g. High vibration on CNC-024"
@@ -832,27 +842,20 @@ export default function InterventionDetailScreen() {
             ]}
           />
         </View>
-        <View className="flex-row gap-3 mt-6 justify-end">
-          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
-          <Button
-            title="Save changes"
-            variant="primary"
-            size="sm"
-            loading={sheetBusy}
-            disabled={!detailsForm.title.trim()}
-            onPress={submitDetails}
-          />
-        </View>
       </BottomSheet>
 
       <BottomSheet
         visible={sheet === "editDiagnosis"}
         onClose={() => setSheet(null)}
         title="Edit diagnosis"
-        maxWidth={560}
+        maxWidth={520}
+        footer={sheetFooter("Save", submitEditEntry, {
+          disabled: !diagForm.probableCause.trim(),
+          loading: sheetBusy,
+        })}
       >
         {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
-        <View className="gap-4">
+        <View className="gap-3">
           <Input
             label="Probable cause *"
             placeholder="e.g. Bearing wear / couplings misaligned"
@@ -867,27 +870,20 @@ export default function InterventionDetailScreen() {
             multiline
           />
         </View>
-        <View className="flex-row gap-3 mt-6 justify-end">
-          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
-          <Button
-            title="Save"
-            variant="primary"
-            size="sm"
-            loading={sheetBusy}
-            disabled={!diagForm.probableCause.trim()}
-            onPress={submitEditEntry}
-          />
-        </View>
       </BottomSheet>
 
       <BottomSheet
         visible={sheet === "editAction"}
         onClose={() => setSheet(null)}
         title="Edit action performed"
-        maxWidth={560}
+        maxWidth={520}
+        footer={sheetFooter("Save", submitEditEntry, {
+          disabled: !actionForm.description.trim(),
+          loading: sheetBusy,
+        })}
       >
         {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
-        <View className="gap-4">
+        <View className="gap-3">
           <Input
             label="Description *"
             placeholder="e.g. Replaced the drive coupling"
@@ -909,27 +905,20 @@ export default function InterventionDetailScreen() {
             keyboardType="number-pad"
           />
         </View>
-        <View className="flex-row gap-3 mt-6 justify-end">
-          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
-          <Button
-            title="Save"
-            variant="primary"
-            size="sm"
-            loading={sheetBusy}
-            disabled={!actionForm.description.trim()}
-            onPress={submitEditEntry}
-          />
-        </View>
       </BottomSheet>
 
       <BottomSheet
         visible={sheet === "editObservation"}
         onClose={() => setSheet(null)}
         title="Edit observation"
-        maxWidth={560}
+        maxWidth={520}
+        footer={sheetFooter("Save", submitEditEntry, {
+          disabled: !obsForm.content.trim(),
+          loading: sheetBusy,
+        })}
       >
         {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
-        <View className="gap-4">
+        <View className="gap-3">
           <Select
             label="Category"
             value={obsForm.category}
@@ -942,17 +931,6 @@ export default function InterventionDetailScreen() {
             value={obsForm.content}
             onChangeText={(v) => setObsForm((f) => ({ ...f, content: v }))}
             multiline
-          />
-        </View>
-        <View className="flex-row gap-3 mt-6 justify-end">
-          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
-          <Button
-            title="Save"
-            variant="primary"
-            size="sm"
-            loading={sheetBusy}
-            disabled={!obsForm.content.trim()}
-            onPress={submitEditEntry}
           />
         </View>
       </BottomSheet>

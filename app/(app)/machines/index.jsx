@@ -20,7 +20,6 @@ import AppShell from "../../../src/components/AppShell";
 import Card from "../../../src/components/Card";
 import Button from "../../../src/components/Button";
 import StatusBadge from "../../../src/components/StatusBadge";
-import HealthBar from "../../../src/components/HealthBar";
 import Skeleton from "../../../src/components/Skeleton";
 import EmptyState from "../../../src/components/EmptyState";
 import Select from "../../../src/components/Select";
@@ -382,7 +381,6 @@ export default function MachinesListScreen() {
                 <Text className={`w-24 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Type</Text>
                 <Text className={`w-20 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Zone</Text>
                 <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Status</Text>
-                <Text className={`w-32 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Health</Text>
                 <Text className={`w-28 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Last Update</Text>
                 {canWrite && (
                   <Text className={`w-24 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>Actions</Text>
@@ -412,9 +410,6 @@ export default function MachinesListScreen() {
                   </Text>
                   <View className="w-28">
                     <StatusBadge status={machine.status} />
-                  </View>
-                  <View className="w-32">
-                    <HealthBar value={machine.health} />
                   </View>
                   <Text className={`w-28 text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>
                     {machine.updatedAt || machine.lastUpdate ? relativeTime(machine.updatedAt || machine.lastUpdate) : "—"}
@@ -577,7 +572,6 @@ export default function MachinesListScreen() {
                     </View>
                     <StatusBadge status={item.status} />
                   </View>
-                  <HealthBar value={item.health} />
                   <Text className={`text-[11px] font-inter mt-2 ${dark ? "text-white/50" : "text-text-muted"}`}>
                     Last update {item.updatedAt || item.lastUpdate ? relativeTime(item.updatedAt || item.lastUpdate) : "—"}
                   </Text>

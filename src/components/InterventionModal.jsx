@@ -163,23 +163,40 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
       title="Create Intervention"
       subtitle={
         prefill?.alertId
-          ? "Linked to the selected alert (alert → intervention)"
-          : "US42 — declare a maintenance intervention"
+          ? "Linked to the selected alert — the details are pre-filled."
+          : "Describe the work and, if you want, assign a technician."
+      }
+      footer={
+        <View className="flex-row gap-2 justify-end">
+          <Button title="Cancel" variant="ghost" size="sm" onPress={onClose} />
+          <Button
+            title="Create Intervention"
+            variant="primary"
+            size="sm"
+            onPress={handleSubmit}
+            loading={saving}
+            disabled={
+              !machineId ||
+              !title.trim() ||
+              (type === "PREVENTIVE" && !preventiveSubtype)
+            }
+          />
+        </View>
       }
     >
       <View>
         {error && (
           <View
-            className="bg-danger/10 rounded-btn px-3 py-2 mb-4"
+            className="bg-danger/10 rounded-btn px-3 py-2 mb-3"
             style={{ borderWidth: 1, borderColor: "rgba(220,38,38,0.25)" }}
           >
             <Text className="text-sm text-danger font-inter">{error}</Text>
           </View>
         )}
 
-        <View className="gap-4">
+        <View className="gap-3">
           {/* ── Row 1: machine + title (side by side on wide sheets) ── */}
-          <View className="flex-row flex-wrap gap-4">
+          <View className="flex-row flex-wrap gap-3">
             <View className="flex-1" style={{ minWidth: 240 }}>
               <Select
                 label="Machine"
@@ -210,7 +227,7 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
 
           {/* Type — required by the backend (US42) */}
           <View>
-            <Text className={`text-xs font-semibold font-inter mb-2 ${muted}`}>Type *</Text>
+            <Text className={`text-xs font-semibold font-inter mb-1.5 ${muted}`}>Type *</Text>
             <View className="flex-row flex-wrap gap-2">
               {TYPE_OPTIONS.map((opt) => {
                 const active = type === opt.value;
@@ -236,26 +253,25 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
             </View>
           </View>
 
-          {/* Preventive subtype — required by the backend iff PREVENTIVE */}
-          {type === "PREVENTIVE" && (
-            <View>
-              <Text className={`text-xs font-semibold font-inter mb-2 ${muted}`}>Preventive subtype *</Text>
-              <Select
-                value={preventiveSubtype}
-                onValueChange={setPreventiveSubtype}
-                options={SUBTYPE_OPTIONS}
-                placeholder="Select subtype..."
-              />
-            </View>
-          )}
-
-          {/* Priority + technician — side by side on wide sheets */}
-          <View className="flex-row flex-wrap gap-4">
-            <View className="flex-1" style={{ minWidth: 240 }}>
+          {/* Subtype (PREVENTIVE only) + priority + technician share one row
+              so the whole form — buttons included — fits without scrolling. */}
+          <View className="flex-row flex-wrap gap-3">
+            {type === "PREVENTIVE" && (
+              <View style={{ minWidth: 170, flex: 1 }}>
+                <Select
+                  label="Preventive subtype *"
+                  value={preventiveSubtype}
+                  onValueChange={setPreventiveSubtype}
+                  options={SUBTYPE_OPTIONS}
+                  placeholder="Select subtype..."
+                />
+              </View>
+            )}
+            <View style={{ minWidth: 160, flex: 1 }}>
               <Select label="Priority" value={priority} onValueChange={setPriority} options={PRIORITY_OPTIONS} />
             </View>
             {!techListFailed && technicianOptions.length > 0 && (
-              <View className="flex-1" style={{ minWidth: 240 }}>
+              <View style={{ minWidth: 200, flex: 1 }}>
                 <Select
                   label="Technician (optional)"
                   value={technicianId}
@@ -266,6 +282,7 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
               </View>
             )}
           </View>
+
           {!techListFailed && usersStatus === "succeeded" && technicianOptions.length === 0 && (
             <Text className={`text-xs font-inter ${muted}`}>
               No technician accounts yet — you can assign one later from the
@@ -276,7 +293,7 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
           {/* Scheduled at — PREVENTIVE + IMPROVEMENT only (planned work) */}
           {typeAllowsSchedule(type) && (
             <View>
-              <Text className={`text-xs font-semibold font-inter mb-2 ${muted}`}>
+              <Text className={`text-xs font-semibold font-inter mb-1.5 ${muted}`}>
                 Scheduled for (optional)
               </Text>
               <DateTimeInput
@@ -286,21 +303,6 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
               />
             </View>
           )}
-        </View>
-
-        <View className="flex-row gap-3 mt-6 justify-end">
-          <Button title="Cancel" variant="ghost" onPress={onClose} />
-          <Button
-            title="Create Intervention"
-            variant="primary"
-            onPress={handleSubmit}
-            loading={saving}
-            disabled={
-              !machineId ||
-              !title.trim() ||
-              (type === "PREVENTIVE" && !preventiveSubtype)
-            }
-          />
         </View>
       </View>
     </BottomSheet>

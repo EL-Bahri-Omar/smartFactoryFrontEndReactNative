@@ -195,6 +195,10 @@ export default function MaintenanceScreen() {
   const searchPending = searchInput !== (filters.search || "");
   const empty = status !== "loading" && !error && list.length === 0;
   const failed = status === "error" && list.length === 0;
+  // 403 means the role is missing MAINTENANCE_READ (backend role table) —
+  // that is a permission problem, not a network problem, and retrying will
+  // never help. Say so instead of "check your connection".
+  const forbidden = failed && (error?.status === 403 || error?.code === "FORBIDDEN");
   const darkText = dark ? "text-white" : "text-text";
   const darkMuted = dark ? "text-white/60" : "text-text-muted";
 
@@ -328,7 +332,7 @@ export default function MaintenanceScreen() {
           <View className="mb-2">
             <Text className={`text-xl font-bold font-inter ${darkText}`}>Maintenance</Text>
             <Text className={`text-sm font-inter ${darkMuted}`}>
-              Interventions, assignments and linked alerts (Sprint 6).
+              Interventions, assignments and linked alerts.
             </Text>
           </View>
           {canCreate && (
@@ -478,16 +482,26 @@ export default function MaintenanceScreen() {
 
               {(empty || failed || (clientFiltered && visibleList.length === 0 && !loading)) && (
                 <EmptyState
-                  title={failed ? "Interventions unavailable" : clientFiltered ? "No matches" : "No interventions"}
+                  title={
+                    failed
+                      ? forbidden
+                        ? "No access to interventions"
+                        : "Interventions unavailable"
+                      : clientFiltered
+                        ? "No matches"
+                        : "No interventions"
+                  }
                   message={
                     failed
-                      ? "Failed to load interventions. Check your connection and retry."
+                      ? forbidden
+                        ? "Your account does not have the maintenance permission yet. Ask an administrator to grant MAINTENANCE_READ, then reload this screen."
+                        : "Failed to load interventions. Check your connection and retry."
                       : clientFiltered
                         ? "No intervention matches the current priority/search filters. Clear them or try another term."
                         : "No maintenance intervention matches the current status/type filters."
                   }
                   action={
-                    failed ? (
+                    failed && !forbidden ? (
                       <Button
                         title="Retry"
                         variant="outline"

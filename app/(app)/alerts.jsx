@@ -41,6 +41,7 @@ import { useRole, PERMISSIONS } from "../../src/hooks/useRole";
 import { useAppDispatch } from "../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../src/hooks/useAppSelector";
 import { useLiveTopic } from "../../src/hooks/useLiveTopic";
+import { formatAlertMessage } from "../../src/lib/alertText";
 import { useDialog } from "../../src/components/dialog/DialogContext";
 import {
   fetchAlerts,
@@ -266,7 +267,7 @@ export default function AlertsScreen() {
         alertId: alert.id || "",
         machineId: alert.machineId || "",
         machineCode: alert.machineCode || "",
-        message: alert.message || "",
+        message: formatAlertMessage(alert.message) || "",
         description,
         priority,
       },
@@ -318,7 +319,9 @@ export default function AlertsScreen() {
   }
 
   function alertTitle(alert) {
-    if (alert.message && alert.message.length > 12) return alert.message;
+    // Backend messages are French — present them in English (lib/alertText).
+    const english = formatAlertMessage(alert.message);
+    if (english) return english;
     return `${humanize(alert.sensorType) || "Sensor"} alert`;
   }
 
@@ -407,89 +410,87 @@ export default function AlertsScreen() {
     if (!alert) return null;
     const m = rowModel(alert);
     const editable = alert.status === "ACTIVE";
+    const facts = [
+      ["Sensor", m.sensorType || "—"],
+      ["Value", alert.value ?? "—"],
+      ["Threshold", alert.threshold ?? "—"],
+      ["Status", m.statusMeta.label],
+      ["Live state", m.live.label],
+      ["Time", relativeTime(alert.timestamp)],
+      ["Machine", m.machineCode],
+      ["Type", m.machineType || "—"],
+    ];
     return (
       <BottomSheet
         visible
         onClose={() => setSelected(null)}
-        maxWidth={520}
+        maxWidth={560}
         title={alertTitle(alert)}
-        subtitle={`${m.machineCode}${m.machineType ? ` · ${m.machineType}` : ""}`}
+        subtitle={m.machineCode ? `Machine ${m.machineCode}` : "Sensor alert"}
+        footer={
+          <View className="flex-row flex-wrap gap-2 justify-end">
+            <Button title="Close" variant="ghost" size="sm" onPress={() => setSelected(null)} />
+            {canAcknowledge && editable && (
+              <Button
+                title={ackStatus === "loading" ? "Acknowledging…" : "Acknowledge"}
+                variant="outline"
+                size="sm"
+                onPress={() => handleAcknowledge(alert)}
+                loading={ackStatus === "loading"}
+              />
+            )}
+            {canAcknowledge && alert.status !== "RESOLVED" && (
+              <Button title="Resolve" variant="outline" size="sm" onPress={() => handleResolve(alert)} />
+            )}
+            <Button
+              title="+ Create Intervention"
+              variant="primary"
+              size="sm"
+              onPress={() => goToCreateIntervention(alert)}
+            />
+          </View>
+        }
       >
-        {/* Severity + live state header */}
+        {/* Compact severity strip: one line, not a whole block */}
         <View
-          className="flex-row items-center gap-3 mb-4 px-4 py-3 rounded-card"
+          className="flex-row items-center gap-2 px-3 py-2 rounded-btn mb-3"
           style={{ backgroundColor: m.sevMeta.color + "14" }}
         >
-          <View
-            className="w-11 h-11 rounded-full items-center justify-center"
-            style={{ backgroundColor: m.sevMeta.color + "26" }}
-          >
-            <Text style={{ fontSize: 18, color: m.sevMeta.color }}>
-              {m.sevMeta.color === "#DC2626" ? "⚠" : alert.status === "ACTIVE" ? "▲" : "✓"}
-            </Text>
-          </View>
-          <View className="flex-1">
-            <Text className={`text-sm font-bold font-inter ${darkText}`}>{m.sevMeta.label} severity</Text>
-            <Text className={`text-xs font-inter ${darkMuted}`}>{relativeTime(alert.timestamp)}</Text>
-          </View>
-          <View className="items-center">
+          <View className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: m.sevMeta.color }} />
+          <Text className={`text-xs font-bold font-inter ${darkText}`}>
+            {m.sevMeta.label}
+          </Text>
+          <Text className={`text-xs font-inter ${darkMuted}`}>·</Text>
+          <Text className={`text-xs font-inter ${darkMuted}`} numberOfLines={1} style={{ flex: 1 }}>
+            {alert.status === "RESOLVED" ? "Resolved" : editable ? "Active" : humanize(alert.status)}
+          </Text>
+          <View className="flex-row items-center gap-1.5">
             <View
               style={{
-                width: 12,
-                height: 12,
-                borderRadius: 6,
+                width: 8,
+                height: 8,
+                borderRadius: 4,
                 backgroundColor: m.live.color,
-                shadowColor: m.live.color,
-                shadowOpacity: 0.7,
-                shadowRadius: 5,
-                elevation: 3,
               }}
             />
-            <Text className={`text-[9px] font-inter mt-1 ${darkMuted}`}>{m.live.label}</Text>
+            <Text className={`text-[10px] font-inter ${darkMuted}`}>{m.live.label}</Text>
           </View>
         </View>
 
-        {/* Key / value grid */}
-        <View className="gap-2 mb-2">
-          {[
-            ["Sensor", m.sensorType || "—"],
-            ["Value", alert.value ?? "—"],
-            ["Threshold", alert.threshold ?? "—"],
-            ["Status", m.statusMeta.label],
-            ["Live state", m.live.label],
-            ["Time", relativeTime(alert.timestamp)],
-            ["Machine", m.machineCode],
-          ].map(([k, v]) => (
+        {/* Two-column fact grid — half the height of the old stacked list */}
+        <View className="flex-row flex-wrap gap-2">
+          {facts.map(([k, v]) => (
             <View
               key={k}
-              className={`flex-row justify-between items-center py-2 px-3 rounded-btn ${dark ? "bg-white/5" : "bg-bg"}`}
+              className={`rounded-btn px-3 py-2 ${dark ? "bg-white/5" : "bg-bg"}`}
+              style={{ width: "48%" }}
             >
-              <Text className={`text-xs font-inter ${darkMuted}`}>{k}</Text>
-              <Text className={`text-xs font-bold font-inter text-right flex-1 ml-3 ${darkText}`} numberOfLines={1}>
+              <Text className={`text-[10px] font-inter ${darkMuted}`}>{k}</Text>
+              <Text className={`text-xs font-bold font-inter mt-0.5 ${darkText}`} numberOfLines={1}>
                 {v}
               </Text>
             </View>
           ))}
-        </View>
-
-        <View className="gap-3 mt-4">
-          <Button
-            title="+ Create Intervention"
-            variant="primary"
-            onPress={() => goToCreateIntervention(alert)}
-          />
-          {canAcknowledge && editable && (
-            <Button
-              title={ackStatus === "loading" ? "Acknowledging…" : "Acknowledge"}
-              variant="outline"
-              onPress={() => handleAcknowledge(alert)}
-              loading={ackStatus === "loading"}
-            />
-          )}
-          {canAcknowledge && alert.status !== "RESOLVED" && (
-            <Button title="Resolve" variant="outline" onPress={() => handleResolve(alert)} />
-          )}
-          <Button title="Close" variant="ghost" onPress={() => setSelected(null)} />
         </View>
       </BottomSheet>
     );
