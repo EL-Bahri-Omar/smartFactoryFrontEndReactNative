@@ -25,6 +25,7 @@ import Skeleton from "../../../src/components/Skeleton";
 import EmptyState from "../../../src/components/EmptyState";
 import Select from "../../../src/components/Select";
 import AddMachineModal from "../../../src/components/AddMachineModal";
+import BusyRow from "../../../src/components/BusyRow";
 import { useBreakpoint } from "../../../src/hooks/useBreakpoint";
 import { useDark } from "../../../src/hooks/useDark";
 import { useRole, PERMISSIONS } from "../../../src/hooks/useRole";
@@ -89,11 +90,14 @@ export default function MachinesListScreen() {
     setSearchInput(filters.search || "");
   }, [filters.search]);
 
-  // Zones for the zone filter + create/edit modal dropdown
+  // Zones for the zone filter + create/edit modal dropdown. Zones rarely
+  // change — only fetch when cold so every navigation back to this screen
+  // doesn't re-request them (review: slow screens).
   useEffect(() => {
     if (!canReadMachines) return;
-    dispatch(fetchZones());
+    if ((zones || []).length === 0) dispatch(fetchZones());
     dispatch(fetchMachineCounts());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch, canReadMachines]);
 
   // Fetch on mount and on filter/page/permission change (all server-side).
@@ -209,6 +213,11 @@ export default function MachinesListScreen() {
   }
 
   const isLoading = status === "loading";
+  // Cold load (nothing on screen yet) → skeletons. A fetch that runs while
+  // rows are already visible (search typing, tab/zone filter change) keeps
+  // the stale rows but dimmed + a BusyRow, so no layout flash while typing.
+  const isLoadingCold = isLoading && list.length === 0;
+  const isRefreshing = isLoading && list.length > 0;
   const isEmpty = status === "succeeded" && list.length === 0;
   const isError = status === "error";
 
@@ -324,8 +333,8 @@ export default function MachinesListScreen() {
             </Card>
           )}
 
-          {/* Loading skeleton */}
-          {isLoading && (
+          {/* Loading skeleton — cold load only (no data on screen yet) */}
+          {isLoadingCold && (
             <Card>
               {[1, 2, 3, 4, 5].map((i) => (
                 <View key={i} className={`flex-row items-center gap-4 py-3 border-b ${dark ? "border-white/10" : "border-border"}`}>
@@ -360,9 +369,12 @@ export default function MachinesListScreen() {
             </Card>
           )}
 
-          {/* Table */}
-          {!isLoading && !isEmpty && !isError && (
-            <Card className="overflow-hidden p-0">
+          {/* Refresh feedback while old rows are on screen */}
+          {isRefreshing && <BusyRow label="Updating machines…" className="mb-2" />}
+
+          {/* Table — stays visible (dimmed) while a refresh fetch runs */}
+          {!isEmpty && !isError && !isLoadingCold && (
+            <Card className="overflow-hidden p-0" style={isRefreshing ? { opacity: 0.6 } : undefined}>
               {/* Header */}
               <View className={`flex-row items-center px-4 py-3 border-b ${dark ? "border-white/10 bg-white/5" : "border-border bg-bg"}`}>
                 <Text className={`w-20 text-xs font-semibold font-inter ${dark ? "text-white/50" : "text-text-muted"}`}>ID</Text>
@@ -428,7 +440,7 @@ export default function MachinesListScreen() {
             </Card>
           )}
 
-          {!isLoading && !isError && <Pager />}
+          {!isLoadingCold && !isError && <Pager />}
         </ScrollView>
 
         <AddMachineModal visible={showAddModal} machine={editingMachine} onClose={handleCloseModal} />
@@ -513,8 +525,8 @@ export default function MachinesListScreen() {
           </Card>
         )}
 
-        {/* Loading */}
-        {isLoading && (
+        {/* Loading — cold load only */}
+        {isLoadingCold && (
           <View className="gap-3">
             {[1, 2, 3, 4].map((i) => (
               <Card key={i}>
@@ -540,13 +552,17 @@ export default function MachinesListScreen() {
           </Card>
         )}
 
-        {/* Card list */}
-        {!isLoading && !isEmpty && !isError && (
+        {/* Refresh feedback while old cards are on screen */}
+        {isRefreshing && <BusyRow label="Updating machines…" className="mb-2" />}
+
+        {/* Card list — dimmed while refreshing */}
+        {!isEmpty && !isError && !isLoadingCold && (
           <FlatList
             data={list}
             keyExtractor={(item, idx) => item.id || String(idx)}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ gap: 10, paddingBottom: 16 }}
+            style={isRefreshing ? { opacity: 0.6 } : undefined}
             renderItem={({ item }) => (
               <Pressable onPress={() => handleRowPress(item)}>
                 <Card>
@@ -581,7 +597,7 @@ export default function MachinesListScreen() {
           />
         )}
 
-        {!isLoading && !isError && <Pager />}
+        {!isLoadingCold && !isError && <Pager />}
       </View>
 
       <AddMachineModal visible={showAddModal} machine={editingMachine} onClose={handleCloseModal} />

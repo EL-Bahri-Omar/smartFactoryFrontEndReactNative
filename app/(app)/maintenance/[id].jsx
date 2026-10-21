@@ -1,0 +1,961 @@
+// app/(app)/maintenance/[id].jsx
+//
+// Sprint 6 — Intervention detail (CONFIRMED backend MaintenanceController).
+//   GET   /api/maintenance/:id                    full entity (initial state)
+//   PUT   /api/maintenance/:id/assign             technician assignment (US43)
+//   GET   /api/maintenance/:id/anomaly            anomaly + sensor context (US44)
+//   POST  /api/maintenance/:id/diagnoses          probable cause + details (US45)
+//   POST  /api/maintenance/:id/actions            realized action + parts (US46)
+//   POST  /api/maintenance/:id/observations       technical observation (US47)
+//   PUT   /api/maintenance/:id/close              terminal closure (US48)
+//
+// UI gating mirrors the backend PreAuthorize (server enforces anyway):
+//   assign/close/observations → ADMIN / RESPONSABLE_INDUSTRIEL (+ TECHNICIAN)
+//   diagnoses/actions         → TECHNICIAN / ADMIN only (backend excludes
+//                               plain RESPONSABLE_INDUSTRIEL there)
+
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { View, Text, ScrollView, Pressable } from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import AppShell from "../../../src/components/AppShell";
+import Card from "../../../src/components/Card";
+import Button from "../../../src/components/Button";
+import Input from "../../../src/components/Input";
+import Select from "../../../src/components/Select";
+import Skeleton from "../../../src/components/Skeleton";
+import EmptyState from "../../../src/components/EmptyState";
+import BottomSheet from "../../../src/components/BottomSheet";
+import BusyRow from "../../../src/components/BusyRow";
+import { useDark } from "../../../src/hooks/useDark";
+import { useRole } from "../../../src/hooks/useRole";
+import { useAppDispatch } from "../../../src/hooks/useAppDispatch";
+import { useAppSelector } from "../../../src/hooks/useAppSelector";
+import {
+  fetchInterventionById,
+  assignIntervention,
+  addInterventionDiagnosis,
+  addInterventionAction,
+  addInterventionObservation,
+  closeIntervention,
+  updateInterventionStatus,
+  updateInterventionDetails,
+  updateInterventionDiagnosis,
+  updateInterventionAction,
+  updateInterventionObservation,
+} from "../../../src/store/slices/interventionSlice";
+import { fetchUsers } from "../../../src/store/slices/userSlice";
+import {
+  getTicketPriority,
+  getTicketStatus,
+  INTERVENTION_TYPE_LABELS,
+  PREVENTIVE_SUBTYPE_LABELS,
+  OBSERVATION_CATEGORY_LABELS,
+} from "../../../src/lib/status";
+import { formatDateTime, relativeTime } from "../../../src/lib/time";
+
+const OBSERVATION_CATEGORIES = [
+  { value: "GENERAL", label: OBSERVATION_CATEGORY_LABELS.GENERAL },
+  { value: "SAFETY", label: OBSERVATION_CATEGORY_LABELS.SAFETY },
+  { value: "PERFORMANCE", label: OBSERVATION_CATEGORY_LABELS.PERFORMANCE },
+  { value: "OPERATING_CONDITION", label: OBSERVATION_CATEGORY_LABELS.OPERATING_CONDITION },
+];
+
+function refCode(t) {
+  return `INT-${String(t?.id || "").slice(0, 6).toUpperCase()}`;
+}
+
+export default function InterventionDetailScreen() {
+  const params = useLocalSearchParams();
+  const id = Array.isArray(params.id) ? params.id[0] : params.id;
+  const router = useRouter();
+  const dispatch = useAppDispatch();
+  const dark = useDark();
+  const { role } = useRole();
+
+  const { current, currentStatus, currentError, mutating } = useAppSelector((s) => s.maintenance);
+  const { list: users } = useAppSelector((s) => s.user);
+
+  const [sheet, setSheet] = useState(null); // 'assign' | 'diagnosis' | 'action' | 'observation' | 'close' | 'status' | 'details' | 'editDiagnosis' | 'editAction' | 'editObservation' | null
+  const [assignTech, setAssignTech] = useState(null);
+  const [diagForm, setDiagForm] = useState({ probableCause: "", details: "" });
+  const [actionForm, setActionForm] = useState({ description: "", partsReplaced: "", durationMinutes: "" });
+  const [obsForm, setObsForm] = useState({ content: "", category: "GENERAL" });
+  const [closeForm, setCloseForm] = useState({ closureNotes: "", restoreMachineStatus: true });
+  const [sheetError, setSheetError] = useState(null);
+  // Item 10 — technician edit flows.
+  const [detailsForm, setDetailsForm] = useState({ title: "", description: "", priority: "MEDIUM" });
+  const [statusChoice, setStatusChoice] = useState(null); // IN_PROGRESS | COMPLETED
+  const [editTarget, setEditTarget] = useState(null); // { kind, index, entry }
+
+  useEffect(() => {
+    if (id) dispatch(fetchInterventionById(id));
+  }, [dispatch, id]);
+
+  // Best-effort technician list for the assign sheet (needs USER_READ; a
+  // 403 just leaves the manual entry). Skipped when the list is already
+  // warm (perf: no refetch on every navigation back to a detail).
+  useEffect(() => {
+    if (users.length === 0) dispatch(fetchUsers({ size: 100 })).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dispatch]);
+
+  const refresh = useCallback(() => {
+    if (id) dispatch(fetchInterventionById(id));
+  }, [dispatch, id]);
+
+  const darkText = dark ? "text-white" : "text-text";
+  const darkMuted = dark ? "text-white/60" : "text-text-muted";
+  const isManager = ["ADMIN", "RESPONSABLE_INDUSTRIEL"].includes(role);
+  const isTechnician = role === "TECHNICIAN";
+  const canAssign = isManager; // backend guard: RESPONSABLE_INDUSTRIEL / ADMIN (+ MAINTENANCE:MODIFIER)
+  // Backend truth: diagnoses (US45) and actions (US46) accept TECHNICIAN /
+  // ADMIN (+ MAINTENANCE:MODIFIER) — NOT plain RESPONSABLE_INDUSTRIEL.
+  // Observations (US47) and close (US48) accept all three roles.
+  const canDiagnose = isTechnician || role === "ADMIN";
+  const canObserve = isTechnician || isManager;
+  const canClose = isTechnician || isManager;
+  // Item 10 — the technician owns the execution details: description,
+  // observations, actions performed, parts, and the status transitions
+  // (In progress on receipt / Completed when done; default is To do).
+  const canEditDetails = isTechnician || isManager;
+  const canChangeStatus = isTechnician || isManager;
+  const openStatus = current && current.status !== "COMPLETED" && current.status !== "CANCELLED";
+
+  const technicianOptions = useMemo(
+    () =>
+      (users || [])
+        .filter((u) => u.role === "TECHNICIAN")
+        .map((u) => ({
+          value: u.username || u.id,
+          label: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.username || u.id,
+        })),
+    [users]
+  );
+
+  const sheetBusy = mutating === "loading";
+
+  async function submitAssign() {
+    if (!assignTech) return;
+    setSheetError(null);
+    try {
+      await dispatch(assignIntervention({ id, technicianId: assignTech })).unwrap();
+      setSheet(null);
+    } catch (e) {
+      setSheetError(e?.message || "Failed to assign.");
+    }
+  }
+
+  async function submitDiagnosis() {
+    if (!diagForm.probableCause.trim()) return;
+    setSheetError(null);
+    try {
+      await dispatch(
+        addInterventionDiagnosis({
+          id,
+          probableCause: diagForm.probableCause.trim(),
+          details: diagForm.details.trim(),
+        })
+      ).unwrap();
+      setDiagForm({ probableCause: "", details: "" });
+      setSheet(null);
+    } catch (e) {
+      setSheetError(e?.message || "Failed to record diagnosis.");
+    }
+  }
+
+  async function submitAction() {
+    if (!actionForm.description.trim()) return;
+    setSheetError(null);
+    const minutes = parseInt(actionForm.durationMinutes, 10);
+    try {
+      await dispatch(
+        addInterventionAction({
+          id,
+          description: actionForm.description.trim(),
+          partsReplaced: actionForm.partsReplaced.trim(),
+          durationMinutes: Number.isFinite(minutes) ? minutes : undefined,
+        })
+      ).unwrap();
+      setActionForm({ description: "", partsReplaced: "", durationMinutes: "" });
+      setSheet(null);
+    } catch (e) {
+      setSheetError(e?.message || "Failed to record action.");
+    }
+  }
+
+  async function submitObservation() {
+    if (!obsForm.content.trim()) return;
+    setSheetError(null);
+    try {
+      await dispatch(
+        addInterventionObservation({
+          id,
+          content: obsForm.content.trim(),
+          category: obsForm.category,
+        })
+      ).unwrap();
+      setObsForm({ content: "", category: "GENERAL" });
+      setSheet(null);
+    } catch (e) {
+      setSheetError(e?.message || "Failed to add observation.");
+    }
+  }
+
+  async function submitClose() {
+    setSheetError(null);
+    try {
+      await dispatch(
+        closeIntervention({
+          id,
+          closureNotes: closeForm.closureNotes.trim(),
+          restoreMachineStatus: closeForm.restoreMachineStatus,
+        })
+      ).unwrap();
+      setSheet(null);
+    } catch (e) {
+      setSheetError(e?.message || "Failed to close the intervention.");
+    }
+  }
+
+  // ── Item 10 — technician flows ───────────────────────────────────────────
+
+  /** "Start (In progress)" / "Complete" — explicit status transition. */
+  async function submitStatus() {
+    if (!statusChoice) return;
+    setSheetError(null);
+    try {
+      await dispatch(updateInterventionStatus({ id, status: statusChoice })).unwrap();
+      setStatusChoice(null);
+      setSheet(null);
+    } catch (e) {
+      setSheetError(
+        e?.message ||
+          "The status endpoint is not available on the backend yet (PUT /api/maintenance/:id/status). The technician status control stays visible so nothing else changes."
+      );
+    }
+  }
+
+  /** Edit the intervention core fields (title / description / priority). */
+  async function submitDetails() {
+    if (!detailsForm.title.trim()) return;
+    setSheetError(null);
+    try {
+      await dispatch(
+        updateInterventionDetails({
+          id,
+          title: detailsForm.title.trim(),
+          description: detailsForm.description.trim(),
+          priority: detailsForm.priority,
+        })
+      ).unwrap();
+      setSheet(null);
+    } catch (e) {
+      setSheetError(e?.message || "Could not save the changes yet (backend update pending).");
+    }
+  }
+
+  /** Edit one timeline entry (diagnosis / action+parts / observation). */
+  async function submitEditEntry() {
+    if (!editTarget) return;
+    setSheetError(null);
+    const { kind, entry, index } = editTarget;
+    try {
+      if (kind === "diagnosis") {
+        await dispatch(
+          updateInterventionDiagnosis({
+            id,
+            entryId: entry.id || index,
+            probableCause: diagForm.probableCause.trim(),
+            details: diagForm.details.trim(),
+          })
+        ).unwrap();
+      } else if (kind === "action") {
+        const minutes = parseInt(actionForm.durationMinutes, 10);
+        await dispatch(
+          updateInterventionAction({
+            id,
+            entryId: entry.id || index,
+            description: actionForm.description.trim(),
+            partsReplaced: actionForm.partsReplaced.trim(),
+            durationMinutes: Number.isFinite(minutes) ? minutes : undefined,
+          })
+        ).unwrap();
+      } else if (kind === "observation") {
+        await dispatch(
+          updateInterventionObservation({
+            id,
+            entryId: entry.id || index,
+            content: obsForm.content.trim(),
+            category: obsForm.category,
+          })
+        ).unwrap();
+      }
+      setEditTarget(null);
+      setSheet(null);
+    } catch (e) {
+      setSheetError(e?.message || "Could not save the edit yet (backend update pending).");
+    }
+  }
+
+  function openEdit(kind, entry, index) {
+    setSheetError(null);
+    setEditTarget({ kind, entry, index });
+    if (kind === "diagnosis") {
+      setDiagForm({ probableCause: entry.probableCause || "", details: entry.details || "" });
+    } else if (kind === "action") {
+      setActionForm({
+        description: entry.description || "",
+        partsReplaced: entry.partsReplaced || "",
+        durationMinutes: entry.durationMinutes != null ? String(entry.durationMinutes) : "",
+      });
+    } else if (kind === "observation") {
+      setObsForm({ content: entry.content || "", category: entry.category || "GENERAL" });
+    }
+    setSheet(`edit${kind.charAt(0).toUpperCase()}${kind.slice(1)}`);
+  }
+
+  const chip = (color) => ({ backgroundColor: color + "1A" });
+
+  return (
+    <AppShell>
+      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+        {/* Header */}
+        <View className="mb-4 flex-row items-center justify-between">
+          <View className="flex-1 mr-3">
+            <Text className={`text-lg font-bold font-inter ${darkText}`}>
+              {current ? refCode(current) : "Intervention"}
+            </Text>
+            <Text className={`text-sm font-inter ${darkMuted}`}>
+              {current ? `${INTERVENTION_TYPE_LABELS[current.type] || current.type} maintenance` : "Detail"}
+            </Text>
+          </View>
+          <Button title="← Back" variant="outline" size="sm" onPress={() => router.push("/(app)/maintenance")} />
+        </View>
+
+        {/* Refresh feedback while the detail reloads (mutating ops upsert in place) */}
+        {currentStatus === "loading" && !!current && <BusyRow label="Refreshing…" className="mb-2" />}
+
+        <Card className="mb-4" style={currentStatus === "loading" && current ? { opacity: 0.7 } : undefined}>
+          {currentStatus === "loading" && !current && (
+            <View className="gap-2 py-3">
+              <Skeleton width="45%" height={18} />
+              <Skeleton width="70%" height={14} />
+              <Skeleton width="100%" height={14} />
+              <Skeleton width="60%" height={14} />
+            </View>
+          )}
+
+          {!current && currentStatus !== "loading" && (
+            <EmptyState
+              title="Intervention unavailable"
+              message={currentError?.message || "This intervention could not be loaded."}
+              action={<Button title="Retry" variant="outline" size="sm" onPress={() => refresh()} />}
+            />
+          )}
+
+          {current && (
+            <View className="gap-3">
+              <View className="flex-row items-start justify-between">
+                <View className="flex-1 mr-2">
+                  <Text className={`text-base font-bold font-inter ${darkText}`}>{current.title}</Text>
+                  {current.description ? (
+                    <Text className={`text-sm font-inter mt-1 ${darkMuted}`}>{current.description}</Text>
+                  ) : null}
+                </View>
+                <View className="px-2.5 py-1 rounded-chip" style={chip(getTicketStatus(current.status).color)}>
+                  <Text className="text-xs font-bold font-inter" style={{ color: getTicketStatus(current.status).color }}>
+                    {getTicketStatus(current.status).label}
+                  </Text>
+                </View>
+              </View>
+
+              <View className="gap-2 mt-1">
+                {[
+                  ["Machine", current.machineCode || (current.machineId ? String(current.machineId).slice(0, 8) : "—")],
+                  ["Type", `${INTERVENTION_TYPE_LABELS[current.type] || current.type}${current.preventiveSubtype ? ` · ${PREVENTIVE_SUBTYPE_LABELS[current.preventiveSubtype] || current.preventiveSubtype}` : ""}`],
+                  ["Priority", getTicketPriority(current.priority).label],
+                  ["Technician", current.technicianName || current.technicianId || "Unassigned"],
+                  ["Scheduled", current.scheduledAt ? formatDateTime(current.scheduledAt) : "—"],
+                  ["Created", formatDateTime(current.createdAt)],
+                  ...(current.assignedAt ? [["Assigned", `${formatDateTime(current.assignedAt)}${current.assignedBy ? ` by ${current.assignedBy}` : ""}`]] : []),
+                  ...(current.closedAt ? [["Closed", `${formatDateTime(current.closedAt)}${current.closedBy ? ` by ${current.closedBy}` : ""}`]] : []),
+                ].map(([k, v]) => (
+                  <View
+                    key={k}
+                    className={`flex-row justify-between items-center py-2 px-3 rounded-btn ${dark ? "bg-white/5" : "bg-bg"}`}
+                  >
+                    <Text className={`text-xs font-inter ${darkMuted}`}>{k}</Text>
+                    <Text className={`text-xs font-bold font-inter text-right flex-1 ${darkText}`} numberOfLines={1}>
+                      {v}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+
+              {current.closureNotes ? (
+                <View className={`rounded-btn p-3 mt-1 ${dark ? "bg-white/5" : "bg-bg"}`}>
+                  <Text className={`text-xs font-semibold font-inter mb-1 ${darkMuted}`}>Closure notes</Text>
+                  <Text className={`text-sm font-inter ${darkText}`}>{current.closureNotes}</Text>
+                </View>
+              ) : null}
+
+              {/* Actions row */}
+              <View className="flex-row flex-wrap gap-2 mt-3">
+                {canAssign && openStatus && (
+                  <Button
+                    title={current.technicianId ? "Reassign" : "Assign technician"}
+                    variant="primary"
+                    size="sm"
+                    onPress={() => { setSheet("assign"); setSheetError(null); setAssignTech(current.technicianId || null); }}
+                  />
+                )}
+                {/* Item 10 — technician/manager status control. Default is
+                    "To do" (PENDING); "In progress" starts the work,
+                    "Complete" is the close flow. */}
+                {canChangeStatus && openStatus && (
+                  <Button
+                    title={current.status === "IN_PROGRESS" ? "Mark completed" : "Start (in progress)"}
+                    variant={current.status === "IN_PROGRESS" ? "primary" : "outline"}
+                    size="sm"
+                    onPress={() => {
+                      setStatusChoice(current.status === "IN_PROGRESS" ? "COMPLETED" : "IN_PROGRESS");
+                      setSheetError(null);
+                      setSheet("status");
+                    }}
+                  />
+                )}
+                {canEditDetails && openStatus && (
+                  <Button
+                    title="Edit details"
+                    variant="outline"
+                    size="sm"
+                    onPress={() => {
+                      setDetailsForm({
+                        title: current.title || "",
+                        description: current.description || "",
+                        priority: current.priority || "MEDIUM",
+                      });
+                      setSheetError(null);
+                      setSheet("details");
+                    }}
+                  />
+                )}
+                {canDiagnose && openStatus && (
+                  <Button title="+ Diagnosis" variant="outline" size="sm" onPress={() => { setSheet("diagnosis"); setSheetError(null); }} />
+                )}
+                {canDiagnose && openStatus && (
+                  <Button title="+ Action" variant="outline" size="sm" onPress={() => { setSheet("action"); setSheetError(null); }} />
+                )}
+                {canObserve && (
+                  <Button title="+ Observation" variant="outline" size="sm" onPress={() => { setSheet("observation"); setSheetError(null); }} />
+                )}
+                {canClose && openStatus && (
+                  <Button
+                    title="Close"
+                    variant={current.status === "IN_PROGRESS" || current.status === "ASSIGNED" ? "primary" : "outline"}
+                    size="sm"
+                    onPress={() => { setSheet("close"); setSheetError(null); }}
+                  />
+                )}
+              </View>
+              {mutating === "loading" && <BusyRow label="Saving…" className="mt-2" />}
+              {mutating === "error" && (
+                <Text className="text-xs font-inter text-danger mt-1">
+                  The last action failed — retry or reload the page.
+                </Text>
+              )}
+            </View>
+          )}
+        </Card>
+
+        {/* Timeline — diagnoses / actions / observations (nested lists) */}
+        {current && (
+          <View className="gap-4">
+            {/* Diagnoses */}
+            <Card>
+              <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>
+                Diagnoses ({current.diagnoses.length})
+              </Text>
+              {current.diagnoses.length === 0 ? (
+                <Text className={`text-sm font-inter ${darkMuted}`}>
+                  No diagnosis recorded yet (US45).
+                </Text>
+              ) : (
+                <View className="gap-2">
+                  {current.diagnoses.map((d, i) => (
+                    <View key={d.id || i} className={`p-3 rounded-btn ${dark ? "bg-white/5" : "bg-bg"}`}>
+                      <View className="flex-row items-center justify-between mb-1">
+                        <Text className={`text-sm font-bold font-inter flex-1 ${darkText}`}>{d.probableCause}</Text>
+                        <View className="flex-row items-center gap-2">
+                          <Text className={`text-[10px] font-inter ${darkMuted}`}>{relativeTime(d.recordedAt)}</Text>
+                          {canDiagnose && openStatus && (
+                            <Pressable onPress={() => openEdit("diagnosis", d, i)} hitSlop={6}>
+                              <Text className="text-[11px] font-inter font-semibold text-primary">Edit</Text>
+                            </Pressable>
+                          )}
+                        </View>
+                      </View>
+                      {d.details ? (
+                        <Text className={`text-xs font-inter ${darkMuted}`}>{d.details}</Text>
+                      ) : null}
+                      {d.technicianName ? (
+                        <Text className={`text-[10px] font-inter mt-1 ${darkMuted}`}>by {d.technicianName}</Text>
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
+              )}
+            </Card>
+
+            {/* Actions */}
+            <Card>
+              <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>
+                Actions performed ({current.actions.length})
+              </Text>
+              {current.actions.length === 0 ? (
+                <Text className={`text-sm font-inter ${darkMuted}`}>
+                  No maintenance action recorded yet (US46).
+                </Text>
+              ) : (
+                <View className="gap-2">
+                  {current.actions.map((a, i) => (
+                    <View key={a.id || i} className={`p-3 rounded-btn ${dark ? "bg-white/5" : "bg-bg"}`}>
+                      <View className="flex-row items-center justify-between mb-1">
+                        <Text className={`text-sm font-inter flex-1 ${darkText}`}>{a.description}</Text>
+                        <View className="flex-row items-center gap-2 ml-2">
+                          {typeof a.durationMinutes === "number" ? (
+                            <Text className={`text-[10px] font-inter ${darkMuted}`}>{a.durationMinutes} min</Text>
+                          ) : null}
+                          {canDiagnose && openStatus && (
+                            <Pressable onPress={() => openEdit("action", a, i)} hitSlop={6}>
+                              <Text className="text-[11px] font-inter font-semibold text-primary">Edit</Text>
+                            </Pressable>
+                          )}
+                        </View>
+                      </View>
+                      <View className="flex-row items-center justify-between">
+                        {a.partsReplaced ? (
+                          <Text className={`text-xs font-inter flex-1 ${darkMuted}`}>Parts: {a.partsReplaced}</Text>
+                        ) : (
+                          <View className="flex-1" />
+                        )}
+                        <Text className={`text-[10px] font-inter ${darkMuted}`}>{relativeTime(a.performedAt)}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </Card>
+
+            {/* Observations */}
+            <Card>
+              <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>
+                Observations ({current.observations.length})
+              </Text>
+              {current.observations.length === 0 ? (
+                <Text className={`text-sm font-inter ${darkMuted}`}>
+                  No observation recorded yet (US47).
+                </Text>
+              ) : (
+                <View className="gap-2">
+                  {current.observations.map((o, i) => (
+                    <View key={o.id || i} className={`p-3 rounded-btn ${dark ? "bg-white/5" : "bg-bg"}`}>
+                      <View className="flex-row items-center justify-between mb-1">
+                        <View className="px-2 py-0.5 rounded-chip" style={chip("#2563EB")}>
+                          <Text className="text-[10px] font-bold font-inter" style={{ color: "#2563EB" }}>
+                            {OBSERVATION_CATEGORY_LABELS[o.category] || o.category || "General"}
+                          </Text>
+                        </View>
+                        <View className="flex-row items-center gap-2">
+                          <Text className={`text-[10px] font-inter ${darkMuted}`}>{relativeTime(o.recordedAt)}</Text>
+                          {canObserve && openStatus && (
+                            <Pressable onPress={() => openEdit("observation", o, i)} hitSlop={6}>
+                              <Text className="text-[11px] font-inter font-semibold text-primary">Edit</Text>
+                            </Pressable>
+                          )}
+                        </View>
+                      </View>
+                      <Text className={`text-sm font-inter ${darkText}`}>{o.content}</Text>
+                      {o.authorName ? (
+                        <Text className={`text-[10px] font-inter mt-1 ${darkMuted}`}>by {o.authorName}</Text>
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
+              )}
+            </Card>
+          </View>
+        )}
+      </ScrollView>
+
+      {/* ── Action sheets ─────────────────────────────────────────────── */}
+      <BottomSheet visible={sheet === "assign"} onClose={() => setSheet(null)} title="Assign technician">
+        {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
+        {technicianOptions.length > 0 ? (
+          <Select
+            label="Technician"
+            value={assignTech}
+            onValueChange={setAssignTech}
+            options={technicianOptions}
+            placeholder="Select technician..."
+          />
+        ) : (
+          <Input
+            label="Technician email or ID"
+            placeholder="e.g. js@company.com"
+            value={assignTech || ""}
+            onChangeText={setAssignTech}
+          />
+        )}
+        <View className="flex-row gap-3 mt-6 justify-end">
+          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
+          <Button
+            title="Assign"
+            variant="primary"
+            size="sm"
+            loading={sheetBusy}
+            disabled={!assignTech}
+            onPress={submitAssign}
+          />
+        </View>
+      </BottomSheet>
+
+      <BottomSheet visible={sheet === "diagnosis"} onClose={() => setSheet(null)} title="Record diagnosis">
+        {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
+        <View className="gap-4">
+          <Input
+            label="Probable cause *"
+            placeholder="e.g. Bearing wear / couplings misaligned"
+            value={diagForm.probableCause}
+            onChangeText={(v) => setDiagForm((f) => ({ ...f, probableCause: v }))}
+          />
+          <Input
+            label="Details"
+            placeholder="Technical details..."
+            value={diagForm.details}
+            onChangeText={(v) => setDiagForm((f) => ({ ...f, details: v }))}
+            multiline
+          />
+        </View>
+        <View className="flex-row gap-3 mt-6 justify-end">
+          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
+          <Button
+            title="Save"
+            variant="primary"
+            size="sm"
+            loading={sheetBusy}
+            disabled={!diagForm.probableCause.trim()}
+            onPress={submitDiagnosis}
+          />
+        </View>
+      </BottomSheet>
+
+      <BottomSheet visible={sheet === "action"} onClose={() => setSheet(null)} title="Record action performed">
+        {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
+        <View className="gap-4">
+          <Input
+            label="Description *"
+            placeholder="e.g. Replaced the drive coupling"
+            value={actionForm.description}
+            onChangeText={(v) => setActionForm((f) => ({ ...f, description: v }))}
+          />
+          <Input
+            label="Parts replaced"
+            placeholder="e.g. SKF-608 bearing"
+            value={actionForm.partsReplaced}
+            onChangeText={(v) => setActionForm((f) => ({ ...f, partsReplaced: v }))}
+          />
+          <Input
+            label="Duration (minutes)"
+            placeholder="e.g. 45"
+            value={actionForm.durationMinutes}
+            onChangeText={(v) => setActionForm((f) => ({ ...f, durationMinutes: v }))}
+            keyboardType="number-pad"
+          />
+        </View>
+        <View className="flex-row gap-3 mt-6 justify-end">
+          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
+          <Button
+            title="Save"
+            variant="primary"
+            size="sm"
+            loading={sheetBusy}
+            disabled={!actionForm.description.trim()}
+            onPress={submitAction}
+          />
+        </View>
+      </BottomSheet>
+
+      <BottomSheet visible={sheet === "observation"} onClose={() => setSheet(null)} title="Add observation">
+        {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
+        <View className="gap-4">
+          <Select
+            label="Category"
+            value={obsForm.category}
+            onValueChange={(v) => setObsForm((f) => ({ ...f, category: v }))}
+            options={OBSERVATION_CATEGORIES}
+          />
+          <Input
+            label="Observation *"
+            placeholder="What did you notice on the machine?"
+            value={obsForm.content}
+            onChangeText={(v) => setObsForm((f) => ({ ...f, content: v }))}
+            multiline
+          />
+        </View>
+        <View className="flex-row gap-3 mt-6 justify-end">
+          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
+          <Button
+            title="Save"
+            variant="primary"
+            size="sm"
+            loading={sheetBusy}
+            disabled={!obsForm.content.trim()}
+            onPress={submitObservation}
+          />
+        </View>
+      </BottomSheet>
+
+      <BottomSheet visible={sheet === "close"} onClose={() => setSheet(null)} title="Close intervention">
+        {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
+        <Text className={`text-xs font-inter mb-3 ${darkMuted}`}>
+          Closing is terminal — the intervention will no longer be editable (US48).
+        </Text>
+        {current && current.diagnoses.length === 0 && current.actions.length === 0 ? (
+          <View
+            className="bg-danger/10 rounded-btn px-3 py-2 mb-3"
+            style={{ borderWidth: 1, borderColor: "rgba(220,38,38,0.25)" }}
+          >
+            <Text className="text-xs text-danger font-inter">
+              The server requires at least one recorded diagnosis or action
+              before an intervention can be closed. Record one first.
+            </Text>
+          </View>
+        ) : null}
+        <View className="gap-4">
+          <Input
+            label="Closure notes"
+            placeholder="Root cause, outcome, recommendations..."
+            value={closeForm.closureNotes}
+            onChangeText={(v) => setCloseForm((f) => ({ ...f, closureNotes: v }))}
+            multiline
+          />
+          {isManager && (
+            <Pressable
+              onPress={() => setCloseForm((f) => ({ ...f, restoreMachineStatus: !f.restoreMachineStatus }))}
+              className="flex-row items-center gap-2"
+            >
+              <View
+                className={`w-5 h-5 rounded items-center justify-center ${closeForm.restoreMachineStatus ? "bg-primary" : dark ? "border border-white/30" : "border border-border bg-surface"}`}
+              >
+                {closeForm.restoreMachineStatus ? <Text className="text-white text-xs">✓</Text> : null}
+              </View>
+              <Text className={`text-sm font-inter ${darkText}`}>
+                Restore the machine status to RUNNING
+              </Text>
+            </Pressable>
+          )}
+        </View>
+        <View className="flex-row gap-3 mt-6 justify-end">
+          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
+          <Button
+            title="Close intervention"
+            variant="primary"
+            size="sm"
+            loading={sheetBusy}
+            disabled={!!current && current.diagnoses.length === 0 && current.actions.length === 0}
+            onPress={submitClose}
+          />
+        </View>
+      </BottomSheet>
+      {/* ── Item 10 — technician status + edit sheets ────────────────────── */}
+      <BottomSheet
+        visible={sheet === "status"}
+        onClose={() => setSheet(null)}
+        title={statusChoice === "COMPLETED" ? "Complete intervention" : "Start the intervention"}
+        maxWidth={480}
+      >
+        {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
+        <Text className={`text-sm font-inter mb-4 ${darkMuted}`}>
+          {statusChoice === "COMPLETED"
+            ? "Marking the work as done. If there is no diagnosis or action recorded yet, add one first — the server requires it."
+            : "You received this intervention: mark it as In progress to signal the work has started. It starts as \"To do\" (PENDING)."}
+        </Text>
+        <View className="flex-row gap-3 mt-2 justify-end">
+          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
+          <Button
+            title={statusChoice === "COMPLETED" ? "Complete" : "Start (in progress)"}
+            variant="primary"
+            size="sm"
+            loading={sheetBusy}
+            onPress={() => {
+              if (statusChoice === "COMPLETED") {
+                setCloseForm((f) => ({ ...f, closureNotes: f.closureNotes }));
+                setSheet("close");
+              } else {
+                submitStatus();
+              }
+            }}
+          />
+        </View>
+      </BottomSheet>
+
+      <BottomSheet
+        visible={sheet === "details"}
+        onClose={() => setSheet(null)}
+        title="Edit intervention details"
+        maxWidth={560}
+      >
+        {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
+        <View className="gap-4">
+          <Input
+            label="Title *"
+            placeholder="e.g. High vibration on CNC-024"
+            value={detailsForm.title}
+            onChangeText={(v) => setDetailsForm((f) => ({ ...f, title: v }))}
+          />
+          <Input
+            label="Description"
+            placeholder="What needs to be done…"
+            value={detailsForm.description}
+            onChangeText={(v) => setDetailsForm((f) => ({ ...f, description: v }))}
+            multiline
+          />
+          <Select
+            label="Priority"
+            value={detailsForm.priority}
+            onValueChange={(v) => setDetailsForm((f) => ({ ...f, priority: v }))}
+            options={[
+              { value: "LOW", label: getTicketPriority("LOW").label },
+              { value: "MEDIUM", label: getTicketPriority("MEDIUM").label },
+              { value: "HIGH", label: getTicketPriority("HIGH").label },
+            ]}
+          />
+        </View>
+        <View className="flex-row gap-3 mt-6 justify-end">
+          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
+          <Button
+            title="Save changes"
+            variant="primary"
+            size="sm"
+            loading={sheetBusy}
+            disabled={!detailsForm.title.trim()}
+            onPress={submitDetails}
+          />
+        </View>
+      </BottomSheet>
+
+      <BottomSheet
+        visible={sheet === "editDiagnosis"}
+        onClose={() => setSheet(null)}
+        title="Edit diagnosis"
+        maxWidth={560}
+      >
+        {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
+        <View className="gap-4">
+          <Input
+            label="Probable cause *"
+            placeholder="e.g. Bearing wear / couplings misaligned"
+            value={diagForm.probableCause}
+            onChangeText={(v) => setDiagForm((f) => ({ ...f, probableCause: v }))}
+          />
+          <Input
+            label="Details"
+            placeholder="Technical details..."
+            value={diagForm.details}
+            onChangeText={(v) => setDiagForm((f) => ({ ...f, details: v }))}
+            multiline
+          />
+        </View>
+        <View className="flex-row gap-3 mt-6 justify-end">
+          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
+          <Button
+            title="Save"
+            variant="primary"
+            size="sm"
+            loading={sheetBusy}
+            disabled={!diagForm.probableCause.trim()}
+            onPress={submitEditEntry}
+          />
+        </View>
+      </BottomSheet>
+
+      <BottomSheet
+        visible={sheet === "editAction"}
+        onClose={() => setSheet(null)}
+        title="Edit action performed"
+        maxWidth={560}
+      >
+        {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
+        <View className="gap-4">
+          <Input
+            label="Description *"
+            placeholder="e.g. Replaced the drive coupling"
+            value={actionForm.description}
+            onChangeText={(v) => setActionForm((f) => ({ ...f, description: v }))}
+            multiline
+          />
+          <Input
+            label="Parts fixed or replaced"
+            placeholder="e.g. SKF-608 bearing"
+            value={actionForm.partsReplaced}
+            onChangeText={(v) => setActionForm((f) => ({ ...f, partsReplaced: v }))}
+          />
+          <Input
+            label="Duration (minutes)"
+            placeholder="e.g. 45"
+            value={actionForm.durationMinutes}
+            onChangeText={(v) => setActionForm((f) => ({ ...f, durationMinutes: v }))}
+            keyboardType="number-pad"
+          />
+        </View>
+        <View className="flex-row gap-3 mt-6 justify-end">
+          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
+          <Button
+            title="Save"
+            variant="primary"
+            size="sm"
+            loading={sheetBusy}
+            disabled={!actionForm.description.trim()}
+            onPress={submitEditEntry}
+          />
+        </View>
+      </BottomSheet>
+
+      <BottomSheet
+        visible={sheet === "editObservation"}
+        onClose={() => setSheet(null)}
+        title="Edit observation"
+        maxWidth={560}
+      >
+        {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
+        <View className="gap-4">
+          <Select
+            label="Category"
+            value={obsForm.category}
+            onValueChange={(v) => setObsForm((f) => ({ ...f, category: v }))}
+            options={OBSERVATION_CATEGORIES}
+          />
+          <Input
+            label="Observation *"
+            placeholder="What did you notice on the machine?"
+            value={obsForm.content}
+            onChangeText={(v) => setObsForm((f) => ({ ...f, content: v }))}
+            multiline
+          />
+        </View>
+        <View className="flex-row gap-3 mt-6 justify-end">
+          <Button title="Cancel" variant="ghost" onPress={() => setSheet(null)} />
+          <Button
+            title="Save"
+            variant="primary"
+            size="sm"
+            loading={sheetBusy}
+            disabled={!obsForm.content.trim()}
+            onPress={submitEditEntry}
+          />
+        </View>
+      </BottomSheet>
+    </AppShell>
+  );
+}

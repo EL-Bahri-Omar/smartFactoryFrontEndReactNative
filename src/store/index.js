@@ -14,8 +14,7 @@ import sensorReducer from "./slices/sensorSlice";
 import readingReducer from "./slices/readingSlice";
 import alertReducer from "./slices/alertSlice";
 import notificationReducer from "./slices/notificationSlice";
-import ticketReducer from "./slices/ticketSlice";
-import maintenanceReducer from "./slices/maintenanceSlice";
+import maintenanceReducer from "./slices/interventionSlice";
 import zoneReducer from "./slices/zoneSlice";
 import eventReducer from "./slices/eventSlice";
 import dashboardReducer from "./slices/dashboardSlice";
@@ -39,7 +38,6 @@ export const store = configureStore({
     reading: readingReducer,
     alert: alertReducer,
     notification: notificationReducer,
-    ticket: ticketReducer,
     maintenance: maintenanceReducer,
     zone: zoneReducer,
     event: eventReducer,

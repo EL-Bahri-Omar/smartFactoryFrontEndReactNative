@@ -56,22 +56,53 @@ export const ENDPOINTS = Object.freeze({
   // MACHINE_SENSORS and MACHINE_READINGS above. No per-machine seuil
   // endpoints exist either — thresholds are hardcoded server-side (Sprint 3).
 
-  // --- Alerts ---
-  ALERTS: "/api/alerts", // ASSUMED — confirm with backend
-  ALERT_BY_ID: "/api/alerts/:id", // ASSUMED — confirm with backend
+  // --- Alerts (CONFIRMED — AlertController, Sprint 5 US37/38/39/41) ---
+  // Alerts live on the `alerts` collection; rows also broadcast on STOMP
+  // /topic/alerts (CONFIRMED). severity enum: INFO | WARNING | HIGH | CRITICAL;
+  // status enum: ACTIVE | ACKNOWLEDGED | RESOLVED.
+  ALERTS: "/api/alerts", // CONFIRMED — GET ?machineId=&severity=&status=&from=&to=&page=&size=&sort= → Page<Alert> (ALERT_READ legacy or ALERT:CONSULTER)
+  ALERT_BY_ID: "/api/alerts/:id", // CONFIRMED — GET one
+  ALERTS_ACKNOWLEDGE: "/api/alerts/:id/acknowledge", // CONFIRMED — POST { comment? } → updated Alert (ALERT_WRITE / ALERT:ACQUITTER)
+  ALERTS_RESOLVE: "/api/alerts/:id/resolve", // CONFIRMED — POST { comment? } → updated Alert
+  ALERTS_SUMMARY: "/api/alerts/summary", // CONFIRMED — GET counts summary Map
 
-  // --- Notifications ---
-  NOTIFICATIONS: "/api/notifications", // ASSUMED — confirm with backend
-  NOTIFICATION_BY_ID: "/api/notifications/:id", // ASSUMED — confirm with backend
-  NOTIFICATIONS_MARK_READ: "/api/notifications/mark-read", // ASSUMED — confirm with backend
+  // --- Notifications (CONFIRMED — NotificationController, Sprint 5 US40) ---
+  // AppNotification: { id, userId, alertId?, machineId?, title, message,
+  // type: ALERT_CRITICAL | ALERT_HIGH | MAINTENANCE_ASSIGNED | INFO,
+  // isRead, createdAt }. No STOMP publisher — REST only + FCM push (mobile).
+  NOTIFICATIONS: "/api/notifications", // CONFIRMED — GET ?page=&size= (default 20) → Page<AppNotification>, current user only
+  NOTIFICATION_MARK_READ: "/api/notifications/:id/read", // CONFIRMED — PUT ?userId= → marked-read notification
+  NOTIFICATIONS_UNREAD_COUNT: "/api/notifications/unread-count", // CONFIRMED — GET ?userId= → { unreadCount }
+  NOTIFICATION_TOKENS: "/api/notifications/tokens", // CONFIRMED — POST { token, deviceType } (native FCM registration)
 
-  // --- Tickets ---
-  TICKETS: "/api/tickets", // ASSUMED — confirm with backend
-  TICKET_BY_ID: "/api/tickets/:id", // ASSUMED — confirm with backend
+  // --- Maintenance interventions (CONFIRMED — MaintenanceController, Sprint 6 US42-50) ---
+  // MaintenanceIntervention: { id, machineId, machineCode, title, description,
+  // type: CORRECTIVE|PREVENTIVE|IMPROVEMENT, preventiveSubtype: SYSTEMATIC|CONDITIONAL|null,
+  // priority: LOW|MEDIUM|HIGH, status: PENDING|ASSIGNED|IN_PROGRESS|COMPLETED|CANCELLED,
+  // alertId?, anomalyId?, technicianId?, technicianName?, assignedBy?, assignedAt?,
+  // diagnoses[], actions[], observations[], scheduledAt?, startedAt?, closedAt?,
+  // closedBy?, closureNotes?, createdAt, updatedAt }
+  INTERVENTIONS: "/api/maintenance", // CONFIRMED — GET ?machineId=&technicianId=&type=&subtype=&status=&from=&to=&page=&size=&sort= → Page; POST create
+  INTERVENTION_BY_ID: "/api/maintenance/:id", // CONFIRMED — GET one
+  INTERVENTION_ASSIGN: "/api/maintenance/:id/assign", // CONFIRMED — PUT { technicianId } (US43)
+  INTERVENTION_STATUS: "/api/maintenance/:id/status", // TODO BACKEND — PUT { status } explicit technician status change (PENDING → ASSIGNED → IN_PROGRESS → COMPLETED)
+  INTERVENTION_ANOMALY: "/api/maintenance/:id/anomaly", // CONFIRMED — GET anomaly + contextual readings Map (US44)
+  INTERVENTION_DIAGNOSES: "/api/maintenance/:id/diagnoses", // CONFIRMED — POST { probableCause, details? } (US45)
+  INTERVENTION_ACTIONS: "/api/maintenance/:id/actions", // CONFIRMED — POST { description, partsReplaced?, durationMinutes?, performedAt? } (US46)
+  INTERVENTION_OBSERVATIONS: "/api/maintenance/:id/observations", // CONFIRMED — POST { content, category? SAFETY|PERFORMANCE|OPERATING_CONDITION|GENERAL } (US47)
+  INTERVENTION_CLOSE: "/api/maintenance/:id/close", // CONFIRMED — PUT { closureNotes, restoreMachineStatus? } (US48)
+  MAINTENANCE_RECOMMENDATIONS: "/api/maintenance/recommendations/:machineId", // CONFIRMED — GET List<Recommendation { machineId, machineCode, recommendedType, recommendedSubtype?, priority, title, justification, suggestedActions, status: RECOMMENDED|INSUFFICIENT_DATA|HEALTHY, generatedAt }> (US50)
+  MAINTENANCE_RECOMMENDATION_APPLY: "/api/maintenance/recommendations/:machineId/apply", // CONFIRMED — POST ?index=&technicianId= → created intervention
 
-  // --- Maintenance ---
-  MAINTENANCE_RECORDS: "/api/maintenance", // ASSUMED — confirm with backend
-  MAINTENANCE_BY_ID: "/api/maintenance/:id", // ASSUMED — confirm with backend
+  // --- Anomalies (CONFIRMED — AnomalyController) ---
+  ANOMALIES: "/api/anomalies", // CONFIRMED — GET ?page=&size= → Page<Anomaly>
+  ANOMALY_BY_ID: "/api/anomalies/:id", // CONFIRMED — GET one
+  ANOMALY_MACHINE_SCORE: "/api/anomalies/machines/:machineId/score", // CONFIRMED — GET score result
+
+  // --- Modules (CONFIRMED — FunctionalModuleController, dynamic functional modules) ---
+  MODULES: "/api/modules", // CONFIRMED — GET array ModuleResponseDto { id, code, name, description, active, systemModule, privileges: [{ action, code, name, description }] }; POST create
+  MODULE_BY_ID: "/api/modules/:id", // CONFIRMED — GET one; PUT update; DELETE (custom modules only)
+  MODULE_PRIVILEGES: "/api/modules/:id/privileges", // CONFIRMED — POST add privilege to module
 
   // --- Events ---
   EVENTS: "/api/events", // ASSUMED — confirm with backend

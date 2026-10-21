@@ -14,13 +14,14 @@
 //           measurements table, anomaly + health below.
 
 import { useEffect, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, Share } from "react-native";
+import { View, Text, ScrollView, Pressable, Share, ActivityIndicator } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import AppShell from "../../src/components/AppShell";
 import Card from "../../src/components/Card";
 import Button from "../../src/components/Button";
 import Select from "../../src/components/Select";
 import Skeleton from "../../src/components/Skeleton";
+import BusyRow from "../../src/components/BusyRow";
 import EmptyState from "../../src/components/EmptyState";
 import MetricCard from "../../src/components/MetricCard";
 import RangeTabs from "../../src/components/RangeTabs";
@@ -104,7 +105,7 @@ export default function HistoryScreen() {
 
   // Fetch machines for the selector
   useEffect(() => {
-    if (machines.length === 0) dispatch(fetchMachines({ size: 200 }));
+    if (machines.length === 0) dispatch(fetchMachines({ size: 100 }));
   }, [dispatch, machines.length]);
 
   // Auto-select first machine
@@ -114,10 +115,11 @@ export default function HistoryScreen() {
     }
   }, [machines, selectedMachine]);
 
-  // Fetch readings when machine or range changes
+  // Fetch readings when machine or range changes. The server caps a page at
+  // 100 rows — asking for 500 only produced an extra oversized request.
   useEffect(() => {
     if (!selectedMachine || !canRead) return;
-    dispatch(fetchReadings({ machineId: selectedMachine, range, size: 500 }));
+    dispatch(fetchReadings({ machineId: selectedMachine, range, size: 100 }));
     dispatch(fetchThresholds(selectedMachine));
   }, [dispatch, selectedMachine, range, canRead]);
 
@@ -144,9 +146,19 @@ export default function HistoryScreen() {
   );
   const health = useMemo(() => computeHealthScore(breaches), [breaches]);
 
-  const readingsLoading = readingStatus === "loading" && readings.length === 0;
+  // Loading states — two distinct cases (per UX rules):
+  //   readingsInitializing: fetch with NO data yet → skeletons/empty states
+  //   readingsRefreshing:   fetch while OLD data is on screen (period/search
+  //                         change on an already-loaded machine → can take
+  //                         seconds) → spinner banner + dimmed stale content,
+  //                         so the user always knows data is coming.
+  const readingsBusy = readingStatus === "loading";
+  const readingsLoading = readingsBusy && merged.length === 0;
+  const readingsRefreshing = readingsBusy && merged.length > 0;
   const readingsEmpty = readingStatus === "succeeded" && merged.length === 0;
   const readingsFailed = readingStatus === "error" && merged.length === 0;
+
+  const periodLabel = RANGES.find((r) => r.key === range)?.label || "selected period";
 
   const machineOptions = machines.map((m) => ({
     value: m.id || m.code,
@@ -335,7 +347,11 @@ export default function HistoryScreen() {
                 <Text className={`text-xs font-inter mb-1 ${dark ? "text-white/60" : "text-text-muted"}`}>{'To'}</Text>
                 <DateTimeInput value={customTo} onChange={setCustomTo} placeholder="Select end date..." />
               </View>
-              {customFrom && customTo && (
+              {/* Boolean guards: a plain `customFrom && ...` chain yields the
+                  empty STRING "" (not false) when the fields are empty —
+                  React renders "" as a text node, which crashes the View
+                  ("Unexpected text node"). Coerce to real booleans. */}
+              {(customFrom !== "" && customTo !== "") && (
                 <View className={`flex-row items-center gap-2 py-2 px-3 rounded-btn mt-2 ${dark ? "bg-success/10" : "bg-green-50"}`}>
                   <Text style={{ fontSize: 14, color: "#22C55E" }}>{"✓"}</Text>
                   <Text className={`text-xs font-inter ${dark ? "text-white/80" : "text-text"}`}>
@@ -354,7 +370,7 @@ export default function HistoryScreen() {
                       dispatch(fetchReadings({
                         machineId: selectedMachine,
                         range: "custom",
-                        size: 500,
+                        size: 100,
                         customFrom,
                         customTo,
                       }));
@@ -401,6 +417,16 @@ export default function HistoryScreen() {
           ))}
         </View>
 
+        {/* Refresh banner — shown while a fetch runs and OLD data is still
+            displayed (period/filter change on a loaded machine). Satisfies
+            "show a loading circle so the user knows data is coming". */}
+        {readingsRefreshing && (
+          <BusyRow
+            label={`Loading ${periodLabel.toLowerCase()} data…`}
+            className="mb-3"
+          />
+        )}
+
         {!selectedMachine && (
           <Card>
             <EmptyState
@@ -410,7 +436,7 @@ export default function HistoryScreen() {
           </Card>
         )}
 
-        {selectedMachine && tab === "parameters" && (
+        {!!selectedMachine && tab === "parameters" && (
           <View>
             {/* Metric cards */}
             {readingsLoading ? (
@@ -425,7 +451,10 @@ export default function HistoryScreen() {
                 ))}
               </View>
             ) : (
-              <View className={`mb-4 ${isDesktop ? "flex-row gap-3" : ""}`}>
+              <View
+                className={`mb-4 ${isDesktop ? "flex-row gap-3" : ""}`}
+                style={readingsRefreshing ? { opacity: 0.55 } : undefined}
+              >
                 {isDesktop ? (
                   avgCards.map((m) => (
                     <MetricCard
@@ -476,9 +505,19 @@ export default function HistoryScreen() {
               {/* Left: Sensor Data Trends (charts) */}
               <View style={isDesktop ? { flex: 0.65 } : undefined}>
                 <Card className="mb-4">
-                  <Text className={`text-base font-bold font-inter mb-3 ${dark ? "text-white" : "text-text"}`}>
-                    Sensor Data Trends
-                  </Text>
+                  <View className={`flex-row items-center justify-between mb-3`}>
+                    <Text className={`text-base font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
+                      Sensor Data Trends
+                    </Text>
+                    {readingsRefreshing && (
+                      <View className="flex-row items-center gap-2">
+                        <ActivityIndicator size="small" color={dark ? "#60A5FA" : "#2563EB"} />
+                        <Text className={`text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>
+                          Updating charts…
+                        </Text>
+                      </View>
+                    )}
+                  </View>
 
                   {readingsLoading && (
                     <View className="gap-3">
@@ -506,12 +545,71 @@ export default function HistoryScreen() {
 
                   {readingsEmpty && (
                     <EmptyState
-                      title="No readings"
-                      message="No sensor data found for this machine in the selected period."
+                      icon={
+                        <View
+                          className="w-16 h-16 rounded-full items-center justify-center"
+                          style={{ backgroundColor: "rgba(148,163,184,0.15)" }}
+                        >
+                          <Text className="text-3xl">📭</Text>
+                        </View>
+                      }
+                      title={`No data for ${periodLabel}`}
+                      message={`${machineCode || "This machine"} has no readings in the ${periodLabel.toLowerCase()} window. Try a longer period such as 7 or 30 days, or pick another machine.`}
+                      action={
+                        <View className="flex-row gap-2">
+                          {range !== "7d" && (
+                            <Button title="Try 7 Days" variant="outline" size="sm" onPress={() => handleRangeChange("7d")} />
+                          )}
+                          {range === "7d" && (
+                            <Button title="Try 30 Days" variant="outline" size="sm" onPress={() => handleRangeChange("30d")} />
+                          )}
+                        </View>
+                      }
                     />
                   )}
 
-                  {!readingsLoading && !readingsFailed && !readingsEmpty && (
+                  {(readingsLoading || readingsRefreshing) && (
+                    <>
+                      {readingsLoading
+                        ? /* cold load: nothing on screen yet → skeleton charts */
+                          <View className="gap-3">
+                            {SERIES_META.map((m) => (
+                              <Skeleton key={m.id} width="100%" height={180} />
+                            ))}
+                          </View>
+                        : /* refreshing: keep the stale charts visible but clearly dimmed */
+                          <View style={{ opacity: 0.35 }} className="gap-3" pointerEvents="none">
+                            {SERIES_META.map((meta) => {
+                              const pts = (groups[meta.id] || []).map((r) => ({
+                                x: new Date(r.timestamp).getTime(),
+                                y: r.value,
+                              }));
+                              const thold = (thresholdList || []).find(
+                                (t) => t.sensorType === meta.id
+                              );
+                              const lastPt = (groups[meta.id] || []).at(-1);
+                              return (
+                                <View
+                                  key={meta.id}
+                                  style={isDesktop ? { width: "48%" } : undefined}
+                                >
+                                  <SensorChart
+                                    sensorType={meta.id}
+                                    data={pts}
+                                    threshold={thold}
+                                    height={isDesktop ? 200 : 170}
+                                    currentValue={lastPt?.value}
+                                    compact={!isDesktop}
+                                  />
+                                </View>
+                              );
+                            })}
+                          </View>
+                      }
+                    </>
+                  )}
+
+                  {!readingsBusy && !readingsFailed && !readingsEmpty && (
                     <View className={isDesktop ? "flex-row flex-wrap gap-3" : "gap-3"}>
                       {SERIES_META.map((meta) => {
                         const pts = (groups[meta.id] || []).map((r) => ({
@@ -550,7 +648,22 @@ export default function HistoryScreen() {
                   <Text className={`text-base font-bold font-inter mb-3 ${dark ? "text-white" : "text-text"}`}>
                     Anomaly Detection
                   </Text>
-                  {health.totalBreaches === 0 ? (
+                  {readingsRefreshing && (
+                    <View className="flex-row items-center gap-2 mb-2">
+                      <ActivityIndicator size="small" color={dark ? "#60A5FA" : "#2563EB"} />
+                      <Text className={`text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>
+                        Updating…
+                      </Text>
+                    </View>
+                  )}
+                  {readingsEmpty ? (
+                    <EmptyState
+                      title="No data for this period"
+                      message="Anomalies need readings. Try a longer period or another machine."
+                      icon={<Text className="text-2xl">📭</Text>}
+                      className="py-6"
+                    />
+                  ) : health.totalBreaches === 0 ? (
                     <View className="items-center py-4">
                       <View className="w-12 h-12 rounded-full bg-success/15 items-center justify-center mb-2">
                         <Text style={{ fontSize: 24 }}>{"✓"}</Text>
@@ -609,12 +722,24 @@ export default function HistoryScreen() {
                   <Text className={`text-base font-bold font-inter mb-3 ${dark ? "text-white" : "text-text"}`}>
                     Health Score
                   </Text>
-                  <View className="items-center py-2">
-                    <HealthGauge value={health.score} size={150} />
-                    <Text className={`text-xs font-inter mt-3 text-center ${dark ? "text-white/60" : "text-text-muted"}`}>
-                      {`Based on ${merged.length} readings. Score = 100 − (breach penalty / total).`}
-                    </Text>
-                  </View>
+                  {readingsEmpty ? (
+                    <EmptyState
+                      title="No data"
+                      message="The health score needs at least one reading in the selected period."
+                      icon={<Text className="text-2xl">❓</Text>}
+                      className="py-6"
+                    />
+                  ) : (
+                    <View
+                      className="items-center py-2"
+                      style={readingsRefreshing ? { opacity: 0.5 } : undefined}
+                    >
+                      <HealthGauge value={health.score} size={150} />
+                      <Text className={`text-xs font-inter mt-3 text-center ${dark ? "text-white/60" : "text-text-muted"}`}>
+                        {`Based on ${merged.length} reading${merged.length === 1 ? "" : "s"}. Score = 100 − (breach penalty / total).`}
+                      </Text>
+                    </View>
+                  )}
                 </Card>
               </View>
             </View>
@@ -719,13 +844,21 @@ export default function HistoryScreen() {
           </View>
         )}
 
-        {selectedMachine && tab === "anomalies" && (
+        {!!selectedMachine && tab === "anomalies" && (
           <View>
             <Card className="mb-4">
               <Text className={`text-base font-bold font-inter mb-3 ${dark ? "text-white" : "text-text"}`}>
                 {"Threshold Breaches"}
               </Text>
-              {health.totalBreaches === 0 ? (
+              {readingsLoading && (
+                <BusyRow label="Loading anomaly data…" className="mb-2" />
+              )}
+              {readingsEmpty ? (
+                <EmptyState
+                  title="No data for this period"
+                  message="Anomalies need readings. Try a longer period such as 7 or 30 days."
+                />
+              ) : health.totalBreaches === 0 ? (
                 <EmptyState
                   title="No anomalies"
                   message="All readings are within normal range for the selected period."
@@ -795,13 +928,17 @@ export default function HistoryScreen() {
           </View>
         )}
 
-        {selectedMachine && tab === "events" && (
+        {!!selectedMachine && tab === "events" && (
           <View>
             <Card>
               <Text className={`text-base font-bold font-inter mb-3 ${dark ? "text-white" : "text-text"}`}>
                 {"Machine Events"}
               </Text>
-              {merged.length === 0 ? (
+              {readingsLoading && <BusyRow label="Loading events…" className="mb-2" />}
+              {readingsBusy && merged.length > 0 && (
+                <BusyRow label="Updating events…" className="mb-2" />
+              )}
+              {merged.length === 0 && !readingsBusy ? (
                 <EmptyState
                   title="No events"
                   message="No events recorded for this machine in the selected period."

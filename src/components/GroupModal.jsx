@@ -5,13 +5,13 @@
 // operator supervisor is auto-added to members server-side).
 
 import { useEffect, useState } from "react";
-import { View, Text, Modal, Pressable, ScrollView } from "react-native";
+import { View, Text } from "react-native";
 import Input from "./Input";
 import Select from "./Select";
 import MultiSelect from "./MultiSelect";
 import Button from "./Button";
+import BottomSheet from "./BottomSheet";
 import { useAppDispatch } from "../hooks/useAppDispatch";
-import { useDark } from "../hooks/useDark";
 import { useAppSelector } from "../hooks/useAppSelector";
 import { createGroup, updateGroup, fetchGroups } from "../store/slices/groupSlice";
 import { fetchUsers } from "../store/slices/userSlice";
@@ -19,7 +19,6 @@ import { ROLES } from "../constants/roles";
 
 export default function GroupModal({ visible, group, onClose }) {
   const dispatch = useAppDispatch();
-  const dark = useDark();
   const { list: users, listStatus } = useAppSelector((s) => s.user);
   const isEdit = !!group;
 
@@ -32,7 +31,8 @@ export default function GroupModal({ visible, group, onClose }) {
 
   useEffect(() => {
     if (visible) {
-      dispatch(fetchUsers({ page: 0, size: 100 }));
+      // Only if cold — reopening the popup shouldn't re-request the roster.
+      if ((users || []).length === 0) dispatch(fetchUsers({ page: 0, size: 100 }));
       setName(group?.name || "");
       setOperatorIds(group?.operators ? [...group.operators] : []);
       setSupervisorId(group?.supervisorId || "");
@@ -77,67 +77,56 @@ export default function GroupModal({ visible, group, onClose }) {
   }
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
-      <Pressable className="flex-1 bg-black/40 justify-center items-center px-4" onPress={onClose}>
-        <Pressable
-          className={`rounded-card w-full border ${dark ? "bg-darkcard border-white/15" : "bg-surface border-border"}`}
-          style={{ maxWidth: 520 }}
-          onPress={() => {}} // prevent bubbling
-        >
-          <ScrollView>
-            <View className="p-6">
-              <Text className={`text-lg font-bold font-inter mb-1 ${dark ? "text-white" : "text-text"}`}>
-                {isEdit ? "Edit Group" : "Add Group"}
-              </Text>
-              <Text className={`text-sm font-inter mb-5 ${dark ? "text-white/60" : "text-text-muted"}`}>
-                {isEdit ? "Rename the group and adjust its members." : "Organize operators into a supervised team."}
-              </Text>
+    <BottomSheet
+      visible={visible}
+      onClose={onClose}
+      maxWidth={560}
+      title={isEdit ? "Edit Group" : "Add Group"}
+      subtitle={isEdit ? "Rename the group and adjust its members." : "Organize operators into a supervised team."}
+    >
+      <View>
+        {error && (
+          <View className="bg-danger/10 rounded-btn px-3 py-2 mb-4" style={{ borderWidth: 1, borderColor: "rgba(220,38,38,0.25)" }}>
+            <Text className="text-sm text-danger font-inter">{error}</Text>
+          </View>
+        )}
 
-              {error && (
-                <View className="bg-danger/10 rounded-btn px-3 py-2 mb-4" style={{ borderWidth: 1, borderColor: "rgba(220,38,38,0.25)" }}>
-                  <Text className="text-sm text-danger font-inter">{error}</Text>
-                </View>
-              )}
+        <View className="gap-4">
+          <Input label="Group Name" placeholder="e.g. Group A" value={name} onChangeText={setName} />
+          {nameErr && <Text className="text-xs text-danger font-inter -mt-2">{nameErr}</Text>}
 
-              <View className="gap-4">
-                <Input label="Group Name" placeholder="e.g. Group A" value={name} onChangeText={setName} />
-                {nameErr && <Text className="text-xs text-danger font-inter -mt-2">{nameErr}</Text>}
+          <Select
+            label="Supervisor"
+            value={supervisorId}
+            onValueChange={setSupervisorId}
+            placeholder={listStatus === "loading" ? "Loading users…" : "Select supervisor (optional)..."}
+            options={[{ value: "", label: "No supervisor" }, ...supervisors.map((u) => ({
+              value: u.id,
+              label: `${fullName(u)} · ${u.role === ROLES.RESPONSABLE_INDUSTRIEL ? "Responsable" : "Operator"}`,
+            }))]}
+          />
 
-                <Select
-                  label="Supervisor"
-                  value={supervisorId}
-                  onValueChange={setSupervisorId}
-                  placeholder={listStatus === "loading" ? "Loading users…" : "Select supervisor (optional)..."}
-                  options={[{ value: "", label: "No supervisor" }, ...supervisors.map((u) => ({
-                    value: u.id,
-                    label: `${fullName(u)} · ${u.role === ROLES.RESPONSABLE_INDUSTRIEL ? "Responsable" : "Operator"}`,
-                  }))]}
-                />
+          <MultiSelect
+            label={`Operators (${operatorIds.length} selected)`}
+            values={operatorIds}
+            onChange={setOperatorIds}
+            placeholder={listStatus === "loading" ? "Loading operators…" : "Select operators..."}
+            hint="Only users with the OPERATOR role can join a group."
+            options={operators.map((u) => ({ value: u.id, label: fullName(u), sublabel: u.email }))}
+          />
+        </View>
 
-                <MultiSelect
-                  label={`Operators (${operatorIds.length} selected)`}
-                  values={operatorIds}
-                  onChange={setOperatorIds}
-                  placeholder={listStatus === "loading" ? "Loading operators…" : "Select operators..."}
-                  hint="Only users with the OPERATOR role can join a group."
-                  options={operators.map((u) => ({ value: u.id, label: fullName(u), sublabel: u.email }))}
-                />
-              </View>
-
-              <View className="flex-row gap-3 mt-6 justify-end">
-                <Button title="Cancel" variant="ghost" onPress={onClose} />
-                <Button
-                  title={isEdit ? "Save Changes" : "Create Group"}
-                  variant="primary"
-                  onPress={handleSave}
-                  loading={saving}
-                  disabled={name.trim().length < 2}
-                />
-              </View>
-            </View>
-          </ScrollView>
-        </Pressable>
-      </Pressable>
-    </Modal>
+        <View className="flex-row gap-3 mt-6 justify-end">
+          <Button title="Cancel" variant="ghost" onPress={onClose} />
+          <Button
+            title={isEdit ? "Save Changes" : "Create Group"}
+            variant="primary"
+            onPress={handleSave}
+            loading={saving}
+            disabled={name.trim().length < 2}
+          />
+        </View>
+      </View>
+    </BottomSheet>
   );
 }

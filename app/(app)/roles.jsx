@@ -51,6 +51,7 @@ const MATRIX = [
   { module: "DASHBOARD", create: [], read: ["DASHBOARD_READ"], update: [], remove: [] },
   { module: "THRESHOLDS", create: [], read: ["THRESHOLD_READ"], update: ["THRESHOLD_WRITE"], remove: [] },
   { module: "ALERTS", create: [], read: ["ALERT_READ"], update: ["ALERT_ACKNOWLEDGE"], remove: [] },
+  { module: "MAINTENANCE", create: [], read: ["MAINTENANCE_READ"], update: ["MAINTENANCE_WRITE"], remove: [] },
   { module: "USERS", create: ["USER_CREATE"], read: ["USER_READ"], update: ["USER_UPDATE", "USER_PERMISSIONS_MANAGE"], remove: ["USER_DELETE"], legacyWrite: "USER_WRITE" },
   { module: "ROLES", create: ["ROLE_CREATE"], read: ["ROLE_READ"], update: ["ROLE_UPDATE"], remove: ["ROLE_DELETE"] },
   { module: "GROUPS", create: [], read: ["GROUP_READ"], update: ["GROUP_WRITE"], remove: [] },
@@ -64,6 +65,7 @@ const MODULE_LABELS = {
   DASHBOARD: "Dashboard",
   THRESHOLDS: "Thresholds",
   ALERTS: "Alerts",
+  MAINTENANCE: "Maintenance",
   USERS: "Users",
   ROLES: "Roles",
   GROUPS: "Groups",
@@ -84,8 +86,8 @@ const MODULE_GROUPS = [
   },
   {
     key: "alerting",
-    label: "Alerting",
-    modules: ["ALERTS"],
+    label: "Alerting & Maintenance",
+    modules: ["ALERTS", "MAINTENANCE"],
   },
   {
     key: "access",

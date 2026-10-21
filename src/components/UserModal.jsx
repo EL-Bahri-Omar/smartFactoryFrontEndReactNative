@@ -4,12 +4,12 @@
 // PUT /api/users/:id { firstName, lastName, email, role, status, password? } (password optional).
 
 import { useEffect, useState } from "react";
-import { View, Text, Modal, Pressable, ScrollView } from "react-native";
+import { View, Text } from "react-native";
 import Input from "./Input";
 import Select from "./Select";
 import Button from "./Button";
+import BottomSheet from "./BottomSheet";
 import { useAppDispatch } from "../hooks/useAppDispatch";
-import { useDark } from "../hooks/useDark";
 import { createUser, updateUserById, fetchUsers } from "../store/slices/userSlice";
 import { ROLES } from "../constants/roles";
 
@@ -27,7 +27,6 @@ const STATUS_OPTIONS = [
 
 export default function UserModal({ visible, user, onClose }) {
   const dispatch = useAppDispatch();
-  const dark = useDark();
   const isEdit = !!user;
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -88,50 +87,43 @@ export default function UserModal({ visible, user, onClose }) {
   }
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
-      <Pressable className="flex-1 bg-black/40 justify-center items-center px-4" onPress={onClose}>
-        <Pressable className={`rounded-card w-full border ${dark ? "bg-darkcard border-white/15" : "bg-surface border-border"}`} style={{ maxWidth: 480 }} onPress={() => {}}>
-          <ScrollView>
-            <View className="p-6">
-              <Text className={`text-lg font-bold font-inter mb-1 ${dark ? "text-white" : "text-text"}`}>
-                {isEdit ? "Edit User" : "Add User"}
-              </Text>
-              <Text className={`text-sm font-inter mb-5 ${dark ? "text-white/60" : "text-text-muted"}`}>
-                {isEdit ? "Update role, status and details." : "New users start as Operator."}
-              </Text>
+    <BottomSheet
+      visible={visible}
+      onClose={onClose}
+      maxWidth={520}
+      title={isEdit ? "Edit User" : "Add User"}
+      subtitle={isEdit ? "Update role, status and details." : "New users start as Operator."}
+    >
+      <View>
+        {error && (
+          <View className="bg-danger/10 rounded-btn px-3 py-2 mb-4" style={{ borderWidth: 1, borderColor: "rgba(220,38,38,0.25)" }}>
+            <Text className="text-sm text-danger font-inter">{error}</Text>
+          </View>
+        )}
 
-              {error && (
-                <View className="bg-danger/10 rounded-btn px-3 py-2 mb-4" style={{ borderWidth: 1, borderColor: "rgba(220,38,38,0.25)" }}>
-                  <Text className="text-sm text-danger font-inter">{error}</Text>
-                </View>
-              )}
-
-              <View className="gap-4">
-                <View className="flex-row gap-3">
-                  <View className="flex-1">
-                    <Input label="First Name" placeholder="Omar" value={firstName} onChangeText={setFirstName} />
-                  </View>
-                  <View className="flex-1">
-                    <Input label="Last Name" placeholder="Bahri" value={lastName} onChangeText={setLastName} />
-                  </View>
-                </View>
-                {nameErr && <Text className="text-xs text-danger font-inter -mt-2">{nameErr}</Text>}
-                <Input label="Email" placeholder="name@company.com" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" editable={!isEdit} />
-                {emailErr && <Text className="text-xs text-danger font-inter -mt-2">{emailErr}</Text>}
-                <Input label={isEdit ? "New Password (optional)" : "Password"} placeholder="••••••" value={password} onChangeText={setPassword} secureTextEntry />
-                {passwordErr && <Text className="text-xs text-danger font-inter -mt-2">{passwordErr}</Text>}
-                <Select label="Role" value={role} onValueChange={setRole} options={ROLE_OPTIONS} />
-                {isEdit && <Select label="Status" value={status} onValueChange={setStatus} options={STATUS_OPTIONS} />}
-              </View>
-
-              <View className="flex-row gap-3 mt-6 justify-end">
-                <Button title="Cancel" variant="ghost" onPress={onClose} />
-                <Button title={isEdit ? "Save Changes" : "Create User"} variant="primary" onPress={handleSave} loading={saving} disabled={saving} />
-              </View>
+        <View className="gap-4">
+          <View className="flex-row gap-3">
+            <View className="flex-1">
+              <Input label="First Name" placeholder="Omar" value={firstName} onChangeText={setFirstName} />
             </View>
-          </ScrollView>
-        </Pressable>
-      </Pressable>
-    </Modal>
+            <View className="flex-1">
+              <Input label="Last Name" placeholder="Bahri" value={lastName} onChangeText={setLastName} />
+            </View>
+          </View>
+          {nameErr && <Text className="text-xs text-danger font-inter -mt-2">{nameErr}</Text>}
+          <Input label="Email" placeholder="name@company.com" value={email} onChangeText={setEmail} keyboardType="email-address" editable={!isEdit} />
+          {emailErr && <Text className="text-xs text-danger font-inter -mt-2">{emailErr}</Text>}
+          <Input label={isEdit ? "New Password (optional)" : "Password"} placeholder="••••••" value={password} onChangeText={setPassword} secureTextEntry />
+          {passwordErr && <Text className="text-xs text-danger font-inter -mt-2">{passwordErr}</Text>}
+          <Select label="Role" value={role} onValueChange={setRole} options={ROLE_OPTIONS} />
+          {isEdit && <Select label="Status" value={status} onValueChange={setStatus} options={STATUS_OPTIONS} />}
+        </View>
+
+        <View className="flex-row gap-3 mt-6 justify-end">
+          <Button title="Cancel" variant="ghost" onPress={onClose} />
+          <Button title={isEdit ? "Save Changes" : "Create User"} variant="primary" onPress={handleSave} loading={saving} disabled={saving} />
+        </View>
+      </View>
+    </BottomSheet>
   );
 }

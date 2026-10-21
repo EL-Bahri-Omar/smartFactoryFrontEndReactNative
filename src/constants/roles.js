@@ -18,6 +18,7 @@ export const MACHINE_STATUS = Object.freeze({
 });
 
 export const ALERT_SEVERITY = Object.freeze({
+  CRITICAL: "CRITICAL",
   HIGH: "HIGH",
   MEDIUM: "MEDIUM",
   LOW: "LOW",
@@ -30,11 +31,11 @@ export const ALERT_STATUS = Object.freeze({
 });
 
 export const TICKET_STATUS = Object.freeze({
-  OPEN: "OPEN",
+  PENDING: "PENDING",
   ASSIGNED: "ASSIGNED",
   IN_PROGRESS: "IN_PROGRESS",
-  WAITING_PART: "WAITING_PART",
-  RESOLVED: "RESOLVED",
+  COMPLETED: "COMPLETED",
+  CANCELLED: "CANCELLED",
 });
 
 export const TICKET_PRIORITY = Object.freeze({

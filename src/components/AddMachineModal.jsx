@@ -5,12 +5,12 @@
 // zoneId comes from the real zone list, status defaults IDLE on create.
 
 import { useEffect, useState } from "react";
-import { View, Text, Modal, Pressable, ScrollView } from "react-native";
+import { View, Text } from "react-native";
 import Input from "./Input";
 import Select from "./Select";
 import Button from "./Button";
+import BottomSheet from "./BottomSheet";
 import { useAppDispatch } from "../hooks/useAppDispatch";
-import { useDark } from "../hooks/useDark";
 import { useAppSelector } from "../hooks/useAppSelector";
 import { createMachine, updateMachine, fetchMachines, fetchMachineCounts } from "../store/slices/machineSlice";
 import { fetchZones } from "../store/slices/zoneSlice";
@@ -27,7 +27,6 @@ const STATUS_OPTIONS = [
 
 export default function AddMachineModal({ visible, machine, onClose }) {
   const dispatch = useAppDispatch();
-  const dark = useDark();
   const { list: zones } = useAppSelector((s) => s.zone);
   const isEdit = !!machine;
   const [name, setName] = useState("");
@@ -41,7 +40,9 @@ export default function AddMachineModal({ visible, machine, onClose }) {
 
   useEffect(() => {
     if (visible) {
-      dispatch(fetchZones());
+      // Only fetch zones when the list isn't warm already (popup opens are
+      // frequent — avoid a duplicate request per open).
+      if ((zones || []).length === 0) dispatch(fetchZones());
       setName(machine?.name || "");
       setCode(machine?.code || "");
       setType(machine?.type || "");
@@ -97,100 +98,85 @@ export default function AddMachineModal({ visible, machine, onClose }) {
   }
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
-      <Pressable
-        className="flex-1 bg-black/40 justify-center items-center px-4"
-        onPress={onClose}
-      >
-        <Pressable
-          className={`rounded-card w-full border ${dark ? "bg-darkcard border-white/15" : "bg-surface border-border"}`}
-          style={{ maxWidth: 480 }}
-          onPress={() => {}} // prevent bubbling
-        >
-          <ScrollView>
-            <View className="p-6">
-              <Text className={`text-lg font-bold font-inter mb-1 ${dark ? "text-white" : "text-text"}`}>
-                {isEdit ? "Edit Machine" : "Add Machine"}
-              </Text>
-              <Text className={`text-sm font-inter mb-5 ${dark ? "text-white/60" : "text-text-muted"}`}>
-                {isEdit ? "Update the machine details." : "Register a new machine to the monitoring system."}
-              </Text>
+    <BottomSheet
+      visible={visible}
+      onClose={onClose}
+      maxWidth={520}
+      title={isEdit ? "Edit Machine" : "Add Machine"}
+      subtitle={isEdit ? "Update the machine details." : "Register a new machine to the monitoring system."}
+    >
+      <View>
+        {error && (
+          <View className="bg-danger/10 rounded-btn px-3 py-2 mb-4" style={{ borderWidth: 1, borderColor: "rgba(220,38,38,0.25)" }}>
+            <Text className="text-sm text-danger font-inter">{error}</Text>
+          </View>
+        )}
 
-              {error && (
-                <View className="bg-danger/10 rounded-btn px-3 py-2 mb-4" style={{ borderWidth: 1, borderColor: "rgba(220,38,38,0.25)" }}>
-                  <Text className="text-sm text-danger font-inter">{error}</Text>
-                </View>
-              )}
+        <View className="gap-4">
+          <Input
+            label="Machine Name"
+            placeholder="e.g. CNC Milling Machine"
+            value={name}
+            onChangeText={setName}
+          />
+          <Input
+            label="Machine Code (unique)"
+            placeholder="e.g. CNC-024"
+            value={code}
+            onChangeText={setCode}
+          />
+          <Select
+            label="Type"
+            value={type}
+            onValueChange={setType}
+            placeholder="Select type..."
+            options={[
+              { value: "CNC", label: "CNC" },
+              { value: "Motor", label: "Motor" },
+              { value: "Conveyor", label: "Conveyor" },
+              { value: "Compressor", label: "Compressor" },
+              { value: "Pump", label: "Pump" },
+              { value: "Boiler", label: "Boiler" },
+              { value: "Fan", label: "Fan" },
+              { value: "Generator", label: "Generator" },
+            ]}
+          />
+          <Select
+            label="Zone"
+            value={zoneId}
+            onValueChange={setZoneId}
+            placeholder="Select zone..."
+            options={(zones || []).map((z) => ({ value: z.id, label: z.name }))}
+          />
+          {isEdit && (
+            <Select
+              label="Status"
+              value={status}
+              onValueChange={setStatus}
+              options={STATUS_OPTIONS}
+            />
+          )}
+          {isEdit && (
+            <Input
+              label="Description (optional)"
+              placeholder="Short description..."
+              value={description}
+              onChangeText={setDescription}
+            />
+          )}
+        </View>
 
-              <View className="gap-4">
-                <Input
-                  label="Machine Name"
-                  placeholder="e.g. CNC Milling Machine"
-                  value={name}
-                  onChangeText={setName}
-                />
-                <Input
-                  label="Machine Code (unique)"
-                  placeholder="e.g. CNC-024"
-                  value={code}
-                  onChangeText={setCode}
-                  autoCapitalize="characters"
-                />
-                <Select
-                  label="Type"
-                  value={type}
-                  onValueChange={setType}
-                  placeholder="Select type..."
-                  options={[
-                    { value: "CNC", label: "CNC" },
-                    { value: "Motor", label: "Motor" },
-                    { value: "Conveyor", label: "Conveyor" },
-                    { value: "Compressor", label: "Compressor" },
-                    { value: "Pump", label: "Pump" },
-                    { value: "Boiler", label: "Boiler" },
-                    { value: "Fan", label: "Fan" },
-                    { value: "Generator", label: "Generator" },
-                  ]}
-                />
-                <Select
-                  label="Zone"
-                  value={zoneId}
-                  onValueChange={setZoneId}
-                  placeholder="Select zone..."
-                  options={(zones || []).map((z) => ({ value: z.id, label: z.name }))}
-                />
-                {isEdit && (
-                  <Select
-                    label="Status"
-                    value={status}
-                    onValueChange={setStatus}
-                    options={STATUS_OPTIONS}
-                  />
-                )}
-                {isEdit && (
-                  <Input
-                    label="Description (optional)"
-                    placeholder="Short description..."
-                    value={description}
-                    onChangeText={setDescription}
-                  />
-                )}
-              </View>
-
-              <View className="flex-row gap-3 mt-6 justify-end">
-                <Button title="Cancel" variant="ghost" onPress={onClose} />
-                <Button
-                  title={isEdit ? "Save Changes" : "Create Machine"}
-                  variant="primary"
-                  onPress={handleSave}
-                  loading={saving}
-                  disabled={!name.trim() || !code.trim() || !type}
-                />
-              </View>
-            </View>
-          </ScrollView>
-        </Pressable>
-      </Pressable>
-    </Modal>
+        <View className="flex-row gap-3 mt-6 justify-end">
+          <Button title="Cancel" variant="ghost" onPress={onClose} />
+          <Button
+            title={isEdit ? "Save Changes" : "Create Machine"}
+            variant="primary"
+            onPress={handleSave}
+            loading={saving}
+            disabled={!name.trim() || !code.trim() || !type}
+          />
+        </View>
+      </View>
+    </BottomSheet>
   );
 }

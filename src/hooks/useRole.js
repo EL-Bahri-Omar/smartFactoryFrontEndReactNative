@@ -8,16 +8,21 @@
 //   reads the signed-in user's `effectivePermissions` (login/me payloads carry
 //   it; falls back to role defaults when absent).
 
+import { useMemo } from "react";
 import { useAppSelector } from "./useAppSelector";
 import { ROLES } from "../constants/roles";
 import { PERMISSIONS, hasPermission as checkPerms, hasAnyPermission as checkAnyPerms } from "../constants/permissions";
 
 const SUPERVISORS = [ROLES.ADMIN, ROLES.RESPONSABLE_INDUSTRIEL];
+// Maintenance (Sprint 6): technicians are the primary riders of this screen
+// (prompt 11); ADMIN + RESPONSABLE manage, OPERATOR is read-only UI-side
+// (server enforces the truth).
+const MAINTENANCE_ROLES = [...SUPERVISORS, ROLES.TECHNICIAN];
 
 export const ACCESS = Object.freeze({
   dashboard: SUPERVISORS,
   machines: SUPERVISORS,
-  maintenance: SUPERVISORS,
+  maintenance: MAINTENANCE_ROLES,
   users: [ROLES.ADMIN],
   groups: [ROLES.ADMIN],
 });
@@ -40,55 +45,62 @@ export function homeRouteFor(role) {
 
 export function useRole() {
   const user = useAppSelector((state) => state.auth.user);
-  const role = user?.role || null;
 
-  const isAdmin = role === ROLES.ADMIN;
-  const isOperator = role === ROLES.OPERATOR;
-  const isTechnician = role === ROLES.TECHNICIAN;
-  const isResponsable = role === ROLES.RESPONSABLE_INDUSTRIEL;
+  // The API is memoised on `user`: screens use canAccess/hasPermission inside
+  // useEffect dependency arrays. Re-creating these functions every render made
+  // those effects re-fire forever (one fetch per render — the "Updating…"
+  // spinner that never stops and the generally slow screens).
+  return useMemo(() => {
+    const role = user?.role || null;
 
-  /**
-   * Check if the current user's role is in the allowed list.
-   * e.g. can(ROLES.ADMIN, ROLES.TECHNICIAN)
-   */
-  function can(...allowedRoles) {
-    if (!role) return false;
-    return allowedRoles.includes(role);
-  }
+    const isAdmin = role === ROLES.ADMIN;
+    const isOperator = role === ROLES.OPERATOR;
+    const isTechnician = role === ROLES.TECHNICIAN;
+    const isResponsable = role === ROLES.RESPONSABLE_INDUSTRIEL;
 
-  /** True when the user effectively holds EVERY listed permission. */
-  function hasPermission(...perms) {
-    return checkPerms(user, ...perms);
-  }
+    /**
+     * Check if the current user's role is in the allowed list.
+     * e.g. can(ROLES.ADMIN, ROLES.TECHNICIAN)
+     */
+    function can(...allowedRoles) {
+      if (!role) return false;
+      return allowedRoles.includes(role);
+    }
 
-  /** True when the user effectively holds AT LEAST ONE listed permission. */
-  function hasAnyPermission(...perms) {
-    return checkAnyPerms(user, ...perms);
-  }
+    /** True when the user effectively holds EVERY listed permission. */
+    function hasPermission(...perms) {
+      return checkPerms(user, ...perms);
+    }
 
-  /**
-   * Check page access by key. Permission-mapped pages use effective
-   * permissions; dashboard/maintenance keep the supervisor role rule.
-   */
-  function canAccess(key) {
-    const perms = PERMISSION_ACCESS[key];
-    if (perms) return hasPermission(...perms);
-    const allowed = ACCESS[key];
-    if (!allowed) return true;
-    return can(...allowed);
-  }
+    /** True when the user effectively holds AT LEAST ONE listed permission. */
+    function hasAnyPermission(...perms) {
+      return checkAnyPerms(user, ...perms);
+    }
 
-  return {
-    role,
-    user,
-    isAdmin,
-    isOperator,
-    isTechnician,
-    isResponsable,
-    can,
-    hasPermission,
-    hasAnyPermission,
-    canAccess,
-    homeRoute: homeRouteFor(role),
-  };
+    /**
+     * Check page access by key. Permission-mapped pages use effective
+     * permissions; dashboard/maintenance keep the supervisor role rule.
+     */
+    function canAccess(key) {
+      const perms = PERMISSION_ACCESS[key];
+      if (perms) return hasPermission(...perms);
+      const allowed = ACCESS[key];
+      if (!allowed) return true;
+      return can(...allowed);
+    }
+
+    return {
+      role,
+      user,
+      isAdmin,
+      isOperator,
+      isTechnician,
+      isResponsable,
+      can,
+      hasPermission,
+      hasAnyPermission,
+      canAccess,
+      homeRoute: homeRouteFor(role),
+    };
+  }, [user]);
 }

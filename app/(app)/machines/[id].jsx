@@ -16,6 +16,7 @@ import Card from "../../../src/components/Card";
 import Button from "../../../src/components/Button";
 import StatusBadge from "../../../src/components/StatusBadge";
 import Skeleton from "../../../src/components/Skeleton";
+import BusyRow from "../../../src/components/BusyRow";
 import EmptyState from "../../../src/components/EmptyState";
 import Breadcrumb from "../../../src/components/Breadcrumb";
 import Tabs from "../../../src/components/Tabs";
@@ -37,11 +38,13 @@ import { fetchMachineById, deleteMachine } from "../../../src/store/slices/machi
 import { fetchReadings } from "../../../src/store/slices/readingSlice";
 import { fetchMachineSensors } from "../../../src/store/slices/sensorSlice";
 import { fetchThresholds, saveThreshold, deleteThreshold } from "../../../src/store/slices/thresholdSlice";
-import { getSensorStatus } from "../../../src/lib/status";
+import { fetchMachineAlerts, acknowledgeAlert } from "../../../src/store/slices/alertSlice";
+import { getSensorStatus, getAlertSeverity, normalizeAlertSeverity, getAlertStatus } from "../../../src/lib/status";
 import { relativeTime } from "../../../src/lib/time";
 import { SENSOR_TYPE, SENSOR_UNIT } from "../../../src/constants/roles";
 import Input from "../../../src/components/Input";
 import Toggle from "../../../src/components/Toggle";
+import SeverityBadge from "../../../src/components/SeverityBadge";
 import {
   SERIES_META,
   mergeReadings,
@@ -55,6 +58,7 @@ const WEB_TABS = [
   { key: "overview", label: "Overview" },
   { key: "live", label: "Live Data" },
   { key: "history", label: "History" },
+  { key: "alerts", label: "Alerts" },
   { key: "maintenance", label: "Maintenance" },
   { key: "settings", label: "Settings" },
 ];
@@ -63,6 +67,7 @@ const MOBILE_TABS = [
   { key: "overview", label: "Overview" },
   { key: "live", label: "Sensor Data" },
   { key: "history", label: "History" },
+  { key: "alerts", label: "Alerts" },
   { key: "settings", label: "Settings" },
 ];
 
@@ -144,6 +149,9 @@ export default function MachineDetailScreen() {
   const canReadTelemetry = hasPermission(PERMISSIONS.READINGS_READ);
   const canReadThresholds = hasPermission(PERMISSIONS.THRESHOLD_READ);
   const canWriteThresholds = hasPermission(PERMISSIONS.THRESHOLD_WRITE);
+  // Machine sensor alerts tab (item 9): ADMIN / TECHNICIAN /
+  // RESPONSABLE_INDUSTRIEL all hold ALERT_READ (backend Role defaults).
+  const canReadAlerts = hasPermission(PERMISSIONS.ALERT_READ);
 
   const {
     current,
@@ -155,6 +163,11 @@ export default function MachineDetailScreen() {
     useAppSelector((s) => s.reading);
   const { list: sensors, status: sensorStatus } = useAppSelector((s) => s.sensor);
   const { list: thresholdList, status: thresholdStatus } = useAppSelector((s) => s.threshold);
+  const {
+    machineList: machineAlerts,
+    machineStatus: machineAlertStatus,
+    machineError: machineAlertError,
+  } = useAppSelector((s) => s.alert);
   const liveConnected = useAppSelector((s) => s.live.connected);
 
   const [tab, setTab] = useState("overview");
@@ -231,6 +244,14 @@ export default function MachineDetailScreen() {
     if (machine?.id && canReadThresholds) dispatch(fetchThresholds(machine.id));
   }, [dispatch, machine?.id, canReadThresholds]);
 
+  // Machine sensor alerts (item 9) — fetched only when the tab is opened so
+  // the Overview path stays light (the slow-screen feedback in review).
+  useEffect(() => {
+    if (tab !== "alerts" || !canReadAlerts) return;
+    const key = machine?.id || machineId;
+    if (key) dispatch(fetchMachineAlerts({ machineId: key }));
+  }, [dispatch, tab, machine?.id, machineId, canReadAlerts]);
+
   // Threshold editor starts from the fetched thresholds.
   useEffect(() => {
     setThr(formFromThresholds(thresholdList));
@@ -273,7 +294,10 @@ export default function MachineDetailScreen() {
 
   const machineLoading = currentStatus === "loading" && !machine;
   const machineError = currentStatus === "error" && !machine;
-  const readingsLoading = readingStatus === "loading" && readings.length === 0;
+  const readingsBusy = readingStatus === "loading";
+  const readingsLoading = readingsBusy && merged.length === 0;
+  // Refresh: a range/filter change while stale readings are on screen.
+  const readingsRefreshing = readingsBusy && merged.length > 0;
   const readingsEmpty =
     readingStatus === "succeeded" && merged.length === 0;
   const readingsFailed = readingStatus === "error" && merged.length === 0;
@@ -569,7 +593,7 @@ export default function MachineDetailScreen() {
                   <DateTimeInput value={customRangeTo} onChange={setCustomRangeTo} placeholder="Select end date..." />
                 </View>
               </View>
-              {customRangeFrom && customRangeTo && (
+              {customRangeFrom !== "" && customRangeTo !== "" && (
                 <View className={`flex-row items-center gap-2 py-2 px-3 rounded-btn mt-2 ${dark ? "bg-success/10" : "bg-green-50"}`}>
                   <Text style={{ fontSize: 14, color: "#22C55E" }}>{"✓"}</Text>
                   <Text className={`text-xs font-inter ${dark ? "text-white/80" : "text-text"}`}>
@@ -582,6 +606,10 @@ export default function MachineDetailScreen() {
                 <Button title="Cancel" variant="outline" size="sm" onPress={() => { setShowCustomRange(false); setCustomRangeFrom(""); setCustomRangeTo(""); }} />
               </View>
             </Card>
+          )}
+
+          {readingsRefreshing && (
+            <BusyRow label="Updating charts…" className="mb-3" />
           )}
 
           {readingsLoading && (
@@ -622,8 +650,11 @@ export default function MachineDetailScreen() {
             </Card>
           )}
 
-          {!readingsLoading && !readingsFailed && !readingsEmpty && (
-            <View className={isDesktop ? "flex-row flex-wrap gap-3" : "gap-3"}>
+          {(!readingsLoading && !readingsFailed && !readingsEmpty) || readingsRefreshing ? (
+            <View
+              className={isDesktop ? "flex-row flex-wrap gap-3" : "gap-3"}
+              style={readingsRefreshing ? { opacity: 0.5 } : undefined}
+            >
               {SERIES_META.map((meta) => {
                 const pts = (groups[meta.id] || []).map((r) => ({
                   x: new Date(r.timestamp).getTime(),
@@ -664,7 +695,7 @@ export default function MachineDetailScreen() {
                 );
               })}
             </View>
-          )}
+          ) : null}
         </View>
         )}
       </View>
@@ -710,6 +741,10 @@ export default function MachineDetailScreen() {
           </View>
         </View>
 
+        {readingsRefreshing && (
+          <BusyRow label="Updating charts…" className="mb-3" />
+        )}
+
         {readingsLoading && (
           <View className={`gap-3 ${isDesktop ? "flex-row flex-wrap" : ""}`}>
             {SERIES_META.map((m) => (
@@ -733,8 +768,11 @@ export default function MachineDetailScreen() {
           </Card>
         )}
 
-        {!readingsLoading && !readingsFailed && !readingsEmpty && (
-          <View className={isDesktop ? "flex-row flex-wrap gap-3" : "gap-3"}>
+        {(!readingsLoading && !readingsFailed && !readingsEmpty) ? (
+          <View
+            className={isDesktop ? "flex-row flex-wrap gap-3" : "gap-3"}
+            style={readingsRefreshing ? { opacity: 0.5 } : undefined}
+          >
             {SERIES_META.map((meta) => {
               const pts = (groups[meta.id] || []).map((r) => ({
                 x: new Date(r.timestamp).getTime(),
@@ -765,7 +803,7 @@ export default function MachineDetailScreen() {
               );
             })}
           </View>
-        )}
+        ) : null}
       </View>
     );
   }
@@ -809,6 +847,9 @@ export default function MachineDetailScreen() {
         </View>
 
         {/* Charts */}
+        {readingsRefreshing && (
+          <BusyRow label="Updating charts…" className="mb-3" />
+        )}
         {readingsLoading && (
           <View className="gap-3 mb-4">
             <Skeleton width="100%" height={180} />
@@ -816,8 +857,11 @@ export default function MachineDetailScreen() {
           </View>
         )}
 
-        {!readingsLoading && !readingsEmpty && !readingsFailed && (
-          <View className={`mb-4 ${isDesktop ? "flex-row flex-wrap gap-3" : "gap-3"}`}>
+        {(!readingsLoading && !readingsEmpty && !readingsFailed) ? (
+          <View
+            className={`mb-4 ${isDesktop ? "flex-row flex-wrap gap-3" : "gap-3"}`}
+            style={readingsRefreshing ? { opacity: 0.5 } : undefined}
+          >
             {SERIES_META.map((meta) => {
               const pts = (groups[meta.id] || []).map((r) => ({
                 x: new Date(r.timestamp).getTime(),
@@ -839,7 +883,7 @@ export default function MachineDetailScreen() {
               );
             })}
           </View>
-        )}
+        ) : null}
 
         {readingsEmpty && (
           <Card className="mb-4">
@@ -905,6 +949,115 @@ export default function MachineDetailScreen() {
           )}
         </Card>
       </View>
+    );
+  }
+
+  /**
+   * Machine sensor alerts tab (item 9): the machine's own threshold breaches
+   * with the live state dot, for ADMIN / TECHNICIAN / RESPONSABLE_INDUSTRIEL.
+   * Fetched lazily (see the tab effect) — keeps the default screen fast.
+   */
+  function AlertsBody() {
+    if (!canReadAlerts) {
+      return (
+        <Card>
+          <EmptyState
+            title="Restricted area"
+            message="Viewing this machine's alerts requires the ALERT_READ permission."
+          />
+        </Card>
+      );
+    }
+    const loading = machineAlertStatus === "loading" && machineAlerts.length === 0;
+    const failed = machineAlertStatus === "error" && machineAlerts.length === 0;
+    const empty = machineAlertStatus !== "loading" && !failed && machineAlerts.length === 0;
+
+    return (
+      <Card>
+        {loading && (
+          <View className="gap-3 py-2">
+            {[1, 2].map((i) => (
+              <View key={i} className="flex-row items-center gap-3">
+                <Skeleton width={40} height={40} rounded />
+                <View className="flex-1 gap-1">
+                  <Skeleton width="55%" height={14} />
+                  <Skeleton width="80%" height={10} />
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+        {failed && (
+          <EmptyState
+            title="Alerts unavailable"
+            message={machineAlertError?.message || "Could not load this machine's alerts."}
+            action={
+              <Button
+                title="Retry"
+                variant="outline"
+                size="sm"
+                onPress={() => dispatch(fetchMachineAlerts({ machineId: machine?.id || machineId }))}
+              />
+            }
+          />
+        )}
+        {empty && (
+          <EmptyState
+            icon={
+              <View
+                className="w-16 h-16 rounded-full items-center justify-center"
+                style={{ backgroundColor: "rgba(22,163,74,0.12)" }}
+              >
+                <Text className="text-3xl">✓</Text>
+              </View>
+            }
+            title="No sensor alerts"
+            message="No threshold breaches or offline sensors have been recorded for this machine."
+          />
+        )}
+        {!loading && !failed && !empty && (
+          <View>
+            {machineAlerts.map((a, i) => {
+              const sev = getAlertSeverity(a.severity);
+              const st = getAlertStatus(a.status);
+              return (
+                <Pressable
+                  key={a.id || i}
+                  onPress={() => router.push("/(app)/alerts")}
+                  className={`flex-row items-center gap-3 py-3 ${i > 0 ? `border-t ${dark ? "border-white/5" : "border-border/50"}` : ""}`}
+                >
+                  <View
+                    className="w-9 h-9 rounded-full items-center justify-center"
+                    style={{ backgroundColor: sev.color + "26" }}
+                  >
+                    <Text style={{ fontSize: 15, color: sev.color }}>
+                      {sev.color === "#DC2626" ? "⚠" : a.status === "ACTIVE" ? "▲" : "✓"}
+                    </Text>
+                  </View>
+                  <View className="flex-1">
+                    <Text numberOfLines={1} className={`text-sm font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
+                      {a.message || `${a.sensorType || "Sensor"} alert`}
+                    </Text>
+                    <Text numberOfLines={1} className={`text-xs font-inter mt-0.5 ${dark ? "text-white/60" : "text-text-muted"}`}>
+                      {a.sensorType ? `${a.sensorType}: ${a.value ?? "—"}${a.threshold != null ? ` (threshold ${a.threshold})` : ""} · ` : ""}
+                      {st.label} · {relativeTime(a.timestamp)}
+                    </Text>
+                  </View>
+                  <SeverityBadge severity={normalizeAlertSeverity(a.severity)} />
+                </Pressable>
+              );
+            })}
+            <View className="mt-4 items-start">
+              <Button
+                title="Open full alerts screen"
+                variant="outline"
+                size="sm"
+                onPress={() => router.push("/(app)/alerts")}
+              />
+            </View>
+          </View>
+        )}
+      </Card>
     );
   }
 
@@ -1149,7 +1302,9 @@ export default function MachineDetailScreen() {
 
         <View className="mb-4">
           <Tabs
-            tabs={isDesktop ? WEB_TABS : MOBILE_TABS}
+            tabs={(isDesktop ? WEB_TABS : MOBILE_TABS).filter(
+              (t) => t.key !== "alerts" || canReadAlerts
+            )}
             active={tab}
             onChange={setTab}
             scrollable={!isDesktop}
@@ -1159,6 +1314,7 @@ export default function MachineDetailScreen() {
         {tab === "overview" ? OverviewBody()
           : tab === "live" ? LiveDataBody()
           : tab === "history" ? HistoryBody()
+          : tab === "alerts" ? AlertsBody()
           : tab === "settings" ? SettingsBody()
           : ComingSoon()}
       </ScrollView>

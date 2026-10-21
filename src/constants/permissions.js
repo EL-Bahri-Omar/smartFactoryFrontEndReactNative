@@ -37,6 +37,8 @@ export const PERMISSIONS = Object.freeze({
   GROUP_WRITE: "GROUP_WRITE",
   ZONE_READ: "ZONE_READ",
   ZONE_WRITE: "ZONE_WRITE",
+  MAINTENANCE_READ: "MAINTENANCE_READ",
+  MAINTENANCE_WRITE: "MAINTENANCE_WRITE",
 });
 
 export const PERMISSION_LIST = Object.freeze(Object.values(PERMISSIONS));
@@ -70,6 +72,8 @@ export const PERMISSION_LABELS = Object.freeze({
   GROUP_WRITE: "Create, edit & delete groups",
   ZONE_READ: "View zones",
   ZONE_WRITE: "Create, edit & delete zones",
+  MAINTENANCE_READ: "View maintenance interventions",
+  MAINTENANCE_WRITE: "Create, assign, run & close interventions",
 });
 
 export const PERMISSION_CATEGORIES = Object.freeze([
@@ -83,6 +87,7 @@ export const PERMISSION_CATEGORIES = Object.freeze([
   "ROLES",
   "GROUPS",
   "ZONES",
+  "MAINTENANCE",
 ]);
 
 // Backend category per permission (fallback when the catalog is unreachable).
@@ -114,6 +119,8 @@ export const PERMISSION_CATEGORY_OF = Object.freeze({
   GROUP_WRITE: "GROUPS",
   ZONE_READ: "ZONES",
   ZONE_WRITE: "ZONES",
+  MAINTENANCE_READ: "MAINTENANCE",
+  MAINTENANCE_WRITE: "MAINTENANCE",
 });
 
 // Role defaults — mirror of backend Role.getDefaultPermissions().
@@ -135,6 +142,8 @@ export const ROLE_DEFAULT_PERMISSIONS = Object.freeze({
     "THRESHOLD_READ",
     "ZONE_READ",
     "GROUP_READ",
+    "MAINTENANCE_READ",
+    "MAINTENANCE_WRITE",
   ]),
   RESPONSABLE_INDUSTRIEL: Object.freeze([
     "MACHINE_READ",
@@ -146,6 +155,8 @@ export const ROLE_DEFAULT_PERMISSIONS = Object.freeze({
     "ALERT_ACKNOWLEDGE",
     "ZONE_READ",
     "GROUP_READ",
+    "MAINTENANCE_READ",
+    "MAINTENANCE_WRITE",
   ]),
 });
 

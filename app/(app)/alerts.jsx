@@ -1,19 +1,586 @@
-// app/(app)/alerts.jsx — stub until Sprint 5 (alerts list screen).
-import { ScrollView } from "react-native";
+// app/(app)/alerts.jsx
+//
+// Alerts — web + mobile, same file (Sprint 5, prompt 09).
+//
+// Data paths:
+//  - REST GET /api/alerts (CONFIRMED — AlertController).
+//  - STOMP /topic/alerts (CONFIRMED) — new alerts prepend live through
+//    alertSlice.prependAlert, and liveSlice.unreadCount feeds the bell.
+//
+// UX notes from review:
+//  - One row per (machine · sensor · state): the backend is expected to emit
+//    at most one alert per machine-sensor per state (warning → critical →
+//    normal). Until that ships, the screen ALSO de-dupes client-side so a
+//    flood of identical breaches collapses into a single row that keeps its
+//    latest value/time. See `dedupeAlerts`.
+//  - Every row shows a LIVE STATE DOT at the end: the newest alert for that
+//    machine+sensor decides whether the sensor is currently critical (red),
+//    high (orange), warning (amber) or back to normal (green). It updates in
+//    real time as new alerts arrive on /topic/alerts.
+//  - The detail sheet was redesigned (severity header, key/value grid) and
+//    its "Create Intervention" jumps to the Maintenance screen's own create
+//    button (alert → intervention link).
+//
+// Severity mapping (from the real STOMP payload): CRITICAL→High,
+// WARNING→Medium, INFO→Low (lib/status).
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { View, Text, ScrollView, Pressable } from "react-native";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import AppShell from "../../src/components/AppShell";
 import Card from "../../src/components/Card";
+import Button from "../../src/components/Button";
+import Skeleton from "../../src/components/Skeleton";
 import EmptyState from "../../src/components/EmptyState";
+import FilterChips from "../../src/components/FilterChips";
+import SeverityBadge from "../../src/components/SeverityBadge";
+import BottomSheet from "../../src/components/BottomSheet";
+import { useBreakpoint } from "../../src/hooks/useBreakpoint";
+import { useDark } from "../../src/hooks/useDark";
+import { useRole, PERMISSIONS } from "../../src/hooks/useRole";
+import { useAppDispatch } from "../../src/hooks/useAppDispatch";
+import { useAppSelector } from "../../src/hooks/useAppSelector";
+import { useLiveTopic } from "../../src/hooks/useLiveTopic";
+import { useDialog } from "../../src/components/dialog/DialogContext";
+import {
+  fetchAlerts,
+  acknowledgeAlert,
+  acknowledgeAllAlerts,
+  resolveAlert,
+  prependAlert,
+  setFilter,
+} from "../../src/store/slices/alertSlice";
+import { fetchMachines } from "../../src/store/slices/machineSlice";
+import { normalizeAlert } from "../../src/store/services/alertService";
+import { getAlertSeverity, normalizeAlertSeverity, getAlertStatus } from "../../src/lib/status";
+import { relativeTime } from "../../src/lib/time";
 
-export default function AlertsStub() {
+const FILTER_CHIPS = [
+  { key: "ALL", label: "All" },
+  { key: "CRITICAL", label: "Critical" },
+  { key: "HIGH", label: "High" },
+  { key: "MEDIUM", label: "Medium" },
+  { key: "LOW", label: "Low" },
+];
+
+/** Newest-first ordering by timestamp (missing timestamps sink to the bottom). */
+function byNewest(a, b) {
+  const ta = a?.timestamp ? Date.parse(a.timestamp) : 0;
+  const tb = b?.timestamp ? Date.parse(b.timestamp) : 0;
+  return tb - ta;
+}
+
+/** Stable identity for "the same incident": machine + sensor + state. */
+function alertStateKey(a) {
+  const machine = a.machineId || a.machineCode || "machine";
+  const sensor = a.sensorType || a.sensorId || "sensor";
+  const state = normalizeAlertSeverity(a.severity);
+  return `${machine}|${sensor}|${state}`;
+}
+
+/** machine + sensor identity (ignores state) — used for the live dot. */
+function sensorKey(a) {
+  const machine = a.machineId || a.machineCode || "machine";
+  const sensor = a.sensorType || a.sensorId || "sensor";
+  return `${machine}|${sensor}`;
+}
+
+/**
+ * Collapse repeated alerts of the same machine·sensor·state into ONE row
+ * (keeping the newest value/timestamp), then order newest-first. This keeps
+ * the list readable while the backend "one alert per machine per state"
+ * rule is still being rolled out.
+ */
+function dedupeAlerts(list) {
+  const best = new Map();
+  for (const a of list) {
+    if (!a) continue;
+    const key = alertStateKey(a);
+    const prev = best.get(key);
+    if (!prev || byNewest(a, prev) < 0) best.set(key, a);
+  }
+  return [...best.values()].sort(byNewest);
+}
+
+/**
+ * Current state per machine·sensor, derived from the NEWEST alert for that
+ * pair. Backend emits state transitions (warning → critical → normal), so
+ * the newest alert tells us whether the sensor is still breached or back to
+ * normal. Drives the live dot at the end of each row.
+ */
+function buildSensorStates(list) {
+  const newest = new Map();
+  for (const a of list) {
+    if (!a) continue;
+    const key = sensorKey(a);
+    const prev = newest.get(key);
+    if (!prev || byNewest(a, prev) < 0) newest.set(key, a);
+  }
+  const states = new Map();
+  for (const [key, a] of newest) {
+    states.set(key, { severity: a.severity, status: a.status, timestamp: a.timestamp });
+  }
+  return states;
+}
+
+/** Dot visual for a live sensor state. */
+function stateDot(state) {
+  if (!state) return { color: "#94A3B8", label: "Unknown" };
+  if (state.status === "RESOLVED") return { color: "#16A34A", label: "Normal" };
+  const sev = normalizeAlertSeverity(state.severity);
+  if (sev === "CRITICAL") return { color: "#DC2626", label: "Critical" };
+  if (sev === "HIGH") return { color: "#EA580C", label: "High" };
+  if (sev === "MEDIUM") return { color: "#F59E0B", label: "Warning" };
+  return { color: "#16A34A", label: "Normal" };
+}
+
+function humanize(value) {
+  if (!value) return "";
+  const s = String(value).replace(/_/g, " ").toLowerCase();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+export default function AlertsScreen() {
+  const dispatch = useAppDispatch();
+  const dialog = useDialog();
+  const router = useRouter();
+  const routeParams = useLocalSearchParams();
+  const isDesktop = useBreakpoint() === "desktop";
+  const dark = useDark();
+  const { hasPermission } = useRole();
+  const canRead = hasPermission(PERMISSIONS.ALERT_READ);
+  const canAcknowledge = hasPermission(PERMISSIONS.ALERT_ACKNOWLEDGE);
+
+  const { list, filter, status, error, ackStatus } = useAppSelector((s) => s.alert);
+  const { list: machines } = useAppSelector((s) => s.machine);
+  const connected = useAppSelector((s) => s.live.connected);
+
+  const liveMessage = useLiveTopic("/topic/alerts");
+  const lastLiveRef = useRef(null);
+
+  const [detailOpen, setDetailOpen] = useState(false); // mobile detail sheet
+  const [selected, setSelected] = useState(null); // alert for the ⋮ menu / sheet
+  const [sheetBusy, setSheetBusy] = useState(false);
+
+  // REST sync (CONFIRMED endpoint).
+  useEffect(() => {
+    if (canRead) dispatch(fetchAlerts({ page: 0, size: 100 }));
+  }, [dispatch, canRead]);
+
+  // Machine list for code/type resolution in rows — only if not already loaded.
+  useEffect(() => {
+    if (canRead && machines.length === 0) dispatch(fetchMachines({ size: 100 }));
+  }, [dispatch, canRead, machines.length]);
+
+  // Live feed → prepend to the list (dedupes inside the reducer).
+  useEffect(() => {
+    if (!liveMessage) return;
+    const key = `${liveMessage.id || liveMessage.message}-${liveMessage.timestamp || ""}`;
+    if (lastLiveRef.current === key) return;
+    lastLiveRef.current = key;
+    dispatch(prependAlert(normalizeAlert(liveMessage)));
+  }, [liveMessage, dispatch]);
+
+  // Deep link: a notification press lands here with ?alertId=… — open that
+  // alert's detail sheet (item 12). Runs once the list carries the row.
+  const deepLinkAlertId = Array.isArray(routeParams.alertId)
+    ? routeParams.alertId[0]
+    : routeParams.alertId;
+  useEffect(() => {
+    if (!deepLinkAlertId || list.length === 0) return;
+    const found = list.find((a) => a.id === deepLinkAlertId);
+    if (found) {
+      setSelected(found);
+      if (!isDesktop) setDetailOpen(true); // mobile sheet; web shows on `selected` alone
+      // eslint-disable-next-line no-unused-expressions
+      router.setParams?.({ alertId: undefined });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkAlertId, list]);
+
+  const machineById = useMemo(() => {
+    const map = {};
+    machines.forEach((m) => {
+      if (m.id) map[m.id] = m;
+      if (m.code) map[m.code] = m;
+    });
+    return map;
+  }, [machines]);
+
+  // Collapse repeated incidents, then order newest-first.
+  const deduped = useMemo(() => dedupeAlerts(list), [list]);
+
+  // Live state per machine·sensor (drives the end-of-row dot).
+  const sensorStates = useMemo(() => buildSensorStates(list), [list]);
+
+  const counts = useMemo(() => {
+    const c = { ALL: deduped.length, CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+    deduped.forEach((a) => {
+      const key = normalizeAlertSeverity(a.severity);
+      if (c[key] != null) c[key] += 1;
+    });
+    return c;
+  }, [deduped]);
+
+  const visibleAlerts = useMemo(() => {
+    if (filter === "ALL") return deduped;
+    return deduped.filter((a) => normalizeAlertSeverity(a.severity) === filter);
+  }, [deduped, filter]);
+
+  async function handleAcknowledge(alert) {
+    setSelected(null);
+    setDetailOpen(false);
+    try {
+      await dispatch(acknowledgeAlert({ id: alert.id })).unwrap();
+    } catch (e) {
+      dialog.alert("Failed", e?.message || "Could not acknowledge the alert.", "error");
+    }
+  }
+
+  async function handleResolve(alert) {
+    setSelected(null);
+    setDetailOpen(false);
+    try {
+      await dispatch(resolveAlert({ id: alert.id })).unwrap();
+    } catch (e) {
+      dialog.alert("Failed", e?.message || "Could not resolve the alert.", "error");
+    }
+  }
+
+  /**
+   * Jump to the Maintenance screen's own "Create Intervention" button with
+   * the alert context pre-filled (alert → intervention link).
+   */
+  function goToCreateIntervention(alert) {
+    setSelected(null);
+    setDetailOpen(false);
+    const ui = normalizeAlertSeverity(alert.severity);
+    const priority = ui === "CRITICAL" || ui === "HIGH" ? "HIGH" : ui === "LOW" ? "LOW" : "MEDIUM";
+    const description =
+      alert.value != null
+        ? `${alert.sensorType || "Sensor"}: ${alert.value}${alert.threshold != null ? ` (threshold: ${alert.threshold})` : ""}`
+        : "";
+    router.push({
+      pathname: "/(app)/maintenance",
+      params: {
+        alertId: alert.id || "",
+        machineId: alert.machineId || "",
+        machineCode: alert.machineCode || "",
+        message: alert.message || "",
+        description,
+        priority,
+      },
+    });
+  }
+
+  async function handleMarkAllRead() {
+    if (deduped.length === 0) return;
+    setSheetBusy(true);
+    try {
+      await dispatch(acknowledgeAllAlerts()).unwrap();
+    } catch (e) {
+      dialog.alert("Failed", e?.message || "Could not acknowledge the alerts.", "error");
+    } finally {
+      setSheetBusy(false);
+    }
+  }
+
+  if (!canRead) {
+    return (
+      <AppShell>
+        <Card className="my-4">
+          <EmptyState
+            title="Restricted area"
+            message="You need ALERT_READ permission to view alerts."
+          />
+        </Card>
+      </AppShell>
+    );
+  }
+
+  const loading = status === "loading" && list.length === 0;
+  const empty = status !== "loading" && deduped.length === 0;
+  const darkText = dark ? "text-white" : "text-text";
+  const darkMuted = dark ? "text-white/60" : "text-text-muted";
+
+  /** Shared row content resolver */
+  function rowModel(alert) {
+    const machine = machineById[alert.machineCode || alert.machineId] || null;
+    return {
+      alert,
+      machineCode: alert.machineCode || machine?.code || (alert.machineId ? String(alert.machineId).slice(0, 8) : "Machine"),
+      machineType: machine?.type ? humanize(machine.type) : "",
+      sensorType: humanize(alert.sensorType),
+      sevMeta: getAlertSeverity(alert.severity),
+      statusMeta: getAlertStatus(alert.status),
+      live: stateDot(sensorStates.get(sensorKey(alert))),
+    };
+  }
+
+  function alertTitle(alert) {
+    if (alert.message && alert.message.length > 12) return alert.message;
+    return `${humanize(alert.sensorType) || "Sensor"} alert`;
+  }
+
+  function renderRow(alert, onPressRow) {
+    const m = rowModel(alert);
+    const isActive = m.alert.status === "ACTIVE";
+    const dangerous = m.sevMeta.color === "#DC2626";
+
+    return (
+      <Pressable
+        key={m.alert.id || `${m.alert.timestamp}-${m.alert.message}`}
+        onPress={onPressRow}
+        className={`flex-row items-center px-3 py-3 border-b ${dark ? "border-white/5" : "border-border/50"}`}
+        style={({ pressed }) => (pressed ? { opacity: 0.85 } : {})}
+      >
+        {/* Severity icon circle */}
+        <View
+          className="w-10 h-10 rounded-full items-center justify-center mr-3"
+          style={{ backgroundColor: m.sevMeta.color + "26" }}
+        >
+          <Text style={{ fontSize: 16, color: m.sevMeta.color }}>
+            {dangerous ? "⚠" : isActive ? "▲" : "✓"}
+          </Text>
+        </View>
+
+        {/* Title + subline */}
+        <View className="flex-1 mr-3">
+          <Text numberOfLines={1} className={`text-sm font-bold font-inter ${darkText}`}>
+            {alertTitle(m.alert)}
+          </Text>
+          <Text numberOfLines={2} className={`text-xs font-inter mt-0.5 ${darkMuted}`}>
+            {[
+              m.machineCode,
+              m.machineType || "",
+              m.sensorType
+                ? `${m.sensorType}: ${m.alert.value ?? "—"}${m.alert.threshold != null ? ` (threshold: ${m.alert.threshold})` : ""}`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </Text>
+        </View>
+
+        {/* Right: severity chip + relative time + live state dot */}
+        <View className="items-end gap-1">
+          <SeverityBadge severity={m.alert.severity} />
+          <Text className={`text-[10px] font-inter ${darkMuted}`}>{relativeTime(m.alert.timestamp)}</Text>
+        </View>
+
+        {/* Live state dot — is the sensor still breached / back to normal? */}
+        <View className="items-center ml-2" style={{ width: 20 }}>
+          <View
+            accessibilityLabel={`Sensor currently ${m.live.label}`}
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: 5,
+              backgroundColor: m.live.color,
+              shadowColor: m.live.color,
+              shadowOpacity: 0.7,
+              shadowRadius: 4,
+              shadowOffset: { width: 0, height: 0 },
+              elevation: 3,
+            }}
+          />
+          <Text className={`text-[8px] font-inter mt-0.5 ${darkMuted}`}>{m.live.label}</Text>
+        </View>
+
+        {isDesktop ? (
+          <Pressable
+            onPress={() => setSelected(m.alert)}
+            hitSlop={8}
+            className="ml-1 w-8 h-8 items-center justify-center rounded-btn"
+            style={({ pressed }) => (pressed ? { opacity: 0.7 } : {})}
+          >
+            <Text className={darkMuted}>⋮</Text>
+          </Pressable>
+        ) : (
+          <Text className={`ml-2 ${darkMuted}`}>›</Text>
+        )}
+      </Pressable>
+    );
+  }
+
+  function actionSheet(alert) {
+    if (!alert) return null;
+    const m = rowModel(alert);
+    const editable = alert.status === "ACTIVE";
+    return (
+      <BottomSheet
+        visible
+        onClose={() => setSelected(null)}
+        maxWidth={520}
+        title={alertTitle(alert)}
+        subtitle={`${m.machineCode}${m.machineType ? ` · ${m.machineType}` : ""}`}
+      >
+        {/* Severity + live state header */}
+        <View
+          className="flex-row items-center gap-3 mb-4 px-4 py-3 rounded-card"
+          style={{ backgroundColor: m.sevMeta.color + "14" }}
+        >
+          <View
+            className="w-11 h-11 rounded-full items-center justify-center"
+            style={{ backgroundColor: m.sevMeta.color + "26" }}
+          >
+            <Text style={{ fontSize: 18, color: m.sevMeta.color }}>
+              {m.sevMeta.color === "#DC2626" ? "⚠" : alert.status === "ACTIVE" ? "▲" : "✓"}
+            </Text>
+          </View>
+          <View className="flex-1">
+            <Text className={`text-sm font-bold font-inter ${darkText}`}>{m.sevMeta.label} severity</Text>
+            <Text className={`text-xs font-inter ${darkMuted}`}>{relativeTime(alert.timestamp)}</Text>
+          </View>
+          <View className="items-center">
+            <View
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: 6,
+                backgroundColor: m.live.color,
+                shadowColor: m.live.color,
+                shadowOpacity: 0.7,
+                shadowRadius: 5,
+                elevation: 3,
+              }}
+            />
+            <Text className={`text-[9px] font-inter mt-1 ${darkMuted}`}>{m.live.label}</Text>
+          </View>
+        </View>
+
+        {/* Key / value grid */}
+        <View className="gap-2 mb-2">
+          {[
+            ["Sensor", m.sensorType || "—"],
+            ["Value", alert.value ?? "—"],
+            ["Threshold", alert.threshold ?? "—"],
+            ["Status", m.statusMeta.label],
+            ["Live state", m.live.label],
+            ["Time", relativeTime(alert.timestamp)],
+            ["Machine", m.machineCode],
+          ].map(([k, v]) => (
+            <View
+              key={k}
+              className={`flex-row justify-between items-center py-2 px-3 rounded-btn ${dark ? "bg-white/5" : "bg-bg"}`}
+            >
+              <Text className={`text-xs font-inter ${darkMuted}`}>{k}</Text>
+              <Text className={`text-xs font-bold font-inter text-right flex-1 ml-3 ${darkText}`} numberOfLines={1}>
+                {v}
+              </Text>
+            </View>
+          ))}
+        </View>
+
+        <View className="gap-3 mt-4">
+          <Button
+            title="+ Create Intervention"
+            variant="primary"
+            onPress={() => goToCreateIntervention(alert)}
+          />
+          {canAcknowledge && editable && (
+            <Button
+              title={ackStatus === "loading" ? "Acknowledging…" : "Acknowledge"}
+              variant="outline"
+              onPress={() => handleAcknowledge(alert)}
+              loading={ackStatus === "loading"}
+            />
+          )}
+          {canAcknowledge && alert.status !== "RESOLVED" && (
+            <Button title="Resolve" variant="outline" onPress={() => handleResolve(alert)} />
+          )}
+          <Button title="Close" variant="ghost" onPress={() => setSelected(null)} />
+        </View>
+      </BottomSheet>
+    );
+  }
+
   return (
     <AppShell>
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
-        <Card>
-          <EmptyState
-            title="Alerts coming in Sprint 5"
-            message="Threshold breaches already broadcast on /topic/alerts — the list screen ships with anomaly detection."
-          />
+        {/* Header */}
+        <View className="mb-4">
+          <View className="flex-row items-center justify-between">
+            <View className="flex-row items-center gap-2">
+              <Text className={`text-xl font-bold font-inter ${darkText}`}>Alerts</Text>
+              {connected && <View className="w-2 h-2 rounded-full" style={{ backgroundColor: "#16A34A" }} />}
+            </View>
+            <Pressable onPress={handleMarkAllRead} disabled={deduped.length === 0 || sheetBusy} className="self-start">
+              <Text className={`text-sm font-inter ${deduped.length === 0 || sheetBusy ? "opacity-40" : ""} text-primary`}>
+                {sheetBusy ? "Marking…" : "Mark all as read"}
+              </Text>
+            </Pressable>
+          </View>
+          <Text className={`text-sm font-inter ${darkMuted}`}>
+            Threshold breaches and offline sensors arrive here in real time.
+          </Text>
+        </View>
+
+        {/* Filter chips */}
+        <FilterChips
+          chips={FILTER_CHIPS.map((c) => ({ ...c, count: counts[c.key] ?? 0 }))}
+          active={filter}
+          onChange={(key) => dispatch(setFilter(key))}
+          className="mb-4"
+        />
+
+        <Card className="mb-4">
+          {loading && (
+            <View className="p-3 gap-3">
+              {[1, 2, 3].map((i) => (
+                <View key={i} className="flex-row items-center gap-3">
+                  <Skeleton width={40} height={40} rounded />
+                  <View className="flex-1 gap-1">
+                    <Skeleton width="60%" height={14} />
+                    <Skeleton width="85%" height={10} />
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {empty && (
+            <EmptyState
+              icon={
+                <View className="w-16 h-16 rounded-full items-center justify-center" style={{ backgroundColor: "rgba(22,163,74,0.12)" }}>
+                  <Text className="text-3xl">✓</Text>
+                </View>
+              }
+              title={error ? "Alerts unavailable" : "No alerts — all good"}
+              message={
+                error && !connected
+                  ? "Could not load the alert history and the live feed is offline. Retry, or check your connection."
+                  : error
+                    ? "Could not load the alert history — live alerts will still accumulate while the feed is connected."
+                    : "Threshold breaches, offline sensors and machine events will show up here automatically."
+              }
+              action={
+                error && !connected ? (
+                  <Button title="Retry" variant="outline" size="sm" onPress={() => dispatch(fetchAlerts({}))} />
+                ) : undefined
+              }
+            />
+          )}
+
+          {!loading && !empty && (
+            <View>
+              {visibleAlerts.length === 0 ? (
+                <EmptyState
+                  title={`No ${FILTER_CHIPS.find((c) => c.key === filter)?.label.toLowerCase() || ""} severity alerts`}
+                  message="Try another filter."
+                />
+              ) : (
+                visibleAlerts.map((alert) =>
+                  renderRow(alert, isDesktop ? () => setSelected(alert) : () => { setSelected(alert); setDetailOpen(true); })
+                )
+              )}
+            </View>
+          )}
         </Card>
+
+        {/* Adaptive action/detail sheet — anchored menu substitute (web) or
+            tap-to-open bottom sheet (mobile) */}
+        {selected && (isDesktop ? !detailOpen : detailOpen) && actionSheet(selected)}
       </ScrollView>
     </AppShell>
   );

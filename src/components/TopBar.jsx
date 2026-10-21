@@ -1,18 +1,23 @@
 // src/components/TopBar.jsx
-// Top bar: back button, menu (drawer), theme toggle, notification bell (unread badge),
-// logout (red exit icon), avatar -> profile.
+// Top bar: back button, menu (drawer), theme toggle, notification bell
+// (unread badge + link to /notifications), logout (red exit icon),
+// avatar -> profile.
 // Icon buttons share one real-button treatment: light surface, light border,
 // subtle shadow, rounded — in both light and dark modes.
 
+import { useEffect } from "react";
 import { View, Text, Pressable } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, usePathname } from "expo-router";
 import { useAppDispatch } from "../hooks/useAppDispatch";
+import { useAppSelector } from "../hooks/useAppSelector";
 import { useDark } from "../hooks/useDark";
 import { useDialog } from "./dialog/DialogContext";
 import { setNotifications } from "../store/slices/settingsSlice";
 import { logoutThunk } from "../store/slices/authSlice";
+import { markAllRead } from "../store/slices/liveSlice";
+import { refreshUnreadCount } from "../store/slices/notificationSlice";
 import Avatar from "./Avatar";
 
 // Door + arrow exit icon (logout), drawn in currentColor-style red.
@@ -74,12 +79,43 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
   const dialog = useDialog();
   const dark = useDark();
   const insets = useSafeAreaInsets();
+  // Bell badge: server truth first (GET /api/notifications/unread-count,
+  // refreshed by refreshUnreadCount), falling back to the live counter
+  // (liveSlice counts alert/notification STOMP arrivals since last visit).
+  const liveUnread = useAppSelector((s) => s.live.unreadCount);
+  const serverUnread = useAppSelector((s) => s.notification.unread.server);
+  const unreadCount = serverUnread != null ? serverUnread + liveUnread : liveUnread;
+
+  // Periodic server unread sync (60 s + on mount). When the count succeeds,
+  // the live counter resets so an alert arriving while the app is open is
+  // never counted twice (server + live).
+  useEffect(() => {
+    let cancelled = false;
+    const sync = () => {
+      dispatch(refreshUnreadCount())
+        .then(() => {
+          if (!cancelled) dispatch(markAllRead());
+        })
+        .catch(() => {});
+    };
+    sync();
+    const interval = setInterval(sync, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [dispatch]);
 
   const isRoot = ROOT_PATHS.includes(pathname) || pathname === "/";
   const canGoBack = !isRoot;
 
   function toggleTheme() {
     dispatch(setNotifications({ darkMode: !dark }));
+  }
+
+  function handleBell() {
+    dispatch(markAllRead());
+    router.push("/(app)/notifications");
   }
 
   async function handleLogout() {
@@ -125,9 +161,21 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
         <Text style={{ fontSize: 18 }}>{dark ? "☀️" : "🌙"}</Text>
       </IconButton>
 
-      {/* Notification bell */}
-      <IconButton onPress={() => {}} label="Notifications">
-        <Text style={{ fontSize: 18 }}>{"🔔"}</Text>
+      {/* Notification bell — badge + link to the Notifications screen */}
+      <IconButton onPress={handleBell} label="Notifications">
+        <View className="items-center justify-center">
+          <Text style={{ fontSize: 18 }}>{"🔔"}</Text>
+          {unreadCount > 0 && (
+            <View
+              className="absolute -top-0.5 -right-1 min-w-4 px-1 h-4 rounded-full items-center justify-center border"
+              style={{ backgroundColor: "#DC2626", borderColor: dark ? "#0B1D3A" : "#FFFFFF" }}
+            >
+              <Text className="text-[9px] font-bold text-white" style={{ lineHeight: 11 }}>
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </Text>
+            </View>
+          )}
+        </View>
       </IconButton>
 
       {/* Logout — red exit icon */}
