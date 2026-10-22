@@ -8,18 +8,22 @@
 //    alertSlice.prependAlert, and liveSlice.unreadCount feeds the bell.
 //
 // UX notes from review:
-//  - One row per (machine · sensor · state): the backend is expected to emit
-//    at most one alert per machine-sensor per state (warning → critical →
-//    normal). Until that ships, the screen ALSO de-dupes client-side so a
-//    flood of identical breaches collapses into a single row that keeps its
-//    latest value/time. See `dedupeAlerts`.
-//  - Every row shows a LIVE STATE DOT at the end: the newest alert for that
-//    machine+sensor decides whether the sensor is currently critical (red),
-//    high (orange), warning (amber) or back to normal (green). It updates in
-//    real time as new alerts arrive on /topic/alerts.
+//  - One row per (machine · sensor · state): the backend creates ONE alert
+//    per sensor episode and mutates it on WARNING → CRITICAL, so the screen
+//    de-dupes client-side to at most one warning + one critical row per
+//    sensor (lib/sensorAlerts.dedupeSensorAlerts).
+//  - Only the row matching the sensor's CURRENT state shows the live dot:
+//    it moves from warning to critical, and turns green when resolved. The
+//    dot color matches the status palette (lib/status).
+//  - Read vs unread: ACTIVE rows are unread (tinted + severity left border);
+//    ACKNOWLEDGED / RESOLVED rows are read (plain background + muted title).
 //  - The detail sheet was redesigned (severity header, key/value grid) and
 //    its "Create Intervention" jumps to the Maintenance screen's own create
-//    button (alert → intervention link).
+//    button (alert → intervention link). Only the responsable industriel can
+//    create an intervention, so the button is hidden for every other role.
+//
+// Access: every role EXCEPT OPERATOR can consult alerts (matches the backend
+// AlertController guard). OPERATOR also has no Alerts navigation entry.
 //
 // Severity mapping (from the real STOMP payload): CRITICAL→High,
 // WARNING→Medium, INFO→Low (lib/status).
@@ -54,6 +58,13 @@ import {
 import { fetchMachines } from "../../src/store/slices/machineSlice";
 import { normalizeAlert } from "../../src/store/services/alertService";
 import { getAlertSeverity, normalizeAlertSeverity, getAlertStatus } from "../../src/lib/status";
+import {
+  buildSensorStates,
+  dedupeSensorAlerts,
+  liveDotFor,
+  sensorKey,
+  UNKNOWN_DOT_COLOR,
+} from "../../src/lib/sensorAlerts";
 import { relativeTime } from "../../src/lib/time";
 
 const FILTER_CHIPS = [
@@ -63,77 +74,6 @@ const FILTER_CHIPS = [
   { key: "MEDIUM", label: "Medium" },
   { key: "LOW", label: "Low" },
 ];
-
-/** Newest-first ordering by timestamp (missing timestamps sink to the bottom). */
-function byNewest(a, b) {
-  const ta = a?.timestamp ? Date.parse(a.timestamp) : 0;
-  const tb = b?.timestamp ? Date.parse(b.timestamp) : 0;
-  return tb - ta;
-}
-
-/** Stable identity for "the same incident": machine + sensor + state. */
-function alertStateKey(a) {
-  const machine = a.machineId || a.machineCode || "machine";
-  const sensor = a.sensorType || a.sensorId || "sensor";
-  const state = normalizeAlertSeverity(a.severity);
-  return `${machine}|${sensor}|${state}`;
-}
-
-/** machine + sensor identity (ignores state) — used for the live dot. */
-function sensorKey(a) {
-  const machine = a.machineId || a.machineCode || "machine";
-  const sensor = a.sensorType || a.sensorId || "sensor";
-  return `${machine}|${sensor}`;
-}
-
-/**
- * Collapse repeated alerts of the same machine·sensor·state into ONE row
- * (keeping the newest value/timestamp), then order newest-first. This keeps
- * the list readable while the backend "one alert per machine per state"
- * rule is still being rolled out.
- */
-function dedupeAlerts(list) {
-  const best = new Map();
-  for (const a of list) {
-    if (!a) continue;
-    const key = alertStateKey(a);
-    const prev = best.get(key);
-    if (!prev || byNewest(a, prev) < 0) best.set(key, a);
-  }
-  return [...best.values()].sort(byNewest);
-}
-
-/**
- * Current state per machine·sensor, derived from the NEWEST alert for that
- * pair. Backend emits state transitions (warning → critical → normal), so
- * the newest alert tells us whether the sensor is still breached or back to
- * normal. Drives the live dot at the end of each row.
- */
-function buildSensorStates(list) {
-  const newest = new Map();
-  for (const a of list) {
-    if (!a) continue;
-    const key = sensorKey(a);
-    const prev = newest.get(key);
-    if (!prev || byNewest(a, prev) < 0) newest.set(key, a);
-  }
-  const states = new Map();
-  for (const [key, a] of newest) {
-    states.set(key, { severity: a.severity, status: a.status, timestamp: a.timestamp });
-  }
-  return states;
-}
-
-/** Dot visual for a live sensor state. */
-function stateDot(state) {
-  if (!state) return { color: "#94A3B8", label: "Unknown" };
-  if (state.status === "RESOLVED") return { color: "#16A34A", label: "Normal" };
-  const sev = normalizeAlertSeverity(state.severity);
-  if (sev === "CRITICAL") return { color: "#DC2626", label: "Critical" };
-  if (sev === "HIGH") return { color: "#EA580C", label: "High" };
-  if (sev === "MEDIUM") return { color: "#F59E0B", label: "Warning" };
-  return { color: "#16A34A", label: "Normal" };
-}
 
 function humanize(value) {
   if (!value) return "";
@@ -148,15 +88,22 @@ export default function AlertsScreen() {
   const routeParams = useLocalSearchParams();
   const isDesktop = useBreakpoint() === "desktop";
   const dark = useDark();
-  const { hasPermission } = useRole();
-  const canRead = hasPermission(PERMISSIONS.ALERT_READ);
+  const { hasPermission, isOperator, isResponsable, role } = useRole();
+  // Backend AlertController: ADMIN / RESPONSABLE_INDUSTRIEL / TECHNICIAN only
+  // (OPERATOR is explicitly excluded, even though its legacy role default
+  // still contains ALERT_READ). Role membership is checked as well so a stale
+  // permission list can never lock an allowed role out of alerts.
+  const canRead =
+    !isOperator &&
+    (hasPermission(PERMISSIONS.ALERT_READ) ||
+      ["ADMIN", "RESPONSABLE_INDUSTRIEL", "TECHNICIAN"].includes(role));
   const canAcknowledge = hasPermission(PERMISSIONS.ALERT_ACKNOWLEDGE);
 
   const { list, filter, status, error, ackStatus } = useAppSelector((s) => s.alert);
   const { list: machines } = useAppSelector((s) => s.machine);
   const connected = useAppSelector((s) => s.live.connected);
 
-  const liveMessage = useLiveTopic("/topic/alerts");
+  const liveMessage = useLiveTopic("/topic/alerts", { enabled: canRead });
   const lastLiveRef = useRef(null);
 
   const [detailOpen, setDetailOpen] = useState(false); // mobile detail sheet
@@ -176,7 +123,9 @@ export default function AlertsScreen() {
   // Live feed → prepend to the list (dedupes inside the reducer).
   useEffect(() => {
     if (!liveMessage) return;
-    const key = `${liveMessage.id || liveMessage.message}-${liveMessage.timestamp || ""}`;
+    // Include severity + status: the backend MUTATES the same alert id on
+    // WARNING → CRITICAL, so the key must change for the transition to apply.
+    const key = `${liveMessage.id || liveMessage.message}-${liveMessage.severity || ""}-${liveMessage.status || ""}-${liveMessage.timestamp || ""}`;
     if (lastLiveRef.current === key) return;
     lastLiveRef.current = key;
     dispatch(prependAlert(normalizeAlert(liveMessage)));
@@ -208,8 +157,9 @@ export default function AlertsScreen() {
     return map;
   }, [machines]);
 
-  // Collapse repeated incidents, then order newest-first.
-  const deduped = useMemo(() => dedupeAlerts(list), [list]);
+  // Collapse repeated incidents (one warning + one critical per sensor max),
+  // then order newest-first.
+  const deduped = useMemo(() => dedupeSensorAlerts(list), [list]);
 
   // Live state per machine·sensor (drives the end-of-row dot).
   const sensorStates = useMemo(() => buildSensorStates(list), [list]);
@@ -292,7 +242,7 @@ export default function AlertsScreen() {
         <Card className="my-4">
           <EmptyState
             title="Restricted area"
-            message="You need ALERT_READ permission to view alerts."
+            message="Alerts are available to every role except operators. Ask an administrator if you need access."
           />
         </Card>
       </AppShell>
@@ -307,6 +257,7 @@ export default function AlertsScreen() {
   /** Shared row content resolver */
   function rowModel(alert) {
     const machine = machineById[alert.machineCode || alert.machineId] || null;
+    const liveState = sensorStates.get(sensorKey(alert)) || null;
     return {
       alert,
       machineCode: alert.machineCode || machine?.code || (alert.machineId ? String(alert.machineId).slice(0, 8) : "Machine"),
@@ -314,7 +265,11 @@ export default function AlertsScreen() {
       sensorType: humanize(alert.sensorType),
       sevMeta: getAlertSeverity(alert.severity),
       statusMeta: getAlertStatus(alert.status),
-      live: stateDot(sensorStates.get(sensorKey(alert))),
+      // Full sensor state (detail sheet) vs. the row-specific dot: only the
+      // row matching the current state carries the dot.
+      liveState,
+      live: liveState || { color: UNKNOWN_DOT_COLOR, label: "Unknown" },
+      dot: liveDotFor(alert, liveState),
     };
   }
 
@@ -328,6 +283,7 @@ export default function AlertsScreen() {
   function renderRow(alert, onPressRow) {
     const m = rowModel(alert);
     const isActive = m.alert.status === "ACTIVE";
+    const unread = isActive;
     const dangerous = m.sevMeta.color === "#DC2626";
 
     return (
@@ -335,7 +291,17 @@ export default function AlertsScreen() {
         key={m.alert.id || `${m.alert.timestamp}-${m.alert.message}`}
         onPress={onPressRow}
         className={`flex-row items-center px-3 py-3 border-b ${dark ? "border-white/5" : "border-border/50"}`}
-        style={({ pressed }) => (pressed ? { opacity: 0.85 } : {})}
+        style={({ pressed }) => [
+          {
+            borderLeftWidth: 3,
+            borderLeftColor: unread ? m.sevMeta.color : "transparent",
+            backgroundColor: unread
+              ? m.sevMeta.color + (dark ? "22" : "10")
+              : "transparent",
+            opacity: m.alert.status === "RESOLVED" ? 0.8 : 1,
+          },
+          pressed ? { opacity: 0.85 } : null,
+        ]}
       >
         {/* Severity icon circle */}
         <View
@@ -349,7 +315,10 @@ export default function AlertsScreen() {
 
         {/* Title + subline */}
         <View className="flex-1 mr-3">
-          <Text numberOfLines={1} className={`text-sm font-bold font-inter ${darkText}`}>
+          <Text
+            numberOfLines={1}
+            className={`text-sm font-inter ${unread ? "font-bold" : "font-medium"} ${darkText}`}
+          >
             {alertTitle(m.alert)}
           </Text>
           <Text numberOfLines={2} className={`text-xs font-inter mt-0.5 ${darkMuted}`}>
@@ -371,23 +340,31 @@ export default function AlertsScreen() {
           <Text className={`text-[10px] font-inter ${darkMuted}`}>{relativeTime(m.alert.timestamp)}</Text>
         </View>
 
-        {/* Live state dot — is the sensor still breached / back to normal? */}
-        <View className="items-center ml-2" style={{ width: 20 }}>
-          <View
-            accessibilityLabel={`Sensor currently ${m.live.label}`}
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: 5,
-              backgroundColor: m.live.color,
-              shadowColor: m.live.color,
-              shadowOpacity: 0.7,
-              shadowRadius: 4,
-              shadowOffset: { width: 0, height: 0 },
-              elevation: 3,
-            }}
-          />
-          <Text className={`text-[8px] font-inter mt-0.5 ${darkMuted}`}>{m.live.label}</Text>
+        {/* Live state dot — ONLY on the row matching the sensor's current
+            state, so warning → critical moves the dot instead of duplicating
+            it. Color comes from the same status palette as the severity chip. */}
+        <View className="items-center ml-2" style={{ width: 22 }}>
+          {m.dot ? (
+            <>
+              <View
+                accessibilityLabel={`Sensor currently ${m.dot.label}`}
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: 5,
+                  backgroundColor: m.dot.color,
+                  shadowColor: m.dot.color,
+                  shadowOpacity: 0.7,
+                  shadowRadius: 4,
+                  shadowOffset: { width: 0, height: 0 },
+                  elevation: 3,
+                }}
+              />
+              <Text className={`text-[8px] font-inter mt-0.5 ${darkMuted}`}>{m.dot.label}</Text>
+            </>
+          ) : (
+            <View style={{ width: 10, height: 10 }} />
+          )}
         </View>
 
         {isDesktop ? (
@@ -442,12 +419,15 @@ export default function AlertsScreen() {
             {canAcknowledge && alert.status !== "RESOLVED" && (
               <Button title="Resolve" variant="outline" size="sm" onPress={() => handleResolve(alert)} />
             )}
-            <Button
-              title="+ Create Intervention"
-              variant="primary"
-              size="sm"
-              onPress={() => goToCreateIntervention(alert)}
-            />
+            {/* Only the responsable industriel creates interventions. */}
+            {isResponsable && (
+              <Button
+                title="+ Create Intervention"
+                variant="primary"
+                size="sm"
+                onPress={() => goToCreateIntervention(alert)}
+              />
+            )}
           </View>
         }
       >
@@ -501,20 +481,28 @@ export default function AlertsScreen() {
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View className="mb-4">
-          <View className="flex-row items-center justify-between">
-            <View className="flex-row items-center gap-2">
-              <Text className={`text-xl font-bold font-inter ${darkText}`}>Alerts</Text>
-              {connected && <View className="w-2 h-2 rounded-full" style={{ backgroundColor: "#16A34A" }} />}
-            </View>
-            <Pressable onPress={handleMarkAllRead} disabled={deduped.length === 0 || sheetBusy} className="self-start">
-              <Text className={`text-sm font-inter ${deduped.length === 0 || sheetBusy ? "opacity-40" : ""} text-primary`}>
-                {sheetBusy ? "Marking…" : "Mark all as read"}
+          <View className={isDesktop ? "flex-row items-start justify-between gap-3" : ""}>
+            <View className="flex-1">
+              <View className="flex-row items-center gap-2">
+                <Text className={`text-xl font-bold font-inter ${darkText}`}>Alerts</Text>
+                {connected && <View className="w-2 h-2 rounded-full" style={{ backgroundColor: "#16A34A" }} />}
+              </View>
+              <Text className={`text-sm font-inter ${darkMuted}`}>
+                Threshold breaches and offline sensors arrive here in real time.
               </Text>
-            </Pressable>
+            </View>
+            {canAcknowledge && (
+              <Button
+                title={sheetBusy ? "Marking…" : "Mark all as read"}
+                variant="outline"
+                size={isDesktop ? "sm" : "md"}
+                loading={sheetBusy}
+                disabled={deduped.length === 0}
+                onPress={handleMarkAllRead}
+                className={isDesktop ? "" : "mt-2 w-full"}
+              />
+            )}
           </View>
-          <Text className={`text-sm font-inter ${darkMuted}`}>
-            Threshold breaches and offline sensors arrive here in real time.
-          </Text>
         </View>
 
         {/* Filter chips */}

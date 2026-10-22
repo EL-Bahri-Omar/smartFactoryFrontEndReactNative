@@ -24,6 +24,7 @@ import { markNotificationRead } from "../slices/notificationSlice";
 const DEVICE_TYPE = Platform.OS === "ios" ? "IOS" : Platform.OS === "android" ? "ANDROID" : "UNKNOWN";
 
 let responseSubscription = null;
+let tokenSubscription = null;
 let lastResponseKey = null;
 
 // Expo Go (SDK 53+) is not allowed to do remote push: the native modules are
@@ -109,6 +110,34 @@ async function markTappedRead(dispatch, { notificationId, title }) {
 }
 
 /**
+ * Upload the device token to the backend (POST /api/notifications/tokens).
+ * Prefer the raw FCM token (what the backend's Firebase sender needs); fall
+ * back to the Expo push token. Returns the token when one was registered.
+ */
+async function registerToken(Notifications) {
+  if (!Notifications) return null;
+  let token = null;
+  try {
+    const deviceToken = await Notifications.getDevicePushTokenAsync();
+    token = deviceToken?.data || null;
+  } catch {
+    token = null;
+  }
+  if (!token) {
+    try {
+      const expoToken = await Notifications.getExpoPushTokenAsync();
+      token = expoToken?.data || null;
+    } catch {
+      token = null;
+    }
+  }
+  if (token) {
+    await api.post(ENDPOINTS.NOTIFICATION_TOKENS, { token, deviceType: DEVICE_TYPE });
+  }
+  return token;
+}
+
+/**
  * Handle a tap on a system notification: mark read + navigate (item 12).
  * `dispatch` comes from the store, `router` from expo-router (passed in by
  * the caller so this module stays free of component imports).
@@ -169,6 +198,18 @@ export async function initPush({ dispatch, router, isAuthenticated = false } = {
       }),
     });
 
+    // Android 8+ requires a channel; without one FCM messages can be dropped
+    // silently — especially while the app is closed. Create it before asking
+    // for the Android 13 notification permission.
+    if (Platform.OS === "android") {
+      await Notifications.setNotificationChannelAsync("default", {
+        name: "Default",
+        importance: Notifications.AndroidImportance?.MAX ?? 5,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: "#2563EB",
+      });
+    }
+
     const { status } = await Notifications.getPermissionsAsync();
     let effective = status;
     if (status !== "granted") {
@@ -182,29 +223,23 @@ export async function initPush({ dispatch, router, isAuthenticated = false } = {
       });
     }
 
+    // Re-register when FCM rotates the device token (can happen without a
+    // reinstall). The backend replaces the old token row.
+    if (!tokenSubscription && Notifications.addPushTokenListener) {
+      tokenSubscription = Notifications.addPushTokenListener((deviceToken) => {
+        const token = deviceToken?.data;
+        if (!token) return;
+        api
+          .post(ENDPOINTS.NOTIFICATION_TOKENS, { token, deviceType: DEVICE_TYPE })
+          .catch(() => {});
+      });
+    }
+
     if (effective !== "granted") return false; // token would never arrive
 
     // Register the device token so the backend can push while the app is
-    // closed (item 11). Prefer the raw FCM token (what the backend's
-    // firebase sender needs); fall back to the Expo push token.
-    let token = null;
-    try {
-      const deviceToken = await Notifications.getDevicePushTokenAsync();
-      token = deviceToken?.data || null;
-    } catch {
-      token = null;
-    }
-    if (!token) {
-      try {
-        const expoToken = await Notifications.getExpoPushTokenAsync();
-        token = expoToken?.data || null;
-      } catch {
-        token = null;
-      }
-    }
-    if (token) {
-      await api.post(ENDPOINTS.NOTIFICATION_TOKENS, { token, deviceType: DEVICE_TYPE });
-    }
+    // closed (item 11).
+    await registerToken(Notifications);
     return true;
   } catch (e) {
     // Never break the app over push setup (missing native module, denied

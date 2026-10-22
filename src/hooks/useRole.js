@@ -14,14 +14,18 @@ import { ROLES } from "../constants/roles";
 import { PERMISSIONS, hasPermission as checkPerms, hasAnyPermission as checkAnyPerms } from "../constants/permissions";
 
 const SUPERVISORS = [ROLES.ADMIN, ROLES.RESPONSABLE_INDUSTRIEL];
-// Maintenance (Sprint 6): technicians are the primary riders of this screen
-// (prompt 11); ADMIN + RESPONSABLE manage, OPERATOR is read-only UI-side
-// (server enforces the truth).
+// Maintenance (Sprint 6): ADMIN / RESPONSABLE_INDUSTRIEL / TECHNICIAN can
+// consult the list (everyone except OPERATOR). Only RESPONSABLE_INDUSTRIEL
+// creates; RESPONSABLE edits details/assignment, TECHNICIAN records execution
+// and updates status; ADMIN stays read-only in the UI.
 const MAINTENANCE_ROLES = [...SUPERVISORS, ROLES.TECHNICIAN];
+// Alerts: every role EXCEPT OPERATOR (backend AlertController guard).
+const ALERT_ROLES = [...SUPERVISORS, ROLES.TECHNICIAN];
 
 export const ACCESS = Object.freeze({
   dashboard: SUPERVISORS,
   machines: SUPERVISORS,
+  alerts: ALERT_ROLES,
   maintenance: MAINTENANCE_ROLES,
   users: [ROLES.ADMIN],
   groups: [ROLES.ADMIN],

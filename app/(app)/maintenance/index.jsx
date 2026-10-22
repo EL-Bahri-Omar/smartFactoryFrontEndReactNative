@@ -15,8 +15,10 @@
 // page. The backend has no intervention code field, so rows show `INT-…`
 // derived from the Mongo id.
 //
-// Roles: ADMIN + RESPONSABLE_INDUSTRIEL + TECHNICIAN create (backend
-// PreAuthorize also accepts these); OPERATOR read-only (no create button).
+// Roles: only RESPONSABLE_INDUSTRIEL creates interventions. TECHNICIAN and
+// RESPONSABLE_INDUSTRIEL edit them with different scopes (execution vs.
+// details/assignment/closure — see [id].jsx). ADMIN and every non-OPERATOR
+// role can consult the list; OPERATOR has no access.
 
 import { useEffect, useState, useMemo } from "react";
 import { View, Text, ScrollView, Pressable, TextInput, ActivityIndicator } from "react-native";
@@ -125,12 +127,15 @@ export default function MaintenanceScreen() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createPrefill, setCreatePrefill] = useState({});
 
-  const canCreate = role && ["ADMIN", "TECHNICIAN", "RESPONSABLE_INDUSTRIEL"].includes(role);
+  // Only the responsable industriel creates interventions (product rule).
+  // ADMIN consults, TECHNICIAN executes; the backend is the final guard.
+  const canCreate = role === "RESPONSABLE_INDUSTRIEL";
 
   // "Create Intervention" opened from the Alerts screen carries the alert
   // context (alert → intervention link):
   // /(app)/maintenance?alertId=…&machineId=…&message=…&priority=…
   useEffect(() => {
+    if (!canCreate) return;
     if (params.alertId || params.machineCode || params.message) {
       setCreatePrefill({
         alertId: params.alertId || undefined,
@@ -145,7 +150,7 @@ export default function MaintenanceScreen() {
       router.setParams?.({ alertId: undefined, machineCode: undefined, message: undefined });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.alertId, params.machineCode, params.message]);
+  }, [params.alertId, params.machineCode, params.message, canCreate]);
 
   // Fetch on mount and on server-param change (CONFIRMED: status + type are
   // server params; priority + free-text search are applied client-side).
@@ -235,6 +240,7 @@ export default function MaintenanceScreen() {
   }, [list]);
 
   function openCreate(prefill = {}) {
+    if (!canCreate) return;
     setCreatePrefill(prefill);
     setCreateOpen(true);
   }

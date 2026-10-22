@@ -85,6 +85,8 @@ const SEVERITY_WORDS = {
 export function formatNotificationTitle(raw) {
   const s = repairEncoding(String(raw || ""))
     .replace(/^[?\uFFFD]+\s*/, "")
+    // Strip a leading emoji (🔧 / 🚨 / ⚠️) before matching the templates.
+    .replace(/^[^\x00-\x7F]+\s*/, "")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -93,6 +95,12 @@ export function formatNotificationTitle(raw) {
   if (m) {
     const severity = SEVERITY_WORDS[m[1].toUpperCase()] || m[1];
     return `Alert ${severity} · Machine ${m[2].trim()}`;
+  }
+
+  // "🔧 Nouvelle intervention assignée : <title>" (backend assignment title)
+  m = s.match(/^Nouvelle intervention(?: de maintenance)? assignée\s*:\s*(.+)$/i);
+  if (m) {
+    return `New intervention assigned: ${m[1].trim()}`;
   }
 
   if (/^Nouvelle intervention de maintenance assignée$/i.test(s)) {
@@ -117,6 +125,16 @@ export function formatNotificationMessage(raw) {
     "Threshold exceeded: value "
   );
   if (s !== repaired) return s;
+
+  // Maintenance assignment body:
+  // "Machine : X | Type : CORRECTIVE | Priorité : HIGH | Affectée le : ..."
+  if (/\b(?:Machine|Type|Priorité|Affectée le)\s*:/.test(repaired)) {
+    return repaired
+      .replace(/\bMachine\s*:/g, "Machine:")
+      .replace(/\bType\s*:/g, "Type:")
+      .replace(/\bPriorité\s*:/g, "Priority:")
+      .replace(/\bAffectée le\s*:/g, "Assigned:");
+  }
 
   // Alert bodies reuse the alert translator ("Capteur … hors ligne", etc.).
   return formatAlertMessage(repaired);

@@ -68,8 +68,10 @@ export const ENDPOINTS = Object.freeze({
 
   // --- Notifications (CONFIRMED — NotificationController, Sprint 5 US40) ---
   // AppNotification: { id, userId, alertId?, machineId?, title, message,
-  // type: ALERT_CRITICAL | ALERT_HIGH | MAINTENANCE_ASSIGNED | INFO,
-  // isRead, createdAt }. No STOMP publisher — REST only + FCM push (mobile).
+  // type: ALERT_CRITICAL | ALERT_HIGH | ALERT_WARNING | MAINTENANCE_ASSIGNED | INFO,
+  // isRead, createdAt }. REST + per-user STOMP topics
+  // /topic/users/{userId}/notifications and /topic/users/{userId}/unread-count,
+  // plus FCM push for closed-app delivery (mobile).
   NOTIFICATIONS: "/api/notifications", // CONFIRMED — GET ?page=&size= (default 20) → Page<AppNotification>, current user only
   NOTIFICATION_MARK_READ: "/api/notifications/:id/read", // CONFIRMED — PUT ?userId= → marked-read notification
   NOTIFICATIONS_UNREAD_COUNT: "/api/notifications/unread-count", // CONFIRMED — GET ?userId= → { unreadCount }

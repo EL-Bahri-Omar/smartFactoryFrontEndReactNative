@@ -27,7 +27,7 @@ const NAV_GROUPS = [
     key: "monitoring",
     label: "Monitoring",
     items: [
-      { label: "Alerts", icon: "🔔", path: "/(app)/alerts" },
+      { label: "Alerts", icon: "🔔", path: "/(app)/alerts", access: "alerts" },
       { label: "Notifications", icon: "📣", path: "/(app)/notifications" },
       { label: "Maintenance", icon: "🔧", path: "/(app)/maintenance", access: "maintenance" },
       { label: "History", icon: "📜", path: "/(app)/history" },

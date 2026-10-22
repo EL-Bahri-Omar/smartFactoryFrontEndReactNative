@@ -76,9 +76,16 @@ export default function DashboardScreen() {
   const { data, status, error } = useAppSelector((s) => s.dashboard);
   const isDesktop = useBreakpoint() === "desktop";
 
-  const canReadAlerts = hasPermission(PERMISSIONS.ALERT_READ);
+  // Alerts are for every role EXCEPT OPERATOR (backend AlertController).
+  const isOperator = role === "OPERATOR";
+  const canReadAlerts =
+    !isOperator &&
+    (hasPermission(PERMISSIONS.ALERT_READ) ||
+      ["ADMIN", "RESPONSABLE_INDUSTRIEL", "TECHNICIAN"].includes(role));
   const canReadMaintenance = canAccess("maintenance");
-  const canWriteMaintenance = hasPermission(PERMISSIONS.MAINTENANCE_WRITE);
+  // Only the responsable industriel creates interventions; technicians and
+  // responsables edit them (see the Maintenance screens).
+  const canCreateMaintenance = role === "RESPONSABLE_INDUSTRIEL";
   const canWriteMachines = hasPermission(PERMISSIONS.MACHINE_WRITE);
   const canReadUsers = canAccess("users");
 
@@ -421,7 +428,7 @@ export default function DashboardScreen() {
               Quick actions
             </Text>
             <View className="flex-row flex-wrap gap-2">
-              {canWriteMaintenance ? (
+              {canCreateMaintenance ? (
                 <Button
                   title="+ New intervention"
                   variant="primary"

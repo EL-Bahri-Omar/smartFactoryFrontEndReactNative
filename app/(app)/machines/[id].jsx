@@ -141,7 +141,7 @@ export default function MachineDetailScreen() {
   const dispatch = useAppDispatch();
   const router = useRouter();
   const dialog = useDialog();
-  const { canAccess, homeRoute, hasPermission } = useRole();
+  const { canAccess, homeRoute, hasPermission, role } = useRole();
   const isDesktop = useBreakpoint() === "desktop";
   const dark = useDark();
 
@@ -150,9 +150,11 @@ export default function MachineDetailScreen() {
   const canReadTelemetry = hasPermission(PERMISSIONS.READINGS_READ);
   const canReadThresholds = hasPermission(PERMISSIONS.THRESHOLD_READ);
   const canWriteThresholds = hasPermission(PERMISSIONS.THRESHOLD_WRITE);
-  // Machine sensor alerts tab (item 9): ADMIN / TECHNICIAN /
-  // RESPONSABLE_INDUSTRIEL all hold ALERT_READ (backend Role defaults).
-  const canReadAlerts = hasPermission(PERMISSIONS.ALERT_READ);
+  // Machine sensor alerts tab (item 9): every role except OPERATOR.
+  const canReadAlerts =
+    role !== "OPERATOR" &&
+    (hasPermission(PERMISSIONS.ALERT_READ) ||
+      ["ADMIN", "RESPONSABLE_INDUSTRIEL", "TECHNICIAN"].includes(role));
 
   const {
     current,

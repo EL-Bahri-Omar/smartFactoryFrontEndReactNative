@@ -6,10 +6,13 @@
 //
 // REST GET /api/notifications returns the CURRENT USER's rows only and has
 // no server-side type filter, so tab filtering is client-side over `list`
-// (backend types: ALERT_CRITICAL | ALERT_HIGH | MAINTENANCE_ASSIGNED | INFO;
-// the "Alerts" tab groups ALERT_CRITICAL + ALERT_HIGH). There is NO
-// /topic/notifications STOMP publisher: rows come from REST only, plus the
-// TopBar badge whose server value can be refreshed anywhere (refreshUnread).
+// (backend types: ALERT_CRITICAL | ALERT_HIGH | ALERT_WARNING |
+// MAINTENANCE_ASSIGNED | INFO; the "Alerts" tab groups every ALERT_*).
+// The backend also broadcasts each new row on
+// /topic/users/{userId}/notifications and the unread count on
+// /topic/users/{userId}/unread-count — `receiveNotification` and
+// `setServerUnread` apply those live updates so assignments and alerts show
+// up without reopening the screen.
 //
 // "Mark all" walks unread rows and fires one PUT per row — the backend has
 // no batch mark-read endpoint.
@@ -102,6 +105,52 @@ const notificationSlice = createSlice({
     bumpLocalUnread(state) {
       state.unread.server = null;
     },
+    /**
+     * Live row from /topic/users/{userId}/notifications. Upsert by id so a
+     * re-delivered message never duplicates a row.
+     */
+    receiveNotification(state, action) {
+      const raw = action.payload;
+      if (!raw) return;
+      const id = raw.id ?? raw.notificationId;
+      if (!id) return;
+
+      let notifType = raw.type || null;
+      if (!notifType) {
+        const severity = String(raw.severity || "").toUpperCase();
+        notifType = severity ? (severity === "WARNING" ? "ALERT_WARNING" : `ALERT_${severity}`) : "INFO";
+      }
+
+      const row = {
+        id,
+        userId: raw.userId ?? null,
+        type: notifType,
+        alertId: raw.alertId ?? null,
+        machineId: raw.machineId ?? null,
+        title: raw.title || "",
+        message: raw.message || "",
+        isRead: raw.isRead ?? raw.read ?? false,
+        createdAt: raw.createdAt || new Date().toISOString(),
+      };
+
+      // Mirror the backend: a WARNING → CRITICAL transition marks the old
+      // warning notification read (only the critical row stays unread).
+      if (String(notifType).toUpperCase() === "ALERT_CRITICAL" && row.alertId) {
+        state.list.forEach((n) => {
+          if (n.alertId === row.alertId && String(n.type || "").toUpperCase() === "ALERT_WARNING") {
+            n.isRead = true;
+          }
+        });
+      }
+
+      state.list = [row, ...state.list.filter((n) => n.id !== id)].slice(0, MAX_LIST_SIZE);
+    },
+    /** Exact unread count pushed on /topic/users/{userId}/unread-count. */
+    setServerUnread(state, action) {
+      const count = Number(action.payload);
+      state.unread.server = Number.isFinite(count) ? count : 0;
+      state.unread.status = "succeeded";
+    },
     clearNotifications(state) {
       state.list = [];
       state.status = "idle";
@@ -160,5 +209,11 @@ const notificationSlice = createSlice({
   },
 });
 
-export const { setType, bumpLocalUnread, clearNotifications } = notificationSlice.actions;
+export const {
+  setType,
+  bumpLocalUnread,
+  receiveNotification,
+  setServerUnread,
+  clearNotifications,
+} = notificationSlice.actions;
 export default notificationSlice.reducer;

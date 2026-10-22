@@ -9,10 +9,13 @@
 //   POST  /api/maintenance/:id/observations       technical observation
 //   PUT   /api/maintenance/:id/close              terminal closure
 //
-// UI gating mirrors the backend PreAuthorize (server enforces anyway):
-//   assign/close/observations → ADMIN / RESPONSABLE_INDUSTRIEL (+ TECHNICIAN)
-//   diagnoses/actions         → TECHNICIAN / ADMIN only (backend excludes
-//                               plain RESPONSABLE_INDUSTRIEL there)
+// UI gating mirrors the product rule (the server enforces the truth):
+//   create                     → RESPONSABLE_INDUSTRIEL only (maintenance list)
+//   assign / details / close   → RESPONSABLE_INDUSTRIEL
+//   diagnosis / action / obs   → TECHNICIAN
+//   status (start / complete)  → TECHNICIAN
+//   ADMIN                      → read-only consult
+// Everyone except OPERATOR can consult the interventions list.
 
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { View, Text, ScrollView, Pressable } from "react-native";
@@ -70,7 +73,7 @@ export default function InterventionDetailScreen() {
   const router = useRouter();
   const dispatch = useAppDispatch();
   const dark = useDark();
-  const { role } = useRole();
+  const { role, user } = useRole();
 
   const { current, currentStatus, currentError, mutating } = useAppSelector((s) => s.maintenance);
   const { list: users } = useAppSelector((s) => s.user);
@@ -105,20 +108,24 @@ export default function InterventionDetailScreen() {
 
   const darkText = dark ? "text-white" : "text-text";
   const darkMuted = dark ? "text-white/60" : "text-text-muted";
-  const isManager = ["ADMIN", "RESPONSABLE_INDUSTRIEL"].includes(role);
+  const isResponsable = role === "RESPONSABLE_INDUSTRIEL";
   const isTechnician = role === "TECHNICIAN";
-  const canAssign = isManager; // backend guard: RESPONSABLE_INDUSTRIEL / ADMIN (+ MAINTENANCE:MODIFIER)
-  // Backend truth: diagnoses and actions accept TECHNICIAN /
-  // ADMIN (+ MAINTENANCE:MODIFIER) — NOT plain RESPONSABLE_INDUSTRIEL.
-  // Observations and close accept all three roles.
-  const canDiagnose = isTechnician || role === "ADMIN";
-  const canObserve = isTechnician || isManager;
-  const canClose = isTechnician || isManager;
-  // Item 10 — the technician owns the execution details: description,
-  // observations, actions performed, parts, and the status transitions
-  // (In progress on receipt / Completed when done; default is To do).
-  const canEditDetails = isTechnician || isManager;
-  const canChangeStatus = isTechnician || isManager;
+  // A technician edits only the intervention assigned to them (the backend
+  // enforces this too). The assigned technicianId is the canonical user id.
+  const assignedToMe =
+    !!current?.technicianId &&
+    (current.technicianId === user?.id || current.technicianId === user?.email);
+  const canWorkOnIt = !isTechnician || assignedToMe;
+  // Different edit scopes for the two editing roles:
+  //  - RESPONSABLE_INDUSTRIEL: assignment, core details, closure.
+  //  - TECHNICIAN: diagnoses / actions / observations, work status, closure.
+  //  - ADMIN: read-only consult (only the responsable creates; RESP + TECH edit).
+  const canAssign = isResponsable;
+  const canDiagnose = isTechnician && canWorkOnIt;
+  const canObserve = isTechnician && canWorkOnIt;
+  const canClose = isResponsable || (isTechnician && canWorkOnIt);
+  const canEditDetails = isResponsable;
+  const canChangeStatus = isTechnician && canWorkOnIt;
   const openStatus = current && current.status !== "COMPLETED" && current.status !== "CANCELLED";
 
   const technicianOptions = useMemo(
@@ -126,8 +133,9 @@ export default function InterventionDetailScreen() {
       (users || [])
         .filter((u) => u.role === "TECHNICIAN")
         .map((u) => ({
-          value: u.username || u.id,
-          label: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.username || u.id,
+          // Prefer the Mongo id; the backend also accepts the email.
+          value: u.id || u.email || u.username,
+          label: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email || u.username || u.id,
         })),
     [users]
   );
@@ -755,7 +763,7 @@ export default function InterventionDetailScreen() {
             onChangeText={(v) => setCloseForm((f) => ({ ...f, closureNotes: v }))}
             multiline
           />
-          {isManager && (
+          {isResponsable && (
             <Pressable
               onPress={() => setCloseForm((f) => ({ ...f, restoreMachineStatus: !f.restoreMachineStatus }))}
               className="flex-row items-center gap-2"

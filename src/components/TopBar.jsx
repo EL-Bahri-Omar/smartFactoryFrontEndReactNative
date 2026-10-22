@@ -13,11 +13,12 @@ import { useRouter, usePathname } from "expo-router";
 import { useAppDispatch } from "../hooks/useAppDispatch";
 import { useAppSelector } from "../hooks/useAppSelector";
 import { useDark } from "../hooks/useDark";
+import { useLiveTopic } from "../hooks/useLiveTopic";
 import { useDialog } from "./dialog/DialogContext";
 import { setNotifications } from "../store/slices/settingsSlice";
 import { logoutThunk } from "../store/slices/authSlice";
 import { markAllRead } from "../store/slices/liveSlice";
-import { refreshUnreadCount } from "../store/slices/notificationSlice";
+import { refreshUnreadCount, setServerUnread } from "../store/slices/notificationSlice";
 import Avatar from "./Avatar";
 
 // Door + arrow exit icon (logout), drawn in currentColor-style red.
@@ -82,9 +83,21 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
   // Bell badge: server truth first (GET /api/notifications/unread-count,
   // refreshed by refreshUnreadCount), falling back to the live counter
   // (liveSlice counts alert/notification STOMP arrivals since last visit).
+  // The backend now pushes the exact count on
+  // /topic/users/{userId}/unread-count after every notification, so the
+  // server value is authoritative and is never added to the live counter.
   const liveUnread = useAppSelector((s) => s.live.unreadCount);
   const serverUnread = useAppSelector((s) => s.notification.unread.server);
-  const unreadCount = serverUnread != null ? serverUnread + liveUnread : liveUnread;
+  const unreadCount = serverUnread != null ? serverUnread : liveUnread;
+
+  const unreadTopic = user?.id ? `/topic/users/${user.id}/unread-count` : null;
+  const liveUnreadMessage = useLiveTopic(unreadTopic, { enabled: !!unreadTopic });
+
+  useEffect(() => {
+    if (liveUnreadMessage && liveUnreadMessage.unreadCount != null) {
+      dispatch(setServerUnread(liveUnreadMessage.unreadCount));
+    }
+  }, [liveUnreadMessage, dispatch]);
 
   // Periodic server unread sync (60 s + on mount). When the count succeeds,
   // the live counter resets so an alert arriving while the app is open is

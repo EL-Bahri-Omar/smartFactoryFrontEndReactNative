@@ -10,11 +10,12 @@
 //   DELETE /api/notifications/tokens/:token
 //
 // AppNotification row: { id, userId, alertId?, machineId?, title, message,
-// type: ALERT_CRITICAL | ALERT_HIGH | MAINTENANCE_ASSIGNED | INFO,
+// type: ALERT_CRITICAL | ALERT_HIGH | ALERT_WARNING | MAINTENANCE_ASSIGNED | INFO,
 // isRead, createdAt }. Backend never created the INFO type yet, but the
 // field allows it, so the UI treats it as a fourth tab.
-// There is NO /topic/notifications STOMP publisher and NO batch mark-read;
-// "mark all" is a sequential markRead loop in the slice.
+// Live delivery: /topic/users/{userId}/notifications (row payload) and
+// /topic/users/{userId}/unread-count (exact badge count). There is NO batch
+// mark-read; "mark all" is a sequential markRead loop in the slice.
 
 import api from "../../lib/axios";
 import { ENDPOINTS, buildUrl } from "../../constants/api";

@@ -2,6 +2,7 @@
 // Mobile bottom tabs, filtered by role access:
 // supervisors (ADMIN, RESPONSABLE_INDUSTRIEL): Home, Machines, Alerts, More.
 // other roles: Map, Alerts, More (Home points at their landing page).
+// OPERATOR has no Alerts tab (alerts are for every role except operator).
 
 import { View, Text, Pressable } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -12,14 +13,14 @@ import { useRole } from "../hooks/useRole";
 const FULL_TABS = [
   { label: "Home", icon: "🏠", path: "/(app)/dashboard" },
   { label: "Machines", icon: "⚙️", path: "/(app)/machines" },
-  { label: "Alerts", icon: "🔔", path: "/(app)/alerts" },
+  { label: "Alerts", icon: "🔔", path: "/(app)/alerts", access: "alerts" },
   { label: "More", icon: "☰", path: "/(app)/settings" },
 ];
 
 const LIMITED_TABS = [
   { label: "Map", icon: "🗺️", path: "/(app)/map" },
   { label: "Group", icon: "👤", path: "/(app)/my-group", roles: ["OPERATOR", "RESPONSABLE_INDUSTRIEL"] },
-  { label: "Alerts", icon: "🔔", path: "/(app)/alerts" },
+  { label: "Alerts", icon: "🔔", path: "/(app)/alerts", access: "alerts" },
   { label: "More", icon: "☰", path: "/(app)/settings" },
 ];
 
@@ -29,7 +30,11 @@ export default function BottomTabs() {
   const dark = useDark();
   const { canAccess, role } = useRole();
   const base = canAccess("dashboard") ? FULL_TABS : LIMITED_TABS;
-  const tabs = base.filter((t) => !t.roles || (role && t.roles.includes(role)));
+  const tabs = base.filter(
+    (t) =>
+      (!t.access || canAccess(t.access)) &&
+      (!t.roles || (role && t.roles.includes(role)))
+  );
   // Lift labels above the phone gesture / navigation bar (0 on web).
   const insets = useSafeAreaInsets();
 
