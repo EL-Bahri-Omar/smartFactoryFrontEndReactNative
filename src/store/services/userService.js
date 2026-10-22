@@ -21,6 +21,21 @@ export async function getAll(params = {}) {
   return response.data;
 }
 
+/**
+ * GET /api/users/technicians (ANY authenticated role) ->
+ * [{ id, firstName, lastName, email, role, status }]
+ *
+ * Lightweight picker for the intervention team — deliberately separate
+ * from GET /api/users, which requires USER_READ: the Responsable
+ * Industriel creates interventions and picks technicians but does not
+ * hold user-management rights (a 403 there left the picker empty).
+ */
+export async function getTechnicians() {
+  const response = await api.get(`${ENDPOINTS.USERS}/technicians`);
+  const data = response.data;
+  return Array.isArray(data) ? data : data?.content || [];
+}
+
 /** GET /api/users/:id (USER_READ) */
 export async function getById(id) {
   const url = buildUrl(ENDPOINTS.USER_BY_ID, { id });

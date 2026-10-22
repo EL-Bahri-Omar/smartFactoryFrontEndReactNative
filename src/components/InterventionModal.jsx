@@ -9,16 +9,18 @@
 //   description?, type: CORRECTIVE|PREVENTIVE|IMPROVEMENT (required),
 //   preventiveSubtype: SYSTEMATIC|CONDITIONAL (required iff PREVENTIVE),
 //   priority: LOW|MEDIUM|HIGH (default MEDIUM), alertId?, anomalyId?,
-//   technicianId?, scheduledAt?
+//   technicianIds?: [id]  (team chosen at creation; each technician notified), scheduledAt?
 //
 // SCHEDULED DATE RULE: the "Scheduled for" picker only renders for
 // PREVENTIVE and IMPROVEMENT interventions — a corrective fix is reactive,
 // so there is nothing to schedule (per review feedback).
 //
-// The technician picker only appears when a technician list is available
-// (USER_READ); with no technician accounts it shows an honest note — the
-// assignment can be done later from the intervention detail screen
-// (server resolves technicianId by Mongo id or email).
+// The technician picker is a MULTI-SELECT list (checkbox rows) so the
+// responsable can build the whole team when creating the intervention
+// (US43: an intervention can have several technicians). It only appears when
+// a technician list is available (USER_READ); with no technician accounts it
+// shows an honest note — the assignment can be done later from the
+// intervention detail screen (server resolves ids by Mongo id or email).
 //
 // Web details: the sheet is widened (maxWidth 760) and the scheduled date
 // uses SEPARATE date + time native inputs with explicit light
@@ -26,7 +28,7 @@
 // dark calendar popup that swallows the form (fixed in review).
 
 import { useEffect, useState } from "react";
-import { View, Text, Pressable } from "react-native";
+import { View, Text, Pressable, ScrollView } from "react-native";
 import Input from "./Input";
 import Select from "./Select";
 import Button from "./Button";
@@ -36,7 +38,7 @@ import { useAppDispatch } from "../hooks/useAppDispatch";
 import { useAppSelector } from "../hooks/useAppSelector";
 import { createIntervention } from "../store/slices/interventionSlice";
 import { fetchMachines } from "../store/slices/machineSlice";
-import { fetchUsers } from "../store/slices/userSlice";
+import { fetchTechnicians } from "../store/slices/userSlice";
 import { TICKET_PRIORITY } from "../constants/roles";
 import { getTicketPriority, INTERVENTION_TYPE_LABELS, PREVENTIVE_SUBTYPE_LABELS } from "../lib/status";
 import { useDark } from "../hooks/useDark";
@@ -68,7 +70,7 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
   const dialog = useDialog();
   const dark = useDark();
   const { list: machines } = useAppSelector((s) => s.machine);
-  const { list: users, listStatus: usersStatus } = useAppSelector((s) => s.user);
+  const { list: users, technicians, techniciansStatus } = useAppSelector((s) => s.user);
 
   const [machineId, setMachineId] = useState("");
   const [title, setTitle] = useState("");
@@ -76,9 +78,8 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
   const [type, setType] = useState("CORRECTIVE");
   const [preventiveSubtype, setPreventiveSubtype] = useState(null);
   const [priority, setPriority] = useState("MEDIUM");
-  const [technicianId, setTechnicianId] = useState(null);
+  const [technicianIds, setTechnicianIds] = useState([]); // team: [mongoId]
   const [scheduledAt, setScheduledAt] = useState(null);
-  const [techListFailed, setTechListFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -87,34 +88,40 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
     label: `${m.code || m.machineCode || m.id} — ${m.name || m.type || "Machine"}`,
   }));
 
-  // Technician candidates: role TECHNICIAN only (backend validates the id /
-  // email it resolves). Users have NO username field — the value MUST be
-  // the Mongo id (email fallback in the detail screen).
-  const technicianOptions = (users || [])
-    .filter((u) => u.role === "TECHNICIAN")
-    .map((u) => ({
-      value: u.id,
-      label: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email,
-    }));
+  // Technician candidates: GET /api/users/technicians (any authenticated
+  // role — the responsable has no USER_READ). Fallback to the full users
+  // list when that endpoint is not available yet (backend not restarted).
+  // Value MUST be the Mongo id (backend also accepts the email).
+  const techSource =
+    techniciansStatus === "error" || (technicians || []).length === 0
+      ? (users || []).filter((u) => u.role === "TECHNICIAN")
+      : technicians;
+  const technicianOptions = techSource.map((u) => ({
+    value: u.id || u.email,
+    label: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email,
+    sub: u.email || "",
+  }));
+
+  /** Add/remove one technician from the team (multi-select). */
+  function toggleTechnician(id) {
+    setTechnicianIds((prev) =>
+      prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
+    );
+  }
 
   useEffect(() => {
     if (!visible) return;
     if (!prefill?.machineId) dispatch(fetchMachines({ size: 100 }));
-    // Silent best-effort fetch to fill the technician picker. A 403 just
-    // hides the list (the user cannot assign anyway per the role rules).
-    if (usersStatus !== "succeeded") {
-      dispatch(fetchUsers({ size: 100 }))
-        .unwrap()
-        .then(() => setTechListFailed(false))
-        .catch(() => setTechListFailed(true));
-    }
+    // Silent best-effort fetch to fill the technician picker (deduped by
+    // the slice status — no refetch when the list is already warm).
+    if (techniciansStatus === "idle") dispatch(fetchTechnicians());
     setMachineId(prefill?.machineId || prefill?.machineCode || "");
     setTitle(prefill?.title || (prefill?.alertMessage ? `Fix: ${prefill.alertMessage}` : ""));
     setDescription(prefill?.description || "");
     setType(prefill?.type || "CORRECTIVE");
     setPreventiveSubtype(prefill?.type === "PREVENTIVE" ? prefill?.preventiveSubtype || null : null);
     setPriority(prefill?.priority || "MEDIUM");
-    setTechnicianId(null);
+    setTechnicianIds([]);
     setScheduledAt(null);
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -136,7 +143,7 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
           type,
           preventiveSubtype: type === "PREVENTIVE" ? preventiveSubtype || undefined : undefined,
           priority,
-          technicianId: technicianId || undefined,
+          technicianIds: technicianIds.length > 0 ? technicianIds : undefined,
           scheduledAt:
             typeAllowsSchedule(type) && scheduledAt
               ? new Date(scheduledAt).toISOString()
@@ -164,7 +171,7 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
       subtitle={
         prefill?.alertId
           ? "Linked to the selected alert — the details are pre-filled."
-          : "Describe the work and, if you want, assign a technician."
+          : "Describe the work and pick the technicians for the job."
       }
       footer={
         <View className="flex-row gap-2 justify-end">
@@ -253,8 +260,8 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
             </View>
           </View>
 
-          {/* Subtype (PREVENTIVE only) + priority + technician share one row
-              so the whole form — buttons included — fits without scrolling. */}
+          {/* Subtype (PREVENTIVE only) + priority share one row so the whole
+              form — buttons included — fits without scrolling. */}
           <View className="flex-row flex-wrap gap-3">
             {type === "PREVENTIVE" && (
               <View style={{ minWidth: 170, flex: 1 }}>
@@ -270,22 +277,73 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
             <View style={{ minWidth: 160, flex: 1 }}>
               <Select label="Priority" value={priority} onValueChange={setPriority} options={PRIORITY_OPTIONS} />
             </View>
-            {!techListFailed && technicianOptions.length > 0 && (
-              <View style={{ minWidth: 200, flex: 1 }}>
-                <Select
-                  label="Technician (optional)"
-                  value={technicianId}
-                  onValueChange={setTechnicianId}
-                  placeholder="Assign now (optional)"
-                  options={technicianOptions}
-                />
-              </View>
-            )}
           </View>
 
-          {!techListFailed && usersStatus === "succeeded" && technicianOptions.length === 0 && (
+          {/* ── Team of technicians (multi-select list) ── */}
+          {technicianOptions.length > 0 && (
+            <View>
+              <View className="flex-row items-center justify-between mb-1.5">
+                <Text className={`text-xs font-semibold font-inter ${muted}`}>
+                  Technicians {technicianIds.length > 0 ? `(${technicianIds.length} selected)` : "(optional)"}
+                </Text>
+                {technicianIds.length > 0 && (
+                  <Pressable onPress={() => setTechnicianIds([])} hitSlop={8}>
+                    <Text className="text-[11px] font-inter font-semibold text-primary">Clear</Text>
+                  </Pressable>
+                )}
+              </View>
+              <ScrollView
+                style={{ maxHeight: 168 }}
+                className={`rounded-btn border ${dark ? "bg-white/5 border-white/15" : "bg-bg border-border"}`}
+                showsVerticalScrollIndicator={false}
+              >
+                {technicianOptions.map((tech) => {
+                  const active = technicianIds.includes(tech.value);
+                  return (
+                    <Pressable
+                      key={tech.value}
+                      onPress={() => toggleTechnician(tech.value)}
+                      className={`flex-row items-center px-3 py-2.5 border-b ${dark ? "border-white/5" : "border-border/50"}`}
+                      style={({ pressed }) => [
+                        { backgroundColor: active ? "rgba(37,99,235,0.08)" : "transparent" },
+                        pressed ? { opacity: 0.8 } : null,
+                      ]}
+                    >
+                      {/* Checkbox */}
+                      <View
+                        className="w-5 h-5 rounded-btn items-center justify-center mr-3"
+                        style={{
+                          borderWidth: 1.5,
+                          borderColor: active ? "#2563EB" : dark ? "rgba(255,255,255,0.35)" : "#CBD5E1",
+                          backgroundColor: active ? "#2563EB" : "transparent",
+                        }}
+                      >
+                        {active && <Text className="text-[11px] font-bold text-white">✓</Text>}
+                      </View>
+                      <View className="flex-1">
+                        <Text className={`text-sm font-inter ${active ? "font-semibold" : "font-medium"} ${dark ? "text-white" : "text-text"}`}>
+                          {tech.label}
+                        </Text>
+                        {tech.sub ? (
+                          <Text className={`text-[11px] font-inter ${muted}`} numberOfLines={1}>
+                            {tech.sub}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+              <Text className={`text-[11px] font-inter mt-1 ${muted}`}>
+                Each selected technician receives the assignment notification.
+              </Text>
+            </View>
+          )}
+
+          {(techniciansStatus === "succeeded" || techniciansStatus === "error") &&
+            technicianOptions.length === 0 && (
             <Text className={`text-xs font-inter ${muted}`}>
-              No technician accounts yet — you can assign one later from the
+              No technician accounts yet — you can assign a team later from the
               intervention detail screen.
             </Text>
           )}

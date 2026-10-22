@@ -1,5 +1,6 @@
 // src/components/TopBar.jsx
-// Top bar: back button, menu (drawer), theme toggle, notification bell
+// Top bar: back button, menu (drawer), theme toggle, alerts shortcut
+// (yellow triangle icon + active-alert badge), notification bell
 // (unread badge + link to /notifications), logout (red exit icon),
 // avatar -> profile.
 // Icon buttons share one real-button treatment: light surface, light border,
@@ -13,6 +14,7 @@ import { useRouter, usePathname } from "expo-router";
 import { useAppDispatch } from "../hooks/useAppDispatch";
 import { useAppSelector } from "../hooks/useAppSelector";
 import { useDark } from "../hooks/useDark";
+import { useRole } from "../hooks/useRole";
 import { useLiveTopic } from "../hooks/useLiveTopic";
 import { useDialog } from "./dialog/DialogContext";
 import { setNotifications } from "../store/slices/settingsSlice";
@@ -44,6 +46,26 @@ function BackIcon({ size = 20, color }) {
         d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"
         fill={color}
       />
+    </Svg>
+  );
+}
+
+// Alerts shortcut — yellow warning triangle with a red "!" inside, so it is
+// visually distinct from the notification bell next to it.
+function AlertTriangleIcon({ size = 22 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      {/* triangle body */}
+      <Path
+        d="M12 3.2 22.2 20.8H1.8L12 3.2z"
+        fill="#FACC15"
+        stroke="#B45309"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+      {/* red exclamation mark */}
+      <Path d="M11 9.5h2v6.2h-2z" fill="#DC2626" />
+      <Path d="M11 17.4h2v2.2h-2z" fill="#DC2626" />
     </Svg>
   );
 }
@@ -89,6 +111,18 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
   const liveUnread = useAppSelector((s) => s.live.unreadCount);
   const serverUnread = useAppSelector((s) => s.notification.unread.server);
   const unreadCount = serverUnread != null ? serverUnread : liveUnread;
+
+  // Active (unresolved) alert rows already loaded by the app — used only for
+  // the shortcut badge; the backend is the source of truth. The count is
+  // computed INSIDE the selector so it returns a primitive (a filtered array
+  // would be a new reference every call and force pointless rerenders).
+  const activeAlerts = useAppSelector(
+    (s) => (s.alert?.list || []).filter((a) => a.status === "ACTIVE").length
+  );
+
+  // Alerts are for every role EXCEPT OPERATOR (mirrors ACCESS.alerts).
+  const { isOperator } = useRole();
+  const showAlertsShortcut = !isOperator;
 
   const unreadTopic = user?.id ? `/topic/users/${user.id}/unread-count` : null;
   const liveUnreadMessage = useLiveTopic(unreadTopic, { enabled: !!unreadTopic });
@@ -173,6 +207,25 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
       <IconButton onPress={toggleTheme} label="Toggle dark mode">
         <Text style={{ fontSize: 18 }}>{dark ? "☀️" : "🌙"}</Text>
       </IconButton>
+
+      {/* Alerts — yellow warning triangle; opens the Alerts screen */}
+      {showAlertsShortcut && (
+        <IconButton onPress={() => router.push("/(app)/alerts")} label="Alerts">
+          <View className="items-center justify-center">
+            <AlertTriangleIcon size={22} />
+            {activeAlerts > 0 && (
+              <View
+                className="absolute -top-0.5 -right-1 min-w-4 px-1 h-4 rounded-full items-center justify-center border"
+                style={{ backgroundColor: "#DC2626", borderColor: dark ? "#0B1D3A" : "#FFFFFF" }}
+              >
+                <Text className="text-[9px] font-bold text-white" style={{ lineHeight: 11 }}>
+                  {activeAlerts > 99 ? "99+" : activeAlerts}
+                </Text>
+              </View>
+            )}
+          </View>
+        </IconButton>
+      )}
 
       {/* Notification bell — badge + link to the Notifications screen */}
       <IconButton onPress={handleBell} label="Notifications">

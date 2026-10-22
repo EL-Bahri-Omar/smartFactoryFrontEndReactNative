@@ -45,6 +45,7 @@ import { useAppSelector } from "../../src/hooks/useAppSelector";
 import { useLiveTopic } from "../../src/hooks/useLiveTopic";
 import {
   fetchNotifications,
+  fetchMoreNotifications,
   markNotificationRead,
   markAllNotificationsRead,
   refreshUnreadCount,
@@ -66,6 +67,7 @@ import { formatNotificationTitle, formatNotificationMessage } from "../../src/li
 
 const TABS = [
   { key: "ALL", label: "All" },
+  { key: "UNREAD", label: "Unread" },
   { key: "ALERTS", label: "Alerts" },
   { key: "MAINTENANCE", label: "Maintenance" },
   { key: "INFO", label: "Info" },
@@ -202,7 +204,7 @@ export default function NotificationsScreen() {
     (hasPermission(PERMISSIONS.ALERT_READ) ||
       ["ADMIN", "RESPONSABLE_INDUSTRIEL", "TECHNICIAN"].includes(role));
 
-  const { list, type, status, error, pagination } = useAppSelector((s) => s.notification);
+  const { list, type, status, moreStatus, error, pagination } = useAppSelector((s) => s.notification);
   const { list: alertList } = useAppSelector((s) => s.alert);
   const liveConnected = useAppSelector((s) => s.live.connected);
   const user = useAppSelector((s) => s.auth.user);
@@ -240,7 +242,7 @@ export default function NotificationsScreen() {
   // remount) and load the alert context used for sensor grouping + dots.
   useFocusEffect(
     useCallback(() => {
-      dispatch(fetchNotifications({ page: 0, size: 50 }));
+      dispatch(fetchNotifications({ page: 0, size: 100 }));
       dispatch(refreshUnreadCount());
       if (canReadAlerts) dispatch(fetchAlerts({ page: 0, size: 100 }));
     }, [dispatch, canReadAlerts])
@@ -261,14 +263,17 @@ export default function NotificationsScreen() {
 
   const rows = useMemo(() => {
     if (type === "ALL") return allRows;
+    if (type === "UNREAD") return allRows.filter((row) => !row.isRead);
     return allRows.filter((row) => tabForType(row.n.type) === type);
   }, [allRows, type]);
 
-  const unreadCount = useMemo(() => {
-    const counts = { ALL: 0, ALERTS: 0, MAINTENANCE: 0, INFO: 0 };
+  // Tab counts show the FULL number of notifications (read + unread) so a
+  // filter never under-reports; the Unread chip is the only unread counter.
+  const tabCounts = useMemo(() => {
+    const counts = { ALL: 0, UNREAD: 0, ALERTS: 0, MAINTENANCE: 0, INFO: 0 };
     allRows.forEach((row) => {
-      if (row.isRead) return;
       counts.ALL += 1;
+      if (!row.isRead) counts.UNREAD += 1;
       const key = tabForType(row.n.type);
       if (counts[key] != null) counts[key] += 1;
     });
@@ -339,7 +344,13 @@ export default function NotificationsScreen() {
   const empty = !initiating && rows.length === 0;
   const darkText = dark ? "text-white" : "text-text";
   const darkMuted = dark ? "text-white/60" : "text-text-muted";
-  const hasUnread = unreadCount.ALL > 0;
+  const hasUnread = tabCounts.UNREAD > 0;
+  // Real pagination: the first page replaces the list, older pages append.
+  const canLoadMore = (pagination.page ?? 0) + 1 < (pagination.totalPages ?? 1);
+  // Read vs unread must be obvious at a glance: unread = strong blue tint +
+  // left border, read = neutral slate card (same recipe on the Alerts screen).
+  const unreadBg = dark ? "rgba(96,165,250,0.30)" : "#DBEAFE";
+  const readBg = dark ? "#152440" : "#F1F5F9";
 
   function renderRow(row, index) {
     const n = row.n;
@@ -356,7 +367,7 @@ export default function NotificationsScreen() {
           {
             borderLeftWidth: 3,
             borderLeftColor: unread ? "#2563EB" : "transparent",
-            backgroundColor: unread ? (dark ? "rgba(37,99,235,0.16)" : "rgba(37,99,235,0.06)") : "transparent",
+            backgroundColor: unread ? unreadBg : readBg,
           },
           pressed ? { opacity: 0.85 } : null,
         ]}
@@ -446,9 +457,10 @@ export default function NotificationsScreen() {
           </View>
         </View>
 
-        {/* Tabs with unread counts — scrollable chips on mobile */}
+        {/* Tabs — full counts (read + unread); the Unread chip is the only
+            unread counter. Scrollable chips on mobile. */}
         <FilterChips
-          chips={TABS.map((t) => ({ ...t, count: unreadCount[t.key] ?? 0 }))}
+          chips={TABS.map((t) => ({ ...t, count: tabCounts[t.key] ?? 0 }))}
           active={type}
           onChange={(key) => dispatch(setType(key))}
           className="mb-4"
@@ -485,11 +497,13 @@ export default function NotificationsScreen() {
               message={
                 error
                   ? "Could not load your notifications. Check your connection and retry."
-                  : type === "MAINTENANCE"
-                    ? "Maintenance assignments will appear here when someone schedules you on an intervention."
-                    : type === "ALERTS"
-                      ? "Alert notifications addressed to your account will appear here."
-                      : "Critical/warning alerts and maintenance assignments addressed to your account will appear here."
+                  : type === "UNREAD"
+                    ? "Every notification has been read."
+                    : type === "MAINTENANCE"
+                      ? "Maintenance assignments will appear here when someone schedules you on an intervention."
+                      : type === "ALERTS"
+                        ? "Alert notifications addressed to your account will appear here."
+                        : "Critical/warning alerts and maintenance assignments addressed to your account will appear here."
               }
               action={
                 error ? (
@@ -504,8 +518,28 @@ export default function NotificationsScreen() {
               <View>{rows.map(renderRow)}</View>
               {rows.length > 0 && !error && (
                 <Text className={`text-[10px] font-inter text-center py-2 ${darkMuted}`}>
-                  {`${rows.length} of ${pagination.totalElements || rows.length} notifications`}
+                  {`${rows.length} of ${pagination.totalElements || rows.length} notifications loaded`}
                 </Text>
+              )}
+              {/* Older pages are appended, so history is reachable. */}
+              {canLoadMore && (
+                <View className="items-center pt-1 pb-2">
+                  <Button
+                    title="Load older notifications"
+                    variant="outline"
+                    size={isDesktop ? "sm" : "md"}
+                    className={isDesktop ? "" : "w-full"}
+                    loading={moreStatus === "loading"}
+                    onPress={() =>
+                      dispatch(
+                        fetchMoreNotifications({
+                          page: (pagination.page ?? 0) + 1,
+                          size: pagination.size ?? 100,
+                        })
+                      )
+                    }
+                  />
+                </View>
               )}
             </>
           )}

@@ -46,12 +46,13 @@ export const createIntervention = createAsyncThunk(
   }
 );
 
-/** PUT /api/maintenance/:id/assign { technicianId } (US43). */
+/** PUT /api/maintenance/:id/assign { technicianIds } (US43, team support). */
 export const assignIntervention = createAsyncThunk(
   "intervention/assign",
-  async ({ id, technicianId }, { rejectWithValue }) => {
+  async ({ id, technicianId, technicianIds }, { rejectWithValue }) => {
     try {
-      return await interventionService.assign(id, technicianId);
+      const team = Array.isArray(technicianIds) ? technicianIds : technicianId ? [technicianId] : [];
+      return await interventionService.assign(id, team);
     } catch (error) {
       return rejectWithValue(error);
     }
@@ -284,11 +285,17 @@ const interventionSlice = createSlice({
       .addCase(assignIntervention.pending, (state, action) => {
         state.mutating = "loading";
         // Optimistic assignment so the technician chip reacts instantly.
-        const { id, technicianId } = action.meta.arg || {};
+        const { id, technicianId, technicianIds } = action.meta.arg || {};
+        const team = Array.isArray(technicianIds) && technicianIds.length
+          ? technicianIds
+          : technicianId
+            ? [technicianId]
+            : [];
         const row = state.list.find((t) => t.id === id);
         const target = row || (state.current?.id === id ? state.current : null);
-        if (target && technicianId) {
-          target.technicianId = technicianId;
+        if (target && team.length) {
+          target.technicianId = team[0];
+          target.technicianIds = team;
           if (target.status === "PENDING") target.status = "ASSIGNED";
         }
       })

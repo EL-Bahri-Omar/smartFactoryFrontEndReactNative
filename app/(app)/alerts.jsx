@@ -285,6 +285,10 @@ export default function AlertsScreen() {
     const isActive = m.alert.status === "ACTIVE";
     const unread = isActive;
     const dangerous = m.sevMeta.color === "#DC2626";
+    // Read vs unread must be obvious at a glance: unread = strong severity
+    // tint + colored left border, read = neutral slate card.
+    const unreadBg = dark ? m.sevMeta.color + "3D" : m.sevMeta.color + "33";
+    const readBg = dark ? "#152440" : "#F1F5F9";
 
     return (
       <Pressable
@@ -296,9 +300,9 @@ export default function AlertsScreen() {
             borderLeftWidth: 3,
             borderLeftColor: unread ? m.sevMeta.color : "transparent",
             backgroundColor: unread
-              ? m.sevMeta.color + (dark ? "22" : "10")
-              : "transparent",
-            opacity: m.alert.status === "RESOLVED" ? 0.8 : 1,
+              ? unreadBg
+              : readBg,
+            opacity: m.alert.status === "RESOLVED" ? 0.85 : 1,
           },
           pressed ? { opacity: 0.85 } : null,
         ]}

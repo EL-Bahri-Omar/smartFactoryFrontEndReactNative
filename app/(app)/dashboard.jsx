@@ -398,7 +398,16 @@ export default function DashboardScreen() {
                             className={`text-[11px] font-inter mt-0.5 ml-4 ${dark ? "text-white/50" : "text-text-muted"}`}
                           >
                             {(t.machineCode || "—") +
-                              (t.technicianName ? ` · ${t.technicianName}` : " · unassigned") +
+                              ((t.technicianNames?.length || t.technicianName)
+                                ? ` · ${(t.technicianNames?.length ? t.technicianNames : [t.technicianName])
+                                    .filter(Boolean)
+                                    .slice(0, 2)
+                                    .join(", ")}${
+                                    (t.technicianNames?.length || 1) > 2
+                                      ? ` +${(t.technicianNames?.length || 1) - 2}`
+                                      : ""
+                                  }`
+                                : " · unassigned") +
                               (t.scheduledAt ? ` · ${relativeTime(t.scheduledAt)}` : "")}
                           </Text>
                         </Pressable>

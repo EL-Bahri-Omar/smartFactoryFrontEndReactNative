@@ -74,10 +74,16 @@ export async function getById(id) {
 /**
  * POST /api/maintenance (CONFIRMED US42). machineId accepts the Mongo id OR
  * the machine code (server resolves). type is REQUIRED; preventiveSubtype
- * required only when type === PREVENTIVE. technicianId optional — when set
- * the intervention is born ASSIGNED.
+ * required only when type === PREVENTIVE. technicianIds (list) optional —
+ * when set the intervention is born ASSIGNED and every technician of the
+ * team is notified. `technicianId` (single) is still accepted by the server.
  */
 export async function create(body) {
+  const team = Array.isArray(body.technicianIds)
+    ? body.technicianIds.filter(Boolean)
+    : body.technicianId
+      ? [body.technicianId]
+      : [];
   const response = await api.post(ENDPOINTS.INTERVENTIONS, {
     machineId: body.machineId,
     title: body.title,
@@ -90,16 +96,24 @@ export async function create(body) {
     priority: body.priority || undefined, // defaults to MEDIUM server-side
     alertId: body.alertId || undefined,
     anomalyId: body.anomalyId || undefined,
-    technicianId: body.technicianId || undefined,
+    technicianIds: team.length > 0 ? team : undefined,
     scheduledAt: body.scheduledAt || undefined,
   });
   return normalizeIntervention(response.data);
 }
 
-/** PUT /api/maintenance/:id/assign (CONFIRMED US43) → updated intervention. */
-export async function assign(id, technicianId) {
+/**
+ * PUT /api/maintenance/:id/assign (CONFIRMED US43) → updated intervention.
+ * Accepts ONE technician id or a LIST (the whole team is replaced).
+ */
+export async function assign(id, technicianIds) {
+  const team = Array.isArray(technicianIds)
+    ? technicianIds.filter(Boolean)
+    : technicianIds
+      ? [technicianIds]
+      : [];
   const url = buildUrl(ENDPOINTS.INTERVENTION_ASSIGN, { id });
-  const response = await api.put(url, { technicianId });
+  const response = await api.put(url, { technicianIds: team });
   return normalizeIntervention(response.data);
 }
 
@@ -273,6 +287,18 @@ export function normalizeIntervention(row) {
     anomalyId: row.anomalyId ?? null,
     technicianId: row.technicianId ?? null,
     technicianName: row.technicianName ?? row.technicianUsername ?? null,
+    // Full team (US43). Falls back to the single lead technician so old
+    // backend payloads still render a team of one.
+    technicianIds: Array.isArray(row.technicianIds) && row.technicianIds.length > 0
+      ? row.technicianIds.filter(Boolean)
+      : row.technicianId
+        ? [row.technicianId]
+        : [],
+    technicianNames: Array.isArray(row.technicianNames) && row.technicianNames.length > 0
+      ? row.technicianNames.filter(Boolean)
+      : row.technicianName
+        ? [row.technicianName]
+        : [],
     assignedBy: row.assignedBy ?? null,
     assignedAt: row.assignedAt ?? null,
     diagnoses: Array.isArray(row.diagnoses)

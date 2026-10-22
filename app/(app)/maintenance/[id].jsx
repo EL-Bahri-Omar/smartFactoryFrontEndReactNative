@@ -30,6 +30,7 @@ import EmptyState from "../../../src/components/EmptyState";
 import BottomSheet from "../../../src/components/BottomSheet";
 import BusyRow from "../../../src/components/BusyRow";
 import { useDark } from "../../../src/hooks/useDark";
+import { useBreakpoint } from "../../../src/hooks/useBreakpoint";
 import { useRole } from "../../../src/hooks/useRole";
 import { useAppDispatch } from "../../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../../src/hooks/useAppSelector";
@@ -46,7 +47,7 @@ import {
   updateInterventionAction,
   updateInterventionObservation,
 } from "../../../src/store/slices/interventionSlice";
-import { fetchUsers } from "../../../src/store/slices/userSlice";
+import { fetchTechnicians } from "../../../src/store/slices/userSlice";
 import {
   getTicketPriority,
   getTicketStatus,
@@ -76,10 +77,10 @@ export default function InterventionDetailScreen() {
   const { role, user } = useRole();
 
   const { current, currentStatus, currentError, mutating } = useAppSelector((s) => s.maintenance);
-  const { list: users } = useAppSelector((s) => s.user);
+  const { list: users, technicians, techniciansStatus } = useAppSelector((s) => s.user);
 
   const [sheet, setSheet] = useState(null); // 'assign' | 'diagnosis' | 'action' | 'observation' | 'close' | 'status' | 'details' | 'editDiagnosis' | 'editAction' | 'editObservation' | null
-  const [assignTech, setAssignTech] = useState(null);
+  const [assignTeam, setAssignTeam] = useState([]); // team: [mongoId]
   const [diagForm, setDiagForm] = useState({ probableCause: "", details: "" });
   const [actionForm, setActionForm] = useState({ description: "", partsReplaced: "", durationMinutes: "" });
   const [obsForm, setObsForm] = useState({ content: "", category: "GENERAL" });
@@ -94,11 +95,11 @@ export default function InterventionDetailScreen() {
     if (id) dispatch(fetchInterventionById(id));
   }, [dispatch, id]);
 
-  // Best-effort technician list for the assign sheet (needs USER_READ; a
-  // 403 just leaves the manual entry). Skipped when the list is already
-  // warm (perf: no refetch on every navigation back to a detail).
+  // Best-effort technician list for the assign sheet — dedicated endpoint
+  // (any authenticated role; the responsable has no USER_READ). Skipped
+  // when the list is already warm (no refetch on every navigation back).
   useEffect(() => {
-    if (users.length === 0) dispatch(fetchUsers({ size: 100 })).catch(() => {});
+    if (techniciansStatus === "idle") dispatch(fetchTechnicians()).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch]);
 
@@ -108,13 +109,17 @@ export default function InterventionDetailScreen() {
 
   const darkText = dark ? "text-white" : "text-text";
   const darkMuted = dark ? "text-white/60" : "text-text-muted";
+  const isDesktop = useBreakpoint() === "desktop";
   const isResponsable = role === "RESPONSABLE_INDUSTRIEL";
   const isTechnician = role === "TECHNICIAN";
-  // A technician edits only the intervention assigned to them (the backend
-  // enforces this too). The assigned technicianId is the canonical user id.
+  // A technician edits only the interventions assigned to them (the backend
+  // enforces this too). Team-aware: the id OR the email may be in the team.
+  const myIds = [user?.id, user?.email].filter(Boolean).map((v) => String(v).toLowerCase());
   const assignedToMe =
-    !!current?.technicianId &&
-    (current.technicianId === user?.id || current.technicianId === user?.email);
+    Array.isArray(current?.technicianIds) && current.technicianIds.length > 0
+      ? current.technicianIds.some((t) => myIds.includes(String(t).toLowerCase()))
+      : !!current?.technicianId &&
+        (current.technicianId === user?.id || current.technicianId === user?.email);
   const canWorkOnIt = !isTechnician || assignedToMe;
   // Different edit scopes for the two editing roles:
   //  - RESPONSABLE_INDUSTRIEL: assignment, core details, closure.
@@ -128,25 +133,29 @@ export default function InterventionDetailScreen() {
   const canChangeStatus = isTechnician && canWorkOnIt;
   const openStatus = current && current.status !== "COMPLETED" && current.status !== "CANCELLED";
 
-  const technicianOptions = useMemo(
-    () =>
-      (users || [])
-        .filter((u) => u.role === "TECHNICIAN")
-        .map((u) => ({
-          // Prefer the Mongo id; the backend also accepts the email.
-          value: u.id || u.email || u.username,
-          label: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email || u.username || u.id,
-        })),
-    [users]
-  );
+  const technicianOptions = useMemo(() => {
+    // Primary source: GET /api/users/technicians (no USER_READ needed).
+    // Fallback: full users list — covers the window before a backend
+    // restart introduces the new endpoint.
+    const source =
+      techniciansStatus === "error" || (technicians || []).length === 0
+        ? (users || []).filter((u) => u.role === "TECHNICIAN")
+        : technicians;
+    return source.map((u) => ({
+      // Prefer the Mongo id; the backend also accepts the email.
+      value: u.id || u.email || u.username,
+      label: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email || u.username || u.id,
+      sub: u.email || "",
+    }));
+  }, [technicians, techniciansStatus, users]);
 
   const sheetBusy = mutating === "loading";
 
   async function submitAssign() {
-    if (!assignTech) return;
+    if (assignTeam.length === 0) return;
     setSheetError(null);
     try {
-      await dispatch(assignIntervention({ id, technicianId: assignTech })).unwrap();
+      await dispatch(assignIntervention({ id, technicianIds: assignTeam })).unwrap();
       setSheet(null);
     } catch (e) {
       setSheetError(e?.message || "Failed to assign.");
@@ -238,7 +247,7 @@ export default function InterventionDetailScreen() {
     } catch (e) {
       setSheetError(
         e?.message ||
-          "The status endpoint is not available on the backend yet (PUT /api/maintenance/:id/status). The technician status control stays visible so nothing else changes."
+          "Could not change the status. Close this sheet and retry — the backend rejected the transition."
       );
     }
   }
@@ -360,26 +369,33 @@ export default function InterventionDetailScreen() {
         {/* Refresh feedback while the detail reloads (mutating ops upsert in place) */}
         {currentStatus === "loading" && !!current && <BusyRow label="Refreshing…" className="mb-2" />}
 
-        <Card className="mb-4" style={currentStatus === "loading" && current ? { opacity: 0.7 } : undefined}>
-          {currentStatus === "loading" && !current && (
-            <View className="gap-2 py-3">
-              <Skeleton width="45%" height={18} />
-              <Skeleton width="70%" height={14} />
-              <Skeleton width="100%" height={14} />
-              <Skeleton width="60%" height={14} />
-            </View>
-          )}
+        {/* Loading / not-found card */}
+        {!current && (
+          <Card className="mb-4">
+            {currentStatus === "loading" ? (
+              <View className="gap-2 py-3">
+                <Skeleton width="45%" height={18} />
+                <Skeleton width="70%" height={14} />
+                <Skeleton width="100%" height={14} />
+                <Skeleton width="60%" height={14} />
+              </View>
+            ) : (
+              <EmptyState
+                title="Intervention unavailable"
+                message={currentError?.message || "This intervention could not be loaded."}
+                action={<Button title="Retry" variant="outline" size="sm" onPress={() => refresh()} />}
+              />
+            )}
+          </Card>
+        )}
 
-          {!current && currentStatus !== "loading" && (
-            <EmptyState
-              title="Intervention unavailable"
-              message={currentError?.message || "This intervention could not be loaded."}
-              action={<Button title="Retry" variant="outline" size="sm" onPress={() => refresh()} />}
-            />
-          )}
-
-          {current && (
-            <View className="gap-3">
+        {/* Content — card grid like Map & Zones: summary + timeline on the
+            left (65%), details + actions on the right (35%) on desktop,
+            stacked on mobile. */}
+        {current && (
+          <>
+            {/* Summary card — full width header (like Map & Zones) */}
+            <Card className="mb-4">
               <View className="flex-row items-start justify-between">
                 <View className="flex-1 mr-2">
                   <Text className={`text-base font-bold font-inter ${darkText}`}>{current.title}</Text>
@@ -394,108 +410,20 @@ export default function InterventionDetailScreen() {
                 </View>
               </View>
 
-              <View className="gap-2 mt-1">
-                {[
-                  ["Machine", current.machineCode || (current.machineId ? String(current.machineId).slice(0, 8) : "—")],
-                  ["Type", `${INTERVENTION_TYPE_LABELS[current.type] || current.type}${current.preventiveSubtype ? ` · ${PREVENTIVE_SUBTYPE_LABELS[current.preventiveSubtype] || current.preventiveSubtype}` : ""}`],
-                  ["Priority", getTicketPriority(current.priority).label],
-                  ["Technician", current.technicianName || current.technicianId || "Unassigned"],
-                  ["Scheduled", current.scheduledAt ? formatDateTime(current.scheduledAt) : "—"],
-                  ["Created", formatDateTime(current.createdAt)],
-                  ...(current.assignedAt ? [["Assigned", `${formatDateTime(current.assignedAt)}${current.assignedBy ? ` by ${current.assignedBy}` : ""}`]] : []),
-                  ...(current.closedAt ? [["Closed", `${formatDateTime(current.closedAt)}${current.closedBy ? ` by ${current.closedBy}` : ""}`]] : []),
-                ].map(([k, v]) => (
-                  <View
-                    key={k}
-                    className={`flex-row justify-between items-center py-2 px-3 rounded-btn ${dark ? "bg-white/5" : "bg-bg"}`}
-                  >
-                    <Text className={`text-xs font-inter ${darkMuted}`}>{k}</Text>
-                    <Text className={`text-xs font-bold font-inter text-right flex-1 ${darkText}`} numberOfLines={1}>
-                      {v}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-
               {current.closureNotes ? (
-                <View className={`rounded-btn p-3 mt-1 ${dark ? "bg-white/5" : "bg-bg"}`}>
+                <View className={`rounded-btn p-3 mt-3 ${dark ? "bg-white/5" : "bg-bg"}`}>
                   <Text className={`text-xs font-semibold font-inter mb-1 ${darkMuted}`}>Closure notes</Text>
                   <Text className={`text-sm font-inter ${darkText}`}>{current.closureNotes}</Text>
                 </View>
               ) : null}
+            </Card>
 
-              {/* Actions row */}
-              <View className="flex-row flex-wrap gap-2 mt-3">
-                {canAssign && openStatus && (
-                  <Button
-                    title={current.technicianId ? "Reassign" : "Assign technician"}
-                    variant="primary"
-                    size="sm"
-                    onPress={() => { setSheet("assign"); setSheetError(null); setAssignTech(current.technicianId || null); }}
-                  />
-                )}
-                {/* Item 10 — technician/manager status control. Default is
-                    "To do" (PENDING); "In progress" starts the work,
-                    "Complete" is the close flow. */}
-                {canChangeStatus && openStatus && (
-                  <Button
-                    title={current.status === "IN_PROGRESS" ? "Mark completed" : "Start (in progress)"}
-                    variant={current.status === "IN_PROGRESS" ? "primary" : "outline"}
-                    size="sm"
-                    onPress={() => {
-                      setStatusChoice(current.status === "IN_PROGRESS" ? "COMPLETED" : "IN_PROGRESS");
-                      setSheetError(null);
-                      setSheet("status");
-                    }}
-                  />
-                )}
-                {canEditDetails && openStatus && (
-                  <Button
-                    title="Edit details"
-                    variant="outline"
-                    size="sm"
-                    onPress={() => {
-                      setDetailsForm({
-                        title: current.title || "",
-                        description: current.description || "",
-                        priority: current.priority || "MEDIUM",
-                      });
-                      setSheetError(null);
-                      setSheet("details");
-                    }}
-                  />
-                )}
-                {canDiagnose && openStatus && (
-                  <Button title="+ Diagnosis" variant="outline" size="sm" onPress={() => { setSheet("diagnosis"); setSheetError(null); }} />
-                )}
-                {canDiagnose && openStatus && (
-                  <Button title="+ Action" variant="outline" size="sm" onPress={() => { setSheet("action"); setSheetError(null); }} />
-                )}
-                {canObserve && (
-                  <Button title="+ Observation" variant="outline" size="sm" onPress={() => { setSheet("observation"); setSheetError(null); }} />
-                )}
-                {canClose && openStatus && (
-                  <Button
-                    title="Close"
-                    variant={current.status === "IN_PROGRESS" || current.status === "ASSIGNED" ? "primary" : "outline"}
-                    size="sm"
-                    onPress={() => { setSheet("close"); setSheetError(null); }}
-                  />
-                )}
-              </View>
-              {mutating === "loading" && <BusyRow label="Saving…" className="mt-2" />}
-              {mutating === "error" && (
-                <Text className="text-xs font-inter text-danger mt-1">
-                  The last action failed — retry or reload the page.
-                </Text>
-              )}
-            </View>
-          )}
-        </Card>
+            {/* Two-column card grid (desktop) / stacked cards (mobile) */}
+            <View className={isDesktop ? "flex-row gap-6 items-start" : "gap-4"}>
+              {/* Left column: timeline cards */}
+              <View style={isDesktop ? { flex: 0.65 } : undefined} className="gap-4">
 
-        {/* Timeline — diagnoses / actions / observations (nested lists) */}
-        {current && (
-          <View className="gap-4">
+              {/* Timeline — diagnoses / actions / observations */}
             {/* Diagnoses */}
             <Card>
               <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>
@@ -609,34 +537,203 @@ export default function InterventionDetailScreen() {
                 </View>
               )}
             </Card>
-          </View>
+              </View>
+
+              {/* Right column: details fact-grid + action buttons */}
+              <View style={isDesktop ? { flex: 0.35 } : undefined} className="gap-4">
+                <Card>
+                  <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>Details</Text>
+                  <View className="flex-row flex-wrap gap-2">
+                    {[
+                      ["Machine", current.machineCode || (current.machineId ? String(current.machineId).slice(0, 8) : "—")],
+                      ["Type", `${INTERVENTION_TYPE_LABELS[current.type] || current.type}${current.preventiveSubtype ? ` · ${PREVENTIVE_SUBTYPE_LABELS[current.preventiveSubtype] || current.preventiveSubtype}` : ""}`],
+                      ["Priority", getTicketPriority(current.priority).label],
+                      [
+                        "Technicians",
+                        (current.technicianNames?.length > 0
+                          ? current.technicianNames
+                          : (current.technicianIds?.length > 0
+                              ? current.technicianIds
+                              : [current.technicianName || current.technicianId])
+                        )
+                          .filter(Boolean)
+                          .join(", ") || "Unassigned",
+                      ],
+                      ["Scheduled", current.scheduledAt ? formatDateTime(current.scheduledAt) : "—"],
+                      ["Created", formatDateTime(current.createdAt)],
+                      ...(current.assignedAt ? [["Assigned", `${formatDateTime(current.assignedAt)}${current.assignedBy ? ` by ${current.assignedBy}` : ""}`]] : []),
+                      ...(current.closedAt ? [["Closed", `${formatDateTime(current.closedAt)}${current.closedBy ? ` by ${current.closedBy}` : ""}`]] : []),
+                    ].map(([k, v]) => (
+                      <View key={k} style={{ width: "48%" }} className={`rounded-btn px-3 py-2 ${dark ? "bg-white/5" : "bg-bg"}`}>
+                        <Text className={`text-[10px] font-inter ${darkMuted}`}>{k}</Text>
+                        <Text className={`text-xs font-bold font-inter mt-0.5 ${darkText}`} numberOfLines={2}>
+                          {v}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                </Card>
+
+                {/* Actions card — role-scoped buttons */}
+                <Card>
+                  <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>Actions</Text>
+                  <View className="flex-row flex-wrap gap-2">
+                    {canAssign && openStatus && (
+                      <Button
+                        title={
+                          (current.technicianIds?.length || current.technicianId)
+                            ? "Reassign team"
+                            : "Assign technicians"
+                        }
+                        variant="primary"
+                        size="sm"
+                        onPress={() => {
+                          setSheet("assign");
+                          setSheetError(null);
+                          // Prefill the checkboxes with the current team so
+                          // reassignment edits the existing crew.
+                          setAssignTeam(
+                            Array.isArray(current.technicianIds) && current.technicianIds.length > 0
+                              ? [...current.technicianIds]
+                              : current.technicianId
+                                ? [current.technicianId]
+                                : []
+                          );
+                        }}
+                      />
+                    )}
+                    {/* Item 10 — technician/manager status control. Default is
+                        "To do" (PENDING); "In progress" starts the work,
+                        "Complete" is the close flow. */}
+                    {canChangeStatus && openStatus && (
+                      <Button
+                        title={current.status === "IN_PROGRESS" ? "Mark completed" : "Start (in progress)"}
+                        variant={current.status === "IN_PROGRESS" ? "primary" : "outline"}
+                        size="sm"
+                        onPress={() => {
+                          setStatusChoice(current.status === "IN_PROGRESS" ? "COMPLETED" : "IN_PROGRESS");
+                          setSheetError(null);
+                          setSheet("status");
+                        }}
+                      />
+                    )}
+                    {canEditDetails && openStatus && (
+                      <Button
+                        title="Edit details"
+                        variant="outline"
+                        size="sm"
+                        onPress={() => {
+                          setDetailsForm({
+                            title: current.title || "",
+                            description: current.description || "",
+                            priority: current.priority || "MEDIUM",
+                          });
+                          setSheetError(null);
+                          setSheet("details");
+                        }}
+                      />
+                    )}
+                    {canDiagnose && openStatus && (
+                      <Button title="+ Diagnosis" variant="outline" size="sm" onPress={() => { setSheet("diagnosis"); setSheetError(null); }} />
+                    )}
+                    {canDiagnose && openStatus && (
+                      <Button title="+ Action" variant="outline" size="sm" onPress={() => { setSheet("action"); setSheetError(null); }} />
+                    )}
+                    {canObserve && (
+                      <Button title="+ Observation" variant="outline" size="sm" onPress={() => { setSheet("observation"); setSheetError(null); }} />
+                    )}
+                    {canClose && openStatus && (
+                      <Button
+                        title="Close"
+                        variant={current.status === "IN_PROGRESS" || current.status === "ASSIGNED" ? "primary" : "outline"}
+                        size="sm"
+                        onPress={() => { setSheet("close"); setSheetError(null); }}
+                      />
+                    )}
+                  </View>
+                  {mutating === "loading" && <BusyRow label="Saving…" className="mt-2" />}
+                  {mutating === "error" && (
+                    <Text className="text-xs font-inter text-danger mt-1">
+                      The last action failed — retry or reload the page.
+                    </Text>
+                  )}
+                </Card>
+              </View>
+            </View>
+          </>
         )}
       </ScrollView>
 
       {/* ── Action sheets ─────────────────────────────────────────────── */}
+      {/* Assign / reassign the TEAM — multi-select list (US43). */}
       <BottomSheet
         visible={sheet === "assign"}
         onClose={() => setSheet(null)}
-        title="Assign technician"
+        title="Assign technicians"
         maxWidth={520}
-        footer={sheetFooter("Assign", submitAssign, { disabled: !assignTech, loading: sheetBusy })}
+        footer={sheetFooter(
+          assignTeam.length > 1 ? `Assign ${assignTeam.length} technicians` : "Assign",
+          submitAssign,
+          { disabled: assignTeam.length === 0, loading: sheetBusy }
+        )}
       >
         {sheetError && <Text className="text-sm text-danger font-inter mb-3">{sheetError}</Text>}
         {technicianOptions.length > 0 ? (
-          <Select
-            label="Technician"
-            value={assignTech}
-            onValueChange={setAssignTech}
-            options={technicianOptions}
-            placeholder="Select technician..."
-          />
+          <>
+            <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={false}>
+              {technicianOptions.map((tech) => {
+                const active = assignTeam.includes(tech.value);
+                return (
+                  <Pressable
+                    key={tech.value}
+                    onPress={() =>
+                      setAssignTeam((prev) =>
+                        prev.includes(tech.value)
+                          ? prev.filter((t) => t !== tech.value)
+                          : [...prev, tech.value]
+                      )
+                    }
+                    className={`flex-row items-center px-3 py-2.5 border-b ${dark ? "border-white/5" : "border-border/50"}`}
+                    style={({ pressed }) => [
+                      { backgroundColor: active ? "rgba(37,99,235,0.08)" : "transparent" },
+                      pressed ? { opacity: 0.8 } : null,
+                    ]}
+                  >
+                    <View
+                      className="w-5 h-5 rounded-btn items-center justify-center mr-3"
+                      style={{
+                        borderWidth: 1.5,
+                        borderColor: active ? "#2563EB" : dark ? "rgba(255,255,255,0.35)" : "#CBD5E1",
+                        backgroundColor: active ? "#2563EB" : "transparent",
+                      }}
+                    >
+                      {active && <Text className="text-[11px] font-bold text-white">✓</Text>}
+                    </View>
+                    <View className="flex-1">
+                      <Text className={`text-sm font-inter ${active ? "font-semibold" : "font-medium"} ${darkText}`}>
+                        {tech.label}
+                      </Text>
+                      {tech.sub ? (
+                        <Text className={`text-[11px] font-inter ${darkMuted}`} numberOfLines={1}>
+                          {tech.sub}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+            <Text className={`text-[11px] font-inter mt-2 ${darkMuted}`}>
+              The whole team is notified; each technician can record diagnoses,
+              actions and observations on this intervention.
+            </Text>
+          </>
         ) : (
-          <Input
-            label="Technician email or ID"
-            placeholder="e.g. js@company.com"
-            value={assignTech || ""}
-            onChangeText={setAssignTech}
-          />
+          <Text className={`text-sm font-inter ${darkMuted}`}>
+            {techniciansStatus === "loading"
+              ? "Loading technicians…"
+              : "No technician accounts are available yet — create technician accounts first, then assign them here."}
+          </Text>
         )}
       </BottomSheet>
 

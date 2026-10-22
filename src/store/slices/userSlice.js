@@ -73,6 +73,22 @@ export const fetchUsers = createAsyncThunk(
   }
 );
 
+/**
+ * GET /api/users/technicians (any authenticated role) — team picker for
+ * interventions. Independent of fetchUsers so a USER_READ 403 on the full
+ * user list can never leave the technician list empty.
+ */
+export const fetchTechnicians = createAsyncThunk(
+  "user/fetchTechnicians",
+  async (_, { rejectWithValue }) => {
+    try {
+      return await userService.getTechnicians();
+    } catch (error) {
+      return rejectWithValue(error);
+    }
+  }
+);
+
 /** POST /api/users (ADMIN) */
 export const createUser = createAsyncThunk(
   "user/create",
@@ -163,6 +179,8 @@ const userSlice = createSlice({
     totalElements: 0,
     listStatus: "idle",   // 'idle' | 'loading' | 'succeeded' | 'error'
     listError: null,
+    technicians: [],      // lightweight TECHNICIAN list (intervention team picker)
+    techniciansStatus: "idle",
     catalog: null,        // permissions catalog { permissions, roles }
     catalogStatus: "idle",
     catalogError: null,
@@ -248,6 +266,20 @@ const userSlice = createSlice({
       .addCase(fetchUsers.rejected, (state, action) => {
         state.listStatus = "error";
         state.listError = action.payload || { message: "Failed to fetch users" };
+      });
+
+    // Technician picker (intervention team) — any authenticated role
+    builder
+      .addCase(fetchTechnicians.pending, (state) => {
+        state.techniciansStatus = "loading";
+      })
+      .addCase(fetchTechnicians.fulfilled, (state, action) => {
+        state.techniciansStatus = "succeeded";
+        state.technicians = Array.isArray(action.payload) ? action.payload : [];
+      })
+      .addCase(fetchTechnicians.rejected, (state) => {
+        state.techniciansStatus = "error";
+        // Keep any previously loaded list so the picker never empties.
       });
 
     // Admin create
