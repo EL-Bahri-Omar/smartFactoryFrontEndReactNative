@@ -25,9 +25,16 @@
 // Row tap → PUT /api/notifications/:id/read + navigate to the related screen.
 // Deduped alert rows keep every underlying notification id, so tapping marks
 // all copies read (no stale badge). "Mark all" walks unread rows (no batch
-// endpoint).
+// endpoint). Selection mode (Select button) marks any set of rows read at once.
+//
+// Live rows + the badge are handled globally by NotificationBridge
+// (app/(app)/_layout.jsx) — this screen only joins the /topic/alerts feed for
+// the sensor live-dot context.
+//
+// Read vs unread (product spec): unread = GRAY background + bold title,
+// read = WHITE background + light text.
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, ScrollView, Pressable } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import AppShell from "../../src/components/AppShell";
@@ -37,6 +44,7 @@ import Skeleton from "../../src/components/Skeleton";
 import EmptyState from "../../src/components/EmptyState";
 import FilterChips from "../../src/components/FilterChips";
 import BusyRow from "../../src/components/BusyRow";
+import PaginationBar from "../../src/components/PaginationBar";
 import { useBreakpoint } from "../../src/hooks/useBreakpoint";
 import { useDark } from "../../src/hooks/useDark";
 import { useRole, PERMISSIONS } from "../../src/hooks/useRole";
@@ -49,7 +57,6 @@ import {
   markNotificationRead,
   markAllNotificationsRead,
   refreshUnreadCount,
-  receiveNotification,
   setType,
 } from "../../src/store/slices/notificationSlice";
 import { fetchAlerts, prependAlert } from "../../src/store/slices/alertSlice";
@@ -207,27 +214,23 @@ export default function NotificationsScreen() {
   const { list, type, status, moreStatus, error, pagination } = useAppSelector((s) => s.notification);
   const { list: alertList } = useAppSelector((s) => s.alert);
   const liveConnected = useAppSelector((s) => s.live.connected);
-  const user = useAppSelector((s) => s.auth.user);
 
-  // Per-user live channel: assignments and alert notifications arrive here
-  // the moment the backend persists them (no need to reopen the screen).
-  const notificationTopic = user?.id ? `/topic/users/${user.id}/notifications` : null;
-  const liveNotification = useLiveTopic(notificationTopic, { enabled: !!notificationTopic });
-  const lastLiveRef = useRef(null);
+  // Live rows arrive through NotificationBridge (app/(app)/_layout.jsx) —
+  // mounted once for the whole app, no per-screen subscription needed here.
 
   // Keep the joined alert context current so the live dot moves
   // warning → critical even while this screen is open.
   const liveAlert = useLiveTopic("/topic/alerts", { enabled: canReadAlerts });
   const lastAlertRef = useRef(null);
 
-  useEffect(() => {
-    if (!liveNotification) return;
-    const key = `${liveNotification.id || ""}-${liveNotification.createdAt || ""}`;
-    if (lastLiveRef.current === key) return;
-    lastLiveRef.current = key;
-    dispatch(receiveNotification(liveNotification));
-    dispatch(refreshUnreadCount());
-  }, [liveNotification, dispatch]);
+  // Selection mode: pick several rows and mark them read in one action.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+
+  // Client-side pagination: the feed loads all history up front (tab counts
+  // and "mark all" need it), so paging is a pure slice of `rows` (review:
+  // "add a pagination in the alerts and notification pages").
+  const [page, setPage] = useState(0);
 
   useEffect(() => {
     if (!liveAlert) return;
@@ -267,6 +270,12 @@ export default function NotificationsScreen() {
     return allRows.filter((row) => tabForType(row.n.type) === type);
   }, [allRows, type]);
 
+  // Current page, clamped so a shrinking list never leaves an empty page.
+  const PAGE_SIZE = isDesktop ? 15 : 10;
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageRows = rows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+
   // Tab counts show the FULL number of notifications (read + unread) so a
   // filter never under-reports; the Unread chip is the only unread counter.
   const tabCounts = useMemo(() => {
@@ -297,37 +306,65 @@ export default function NotificationsScreen() {
     dispatch(refreshUnreadCount());
   }
 
-  /** Row press: mark every underlying copy read, then open the target. */
+  /** Stable identity of a display row for selection (deduped id group). */
+  const rowKeyOf = (row) => row.ids.join("|");
+
+  function toggleSelect(row) {
+    const key = rowKeyOf(row);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  /** Selection mode action: mark every selected row read, then exit. */
+  async function handleMarkSelected() {
+    const targets = allRows.filter((row) => selected.has(rowKeyOf(row)));
+    setSelected(new Set());
+    setSelecting(false);
+    await markRowsRead(targets);
+  }
+
+  /** Row press: in selection mode just toggle the checkbox. */
   function handleRowPress(row) {
-    markRowsRead([row]);
+    if (selecting) {
+      toggleSelect(row);
+      return;
+    }
     const n = row.n;
     const tab = tabForType(n.type);
 
+    // Navigate FIRST with the canonical expo-router named route, mark read
+    // in the background after — so a slow/deduped mark-read can never eat
+    // the navigation (review: intervention notifications landed on the
+    // maintenance LIST instead of the intervention DETAIL page).
     if (tab === "ALERTS") {
       router.push(
         n.alertId
           ? { pathname: "/(app)/alerts", params: { alertId: String(n.alertId) } }
           : "/(app)/alerts"
       );
-      return;
-    }
-
-    if (tab === "MAINTENANCE") {
+    } else if (tab === "MAINTENANCE") {
       // The backend stores the intervention id in alertId for assignment
-      // notifications (NotificationService.notifyMaintenanceAssigned).
+      // notifications (NotificationService.notifyMaintenanceAssigned). Use
+      // the SAME proven string href the maintenance list uses for row →
+      // detail — and only fall back to the list when the id is genuinely
+      // missing (rows created before the backend save-order fix, which was
+      // handed over as a spec).
       const interventionId = n.interventionId || n.targetId || n.relatedId || n.alertId;
-      router.push(
-        interventionId
-          ? `/(app)/maintenance/${interventionId}`
-          : "/(app)/maintenance"
-      );
-      return;
+      if (interventionId) {
+        router.push(`/(app)/maintenance/${String(interventionId)}`);
+      } else {
+        router.push("/(app)/maintenance");
+      }
+    } else {
+      const machineKey = n.machineId || n.machineCode;
+      if (machineKey) router.push(`/(app)/machines/${machineKey}`);
     }
 
-    const machineKey = n.machineId || n.machineCode;
-    if (machineKey) {
-      router.push(`/(app)/machines/${machineKey}`);
-    }
+    markRowsRead([row]);
   }
 
   async function handleMarkAll() {
@@ -345,18 +382,27 @@ export default function NotificationsScreen() {
   const darkText = dark ? "text-white" : "text-text";
   const darkMuted = dark ? "text-white/60" : "text-text-muted";
   const hasUnread = tabCounts.UNREAD > 0;
-  // Real pagination: the first page replaces the list, older pages append.
-  const canLoadMore = (pagination.page ?? 0) + 1 < (pagination.totalPages ?? 1);
-  // Read vs unread must be obvious at a glance: unread = strong blue tint +
-  // left border, read = neutral slate card (same recipe on the Alerts screen).
-  const unreadBg = dark ? "rgba(96,165,250,0.30)" : "#DBEAFE";
-  const readBg = dark ? "#152440" : "#F1F5F9";
+  // Real pagination: the first fetch loads ALL pages up front; the button
+  // only appears when older pages still failed to load.
+  const canLoadMore =
+    !pagination.allLoaded && (pagination.page ?? 0) + 1 < (pagination.totalPages ?? 1);
+  // Read vs unread must be obvious at a glance (product spec, hardened in
+  // review — the old pair was too subtle to notice):
+  //   unread = CLEAR gray background + bold title AND semibold body
+  //   read   = WHITE background + light title/body
+  // Dark mode gets the same jump: a light gray slab vs. the plain card.
+  const unreadBg = dark ? "#374151" : "#D1D5DB";
+  const readBg = dark ? "#0B1220" : "#FFFFFF";
+  const readTitleClass = dark ? "text-white/55" : "text-text-muted";
+  const readBodyClass = dark ? "text-white/40" : "text-text-muted/70";
+  const unreadBodyClass = dark ? "text-white/85" : "text-text";
 
   function renderRow(row, index) {
     const n = row.n;
     const meta = rowMeta(row);
     const unread = !row.isRead;
     const dot = notificationDot(row, sensorStates);
+    const isSel = selected.has(rowKeyOf(row));
 
     return (
       <Pressable
@@ -365,13 +411,38 @@ export default function NotificationsScreen() {
         className={`flex-row items-center px-3 py-3 border-b ${dark ? "border-white/5" : "border-border/50"}`}
         style={({ pressed }) => [
           {
-            borderLeftWidth: 3,
-            borderLeftColor: unread ? "#2563EB" : "transparent",
+            // Selection highlight (primary bar); otherwise the gray/white
+            // read-unread recipe with no accent border.
+            borderLeftWidth: isSel ? 3 : 0,
+            borderLeftColor: isSel ? "#2563EB" : "transparent",
             backgroundColor: unread ? unreadBg : readBg,
           },
           pressed ? { opacity: 0.85 } : null,
         ]}
       >
+        {/* Selection indicator — only in selection mode. Whole row toggles. */}
+        {selecting && (
+          <View className="mr-3 items-center justify-center" style={{ width: 22, height: 22 }}>
+            {isSel ? (
+              <View
+                className="items-center justify-center rounded-full"
+                style={{ width: 20, height: 20, backgroundColor: "#2563EB" }}
+              >
+                <Text style={{ color: "#fff", fontSize: 11, fontWeight: "bold" }}>✓</Text>
+              </View>
+            ) : (
+              <View
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: 10,
+                  borderWidth: 1.5,
+                  borderColor: dark ? "rgba(255,255,255,0.4)" : "#94A3B8",
+                }}
+              />
+            )}
+          </View>
+        )}
         <View
           className="w-10 h-10 rounded-full items-center justify-center mr-3"
           style={{ backgroundColor: meta.color + "26" }}
@@ -381,11 +452,18 @@ export default function NotificationsScreen() {
         <View className="flex-1 mr-3">
           <Text
             numberOfLines={1}
-            className={`text-sm font-inter ${unread ? "font-bold" : "font-medium"} ${darkText}`}
+            className={`text-sm font-inter ${unread ? "font-bold" : "font-medium"} ${
+              unread ? darkText : readTitleClass
+            }`}
           >
             {formatNotificationTitle(n.title) || formatNotificationMessage(n.message) || "Notification"}
           </Text>
-          <Text numberOfLines={2} className={`text-xs font-inter mt-0.5 ${darkMuted}`}>
+          <Text
+            numberOfLines={2}
+            className={`text-xs font-inter mt-0.5 ${
+              unread ? `font-semibold ${unreadBodyClass}` : readBodyClass
+            }`}
+          >
             {n.title && n.message
               ? formatNotificationMessage(n.message)
               : [n.machineCode, n.sensorType].filter(Boolean).join(" · ")}
@@ -406,30 +484,28 @@ export default function NotificationsScreen() {
         </View>
 
         {/* Live state dot — same rule as the Alerts screen: only the row
-            matching the sensor's current state carries it. */}
-        <View className="items-center ml-2" style={{ width: 22 }}>
-          {dot ? (
-            <>
-              <View
-                accessibilityLabel={`Sensor currently ${dot.label}`}
-                style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: 5,
-                  backgroundColor: dot.color,
-                  shadowColor: dot.color,
-                  shadowOpacity: 0.7,
-                  shadowRadius: 4,
-                  shadowOffset: { width: 0, height: 0 },
-                  elevation: 3,
-                }}
-              />
-              <Text className={`text-[8px] font-inter mt-0.5 ${darkMuted}`}>{dot.label}</Text>
-            </>
-          ) : (
-            <View style={{ width: 10, height: 10 }} />
-          )}
-        </View>
+            matching the sensor's current state carries it. Rendered ONLY
+            when present: the old empty 22px placeholder kept the type chip
+            and time from reaching the extreme right (review). */}
+        {dot ? (
+          <View className="items-center ml-2" style={{ width: 22 }}>
+            <View
+              accessibilityLabel={`Sensor currently ${dot.label}`}
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 5,
+                backgroundColor: dot.color,
+                shadowColor: dot.color,
+                shadowOpacity: 0.7,
+                shadowRadius: 4,
+                shadowOffset: { width: 0, height: 0 },
+                elevation: 3,
+              }}
+            />
+            <Text className={`text-[8px] font-inter mt-0.5 ${darkMuted}`}>{dot.label}</Text>
+          </View>
+        ) : null}
       </Pressable>
     );
   }
@@ -437,24 +513,51 @@ export default function NotificationsScreen() {
   return (
     <AppShell>
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View className="mb-4">
-          <View className={isDesktop ? "flex-row items-start justify-between gap-3" : ""}>
-            <View className="flex-1">
-              <Text className={`text-xl font-bold font-inter ${darkText}`}>Notifications</Text>
-              <Text className={`text-sm font-inter ${darkMuted}`}>
-                Critical/warning alerts and maintenance assignments sent to you.
-              </Text>
+        {/* Header — title + compact actions on ONE row (review: the buttons
+            were full-width blocks stacked under the title, and the
+            description sentence under the title was removed). */}
+        <View className="mb-4 flex-row items-center justify-between gap-2 flex-wrap">
+          <Text className={`text-xl font-bold font-inter ${darkText}`}>Notifications</Text>
+          {/* Actions: Select → selection bar (Cancel / Mark as read N),
+              otherwise Select + Mark all as read — size "sm", aligned with
+              the page title, never full width. */}
+          {selecting ? (
+            <View className="flex-row gap-2">
+              <Button
+                title="Cancel"
+                variant="outline"
+                size="sm"
+                onPress={() => {
+                  setSelecting(false);
+                  setSelected(new Set());
+                }}
+              />
+              <Button
+                title={`Mark as read${selected.size > 0 ? ` (${selected.size})` : ""}`}
+                variant="primary"
+                size="sm"
+                disabled={selected.size === 0}
+                onPress={handleMarkSelected}
+              />
             </View>
-            <Button
-              title="Mark all as read"
-              variant="outline"
-              size={isDesktop ? "sm" : "md"}
-              disabled={!hasUnread}
-              onPress={handleMarkAll}
-              className={isDesktop ? "" : "mt-2 w-full"}
-            />
-          </View>
+          ) : (
+            <View className="flex-row gap-2">
+              <Button
+                title="Select"
+                variant="outline"
+                size="sm"
+                disabled={rows.length === 0}
+                onPress={() => setSelecting(true)}
+              />
+              <Button
+                title="Mark all as read"
+                variant="outline"
+                size="sm"
+                disabled={!hasUnread}
+                onPress={handleMarkAll}
+              />
+            </View>
+          )}
         </View>
 
         {/* Tabs — full counts (read + unread); the Unread chip is the only
@@ -462,15 +565,25 @@ export default function NotificationsScreen() {
         <FilterChips
           chips={TABS.map((t) => ({ ...t, count: tabCounts[t.key] ?? 0 }))}
           active={type}
-          onChange={(key) => dispatch(setType(key))}
+          onChange={(key) => {
+            dispatch(setType(key));
+            setPage(0);
+          }}
           className="mb-4"
         />
 
-        <Card>
-          {refreshing && <BusyRow label="Updating…" className="mb-1" />}
+        {/* Edge-to-edge list card (review: "make it fill the full width of
+            the list card") — rows keep their own px-3, so the gray/white
+            unread backgrounds and dividers now reach the card edges. */}
+        <Card className="overflow-hidden" style={{ padding: 0 }}>
+          {refreshing && (
+            <View className="px-4 pt-4">
+              <BusyRow label="Updating…" />
+            </View>
+          )}
 
           {initiating && (
-            <View className="p-3 gap-3">
+            <View className="p-4 gap-3">
               {[1, 2, 3].map((i) => (
                 <View key={i} className="flex-row items-center gap-3">
                   <Skeleton width={40} height={40} rounded />
@@ -515,15 +628,18 @@ export default function NotificationsScreen() {
 
           {!initiating && !empty && (
             <>
-              <View>{rows.map(renderRow)}</View>
-              {rows.length > 0 && !error && (
-                <Text className={`text-[10px] font-inter text-center py-2 ${darkMuted}`}>
-                  {`${rows.length} of ${pagination.totalElements || rows.length} notifications loaded`}
-                </Text>
-              )}
+              <View>{pageRows.map(renderRow)}</View>
+              {/* Prev / "Page X of Y" / Next — the component hides itself on
+                  a single page. Replaces the old "N of M loaded" text, which
+                  reported stale totals once live rows merged in. */}
+              <PaginationBar
+                page={safePage}
+                totalPages={pageCount}
+                onPageChange={setPage}
+              />
               {/* Older pages are appended, so history is reachable. */}
               {canLoadMore && (
-                <View className="items-center pt-1 pb-2">
+                <View className="items-center px-4 pt-1 pb-3">
                   <Button
                     title="Load older notifications"
                     variant="outline"

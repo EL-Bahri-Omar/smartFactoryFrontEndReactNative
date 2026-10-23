@@ -17,7 +17,7 @@
 //   ADMIN                      → read-only consult
 // Everyone except OPERATOR can consult the interventions list.
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { View, Text, ScrollView, Pressable } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import AppShell from "../../../src/components/AppShell";
@@ -47,7 +47,7 @@ import {
   updateInterventionAction,
   updateInterventionObservation,
 } from "../../../src/store/slices/interventionSlice";
-import { fetchTechnicians } from "../../../src/store/slices/userSlice";
+import { useTechnicians } from "../../../src/hooks/useTechnicians";
 import {
   getTicketPriority,
   getTicketStatus,
@@ -77,7 +77,7 @@ export default function InterventionDetailScreen() {
   const { role, user } = useRole();
 
   const { current, currentStatus, currentError, mutating } = useAppSelector((s) => s.maintenance);
-  const { list: users, technicians, techniciansStatus } = useAppSelector((s) => s.user);
+  const { options: technicianOptions, status: techStatus } = useTechnicians();
 
   const [sheet, setSheet] = useState(null); // 'assign' | 'diagnosis' | 'action' | 'observation' | 'close' | 'status' | 'details' | 'editDiagnosis' | 'editAction' | 'editObservation' | null
   const [assignTeam, setAssignTeam] = useState([]); // team: [mongoId]
@@ -95,13 +95,8 @@ export default function InterventionDetailScreen() {
     if (id) dispatch(fetchInterventionById(id));
   }, [dispatch, id]);
 
-  // Best-effort technician list for the assign sheet — dedicated endpoint
-  // (any authenticated role; the responsable has no USER_READ). Skipped
-  // when the list is already warm (no refetch on every navigation back).
-  useEffect(() => {
-    if (techniciansStatus === "idle") dispatch(fetchTechnicians()).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dispatch]);
+  // Technician list loads itself via the shared useTechnicians hook
+  // (GET /api/users?role=TECHNICIAN, one fetch per session).
 
   const refresh = useCallback(() => {
     if (id) dispatch(fetchInterventionById(id));
@@ -133,21 +128,9 @@ export default function InterventionDetailScreen() {
   const canChangeStatus = isTechnician && canWorkOnIt;
   const openStatus = current && current.status !== "COMPLETED" && current.status !== "CANCELLED";
 
-  const technicianOptions = useMemo(() => {
-    // Primary source: GET /api/users/technicians (no USER_READ needed).
-    // Fallback: full users list — covers the window before a backend
-    // restart introduces the new endpoint.
-    const source =
-      techniciansStatus === "error" || (technicians || []).length === 0
-        ? (users || []).filter((u) => u.role === "TECHNICIAN")
-        : technicians;
-    return source.map((u) => ({
-      // Prefer the Mongo id; the backend also accepts the email.
-      value: u.id || u.email || u.username,
-      label: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email || u.username || u.id,
-      sub: u.email || "",
-    }));
-  }, [technicians, techniciansStatus, users]);
+  // technicianOptions comes from the shared useTechnicians hook (declared
+  // with the other selectors above) — GET /api/users?role=TECHNICIAN with
+  // a lightweight-endpoint fallback.
 
   const sheetBusy = mutating === "loading";
 
@@ -353,17 +336,16 @@ export default function InterventionDetailScreen() {
   return (
     <AppShell>
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View className="mb-4 flex-row items-center justify-between">
-          <View className="flex-1 mr-3">
-            <Text className={`text-lg font-bold font-inter ${darkText}`}>
-              {current ? refCode(current) : "Intervention"}
-            </Text>
-            <Text className={`text-sm font-inter ${darkMuted}`}>
-              {current ? `${INTERVENTION_TYPE_LABELS[current.type] || current.type} maintenance` : "Detail"}
-            </Text>
-          </View>
-          <Button title="← Back" variant="outline" size="sm" onPress={() => router.push("/(app)/maintenance")} />
+        {/* Header — navigation back is provided by the top bar, so the old
+            "← Back" button is removed. Priority/status chips live in the
+            summary card right below. */}
+        <View className="mb-4">
+          <Text className={`text-lg font-bold font-inter ${darkText}`}>
+            {current ? refCode(current) : "Intervention"}
+          </Text>
+          <Text className={`text-sm font-inter ${darkMuted}`}>
+            {current ? `${INTERVENTION_TYPE_LABELS[current.type] || current.type} maintenance` : "Detail"}
+          </Text>
         </View>
 
         {/* Refresh feedback while the detail reloads (mutating ops upsert in place) */}
@@ -389,9 +371,9 @@ export default function InterventionDetailScreen() {
           </Card>
         )}
 
-        {/* Content — card grid like Map & Zones: summary + timeline on the
-            left (65%), details + actions on the right (35%) on desktop,
-            stacked on mobile. */}
+        {/* Content — card grid like Map & Zones: summary → DETAILS →
+            full-width action bar → timeline cards (review: put the details
+            card before the actions card). */}
         {current && (
           <>
             {/* Summary card — full width header (like Map & Zones) */}
@@ -403,10 +385,19 @@ export default function InterventionDetailScreen() {
                     <Text className={`text-sm font-inter mt-1 ${darkMuted}`}>{current.description}</Text>
                   ) : null}
                 </View>
-                <View className="px-2.5 py-1 rounded-chip" style={chip(getTicketStatus(current.status).color)}>
-                  <Text className="text-xs font-bold font-inter" style={{ color: getTicketStatus(current.status).color }}>
-                    {getTicketStatus(current.status).label}
-                  </Text>
+                <View className="flex-row items-center gap-2">
+                  {/* Priority + status chips side by side (both are the
+                      at-a-glance state of the intervention). */}
+                  <View className="px-2.5 py-1 rounded-chip" style={chip(getTicketPriority(current.priority).color)}>
+                    <Text className="text-xs font-bold font-inter" style={{ color: getTicketPriority(current.priority).color }}>
+                      {getTicketPriority(current.priority).label}
+                    </Text>
+                  </View>
+                  <View className="px-2.5 py-1 rounded-chip" style={chip(getTicketStatus(current.status).color)}>
+                    <Text className="text-xs font-bold font-inter" style={{ color: getTicketStatus(current.status).color }}>
+                      {getTicketStatus(current.status).label}
+                    </Text>
+                  </View>
                 </View>
               </View>
 
@@ -418,10 +409,149 @@ export default function InterventionDetailScreen() {
               ) : null}
             </Card>
 
-            {/* Two-column card grid (desktop) / stacked cards (mobile) */}
-            <View className={isDesktop ? "flex-row gap-6 items-start" : "gap-4"}>
-              {/* Left column: timeline cards */}
-              <View style={isDesktop ? { flex: 0.65 } : undefined} className="gap-4">
+            {/* Details — directly under the summary, BEFORE the action bar
+                (review: "put details card before actions card"). Full width;
+                tiles run 4-up on desktop, 2-up on mobile. */}
+            <Card className="mb-4">
+              <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>Details</Text>
+              <View className="flex-row flex-wrap gap-2">
+                {[
+                  ["Machine", current.machineCode || (current.machineId ? String(current.machineId).slice(0, 8) : "—")],
+                  ["Type", `${INTERVENTION_TYPE_LABELS[current.type] || current.type}${current.preventiveSubtype ? ` · ${PREVENTIVE_SUBTYPE_LABELS[current.preventiveSubtype] || current.preventiveSubtype}` : ""}`],
+                  ["Priority", getTicketPriority(current.priority).label],
+                  [
+                    "Technicians",
+                    (current.technicianNames?.length > 0
+                      ? current.technicianNames
+                      : (current.technicianIds?.length > 0
+                          ? current.technicianIds
+                          : [current.technicianName || current.technicianId])
+                    )
+                      .filter(Boolean)
+                      .join(", ") || "Unassigned",
+                  ],
+                  ["Scheduled", current.scheduledAt ? formatDateTime(current.scheduledAt) : "—"],
+                  ["Created", formatDateTime(current.createdAt)],
+                  ...(current.assignedAt ? [["Assigned", `${formatDateTime(current.assignedAt)}${current.assignedBy ? ` by ${current.assignedBy}` : ""}`]] : []),
+                  ...(current.closedAt ? [["Closed", `${formatDateTime(current.closedAt)}${current.closedBy ? ` by ${current.closedBy}` : ""}`]] : []),
+                ].map(([k, v]) => (
+                  <View
+                    key={k}
+                    style={{ width: isDesktop ? "23.5%" : "48%" }}
+                    className={`rounded-btn px-3 py-2 ${dark ? "bg-white/5" : "bg-bg"}`}
+                  >
+                    <Text className={`text-[10px] font-inter ${darkMuted}`}>{k}</Text>
+                    <Text className={`text-xs font-bold font-inter mt-0.5 ${darkText}`} numberOfLines={2}>
+                      {v}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </Card>
+
+            {/* Action bar — full width right under the details: the primary
+                next step of EVERY role is visible without scrolling (it used
+                to be buried in the right column). One primary button per role
+                keeps the eye drawn to the right action. */}
+            <Card className="mb-4">
+              <View className="flex-row items-center justify-between mb-3 gap-2 flex-wrap">
+                <Text className={`text-base font-bold font-inter ${darkText}`}>Actions</Text>
+                <Text className={`text-xs font-inter ${darkMuted}`}>
+                  {canAssign
+                    ? "Assign the team, refine details, close the job"
+                    : isTechnician
+                      ? "Start the work — record diagnosis, actions, observations"
+                      : "Read-only — consult the timeline and details"}
+                </Text>
+              </View>
+              <View className="flex-row flex-wrap items-center gap-2">
+                {canAssign && openStatus && (
+                  <Button
+                    title={
+                      (current.technicianIds?.length || current.technicianId)
+                        ? "👥 Reassign team"
+                        : "👥 Assign technicians"
+                    }
+                    variant="primary"
+                    size="md"
+                    onPress={() => {
+                      setSheet("assign");
+                      setSheetError(null);
+                      // Prefill the checkboxes with the current team so
+                      // reassignment edits the existing crew.
+                      setAssignTeam(
+                        Array.isArray(current.technicianIds) && current.technicianIds.length > 0
+                          ? [...current.technicianIds]
+                          : current.technicianId
+                            ? [current.technicianId]
+                            : []
+                      );
+                    }}
+                  />
+                )}
+                {/* Item 10 — technician status control. Default is "To do"
+                    (PENDING); "In progress" starts the work, "Complete" is
+                    the close flow. */}
+                {canChangeStatus && openStatus && (
+                  <Button
+                    title={
+                      current.status === "IN_PROGRESS" ? "✓ Mark completed" : "▶ Start intervention"
+                    }
+                    variant="primary"
+                    size="md"
+                    onPress={() => {
+                      setStatusChoice(current.status === "IN_PROGRESS" ? "COMPLETED" : "IN_PROGRESS");
+                      setSheetError(null);
+                      setSheet("status");
+                    }}
+                  />
+                )}
+                {canEditDetails && openStatus && (
+                  <Button
+                    title="✎ Edit details"
+                    variant="outline"
+                    size="sm"
+                    onPress={() => {
+                      setDetailsForm({
+                        title: current.title || "",
+                        description: current.description || "",
+                        priority: current.priority || "MEDIUM",
+                      });
+                      setSheetError(null);
+                      setSheet("details");
+                    }}
+                  />
+                )}
+                {canDiagnose && openStatus && (
+                  <Button title="+ Diagnosis" variant="outline" size="sm" onPress={() => { setSheet("diagnosis"); setSheetError(null); }} />
+                )}
+                {canDiagnose && openStatus && (
+                  <Button title="+ Action" variant="outline" size="sm" onPress={() => { setSheet("action"); setSheetError(null); }} />
+                )}
+                {canObserve && (
+                  <Button title="+ Observation" variant="outline" size="sm" onPress={() => { setSheet("observation"); setSheetError(null); }} />
+                )}
+                {canClose && openStatus && (
+                  <Button
+                    title="🏁 Close intervention"
+                    variant="outline"
+                    size="md"
+                    onPress={() => { setSheet("close"); setSheetError(null); }}
+                  />
+                )}
+              </View>
+              {mutating === "loading" && <BusyRow label="Saving…" className="mt-2" />}
+              {mutating === "error" && (
+                <Text className="text-xs font-inter text-danger mt-1">
+                  The last action failed — retry or reload the page.
+                </Text>
+              )}
+            </Card>
+
+            {/* Timeline cards — full width now: the Details card moved
+                above the action bar, so the old two-column split (timeline
+                65% / details 35%) is no longer needed. */}
+            <View className="gap-4">
 
               {/* Timeline — diagnoses / actions / observations */}
             {/* Diagnoses */}
@@ -537,128 +667,6 @@ export default function InterventionDetailScreen() {
                 </View>
               )}
             </Card>
-              </View>
-
-              {/* Right column: details fact-grid + action buttons */}
-              <View style={isDesktop ? { flex: 0.35 } : undefined} className="gap-4">
-                <Card>
-                  <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>Details</Text>
-                  <View className="flex-row flex-wrap gap-2">
-                    {[
-                      ["Machine", current.machineCode || (current.machineId ? String(current.machineId).slice(0, 8) : "—")],
-                      ["Type", `${INTERVENTION_TYPE_LABELS[current.type] || current.type}${current.preventiveSubtype ? ` · ${PREVENTIVE_SUBTYPE_LABELS[current.preventiveSubtype] || current.preventiveSubtype}` : ""}`],
-                      ["Priority", getTicketPriority(current.priority).label],
-                      [
-                        "Technicians",
-                        (current.technicianNames?.length > 0
-                          ? current.technicianNames
-                          : (current.technicianIds?.length > 0
-                              ? current.technicianIds
-                              : [current.technicianName || current.technicianId])
-                        )
-                          .filter(Boolean)
-                          .join(", ") || "Unassigned",
-                      ],
-                      ["Scheduled", current.scheduledAt ? formatDateTime(current.scheduledAt) : "—"],
-                      ["Created", formatDateTime(current.createdAt)],
-                      ...(current.assignedAt ? [["Assigned", `${formatDateTime(current.assignedAt)}${current.assignedBy ? ` by ${current.assignedBy}` : ""}`]] : []),
-                      ...(current.closedAt ? [["Closed", `${formatDateTime(current.closedAt)}${current.closedBy ? ` by ${current.closedBy}` : ""}`]] : []),
-                    ].map(([k, v]) => (
-                      <View key={k} style={{ width: "48%" }} className={`rounded-btn px-3 py-2 ${dark ? "bg-white/5" : "bg-bg"}`}>
-                        <Text className={`text-[10px] font-inter ${darkMuted}`}>{k}</Text>
-                        <Text className={`text-xs font-bold font-inter mt-0.5 ${darkText}`} numberOfLines={2}>
-                          {v}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                </Card>
-
-                {/* Actions card — role-scoped buttons */}
-                <Card>
-                  <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>Actions</Text>
-                  <View className="flex-row flex-wrap gap-2">
-                    {canAssign && openStatus && (
-                      <Button
-                        title={
-                          (current.technicianIds?.length || current.technicianId)
-                            ? "Reassign team"
-                            : "Assign technicians"
-                        }
-                        variant="primary"
-                        size="sm"
-                        onPress={() => {
-                          setSheet("assign");
-                          setSheetError(null);
-                          // Prefill the checkboxes with the current team so
-                          // reassignment edits the existing crew.
-                          setAssignTeam(
-                            Array.isArray(current.technicianIds) && current.technicianIds.length > 0
-                              ? [...current.technicianIds]
-                              : current.technicianId
-                                ? [current.technicianId]
-                                : []
-                          );
-                        }}
-                      />
-                    )}
-                    {/* Item 10 — technician/manager status control. Default is
-                        "To do" (PENDING); "In progress" starts the work,
-                        "Complete" is the close flow. */}
-                    {canChangeStatus && openStatus && (
-                      <Button
-                        title={current.status === "IN_PROGRESS" ? "Mark completed" : "Start (in progress)"}
-                        variant={current.status === "IN_PROGRESS" ? "primary" : "outline"}
-                        size="sm"
-                        onPress={() => {
-                          setStatusChoice(current.status === "IN_PROGRESS" ? "COMPLETED" : "IN_PROGRESS");
-                          setSheetError(null);
-                          setSheet("status");
-                        }}
-                      />
-                    )}
-                    {canEditDetails && openStatus && (
-                      <Button
-                        title="Edit details"
-                        variant="outline"
-                        size="sm"
-                        onPress={() => {
-                          setDetailsForm({
-                            title: current.title || "",
-                            description: current.description || "",
-                            priority: current.priority || "MEDIUM",
-                          });
-                          setSheetError(null);
-                          setSheet("details");
-                        }}
-                      />
-                    )}
-                    {canDiagnose && openStatus && (
-                      <Button title="+ Diagnosis" variant="outline" size="sm" onPress={() => { setSheet("diagnosis"); setSheetError(null); }} />
-                    )}
-                    {canDiagnose && openStatus && (
-                      <Button title="+ Action" variant="outline" size="sm" onPress={() => { setSheet("action"); setSheetError(null); }} />
-                    )}
-                    {canObserve && (
-                      <Button title="+ Observation" variant="outline" size="sm" onPress={() => { setSheet("observation"); setSheetError(null); }} />
-                    )}
-                    {canClose && openStatus && (
-                      <Button
-                        title="Close"
-                        variant={current.status === "IN_PROGRESS" || current.status === "ASSIGNED" ? "primary" : "outline"}
-                        size="sm"
-                        onPress={() => { setSheet("close"); setSheetError(null); }}
-                      />
-                    )}
-                  </View>
-                  {mutating === "loading" && <BusyRow label="Saving…" className="mt-2" />}
-                  {mutating === "error" && (
-                    <Text className="text-xs font-inter text-danger mt-1">
-                      The last action failed — retry or reload the page.
-                    </Text>
-                  )}
-                </Card>
-              </View>
             </View>
           </>
         )}
@@ -730,7 +738,7 @@ export default function InterventionDetailScreen() {
           </>
         ) : (
           <Text className={`text-sm font-inter ${darkMuted}`}>
-            {techniciansStatus === "loading"
+            {techStatus === "loading"
               ? "Loading technicians…"
               : "No technician accounts are available yet — create technician accounts first, then assign them here."}
           </Text>

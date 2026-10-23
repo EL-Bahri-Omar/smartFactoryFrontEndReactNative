@@ -21,7 +21,7 @@
 // them into the remaining individual codes.
 
 import { useEffect, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable } from "react-native";
+import { View, Text, ScrollView, Pressable, useWindowDimensions } from "react-native";
 import { useRouter } from "expo-router";
 import AppShell from "../../src/components/AppShell";
 import Card from "../../src/components/Card";
@@ -43,6 +43,8 @@ import {
   deleteRole,
   clearRoleSave,
 } from "../../src/store/slices/roleSlice";
+import { refreshSession } from "../../src/store/slices/authSlice";
+import * as moduleService from "../../src/store/services/moduleService";
 
 const MATRIX = [
   { module: "MACHINES", create: ["MACHINE_CREATE"], read: ["MACHINE_READ"], update: ["MACHINE_UPDATE"], remove: ["MACHINE_DELETE"], legacyWrite: "MACHINE_WRITE" },
@@ -58,18 +60,36 @@ const MATRIX = [
   { module: "ZONES", create: [], read: ["ZONE_READ"], update: ["ZONE_WRITE"], remove: [] },
 ];
 
+// Clearer display names — several were too vague to know what the columns
+// actually grant (see MODULE_HINTS below for the one-line explanation
+// rendered under each row label).
 const MODULE_LABELS = {
   MACHINES: "Machines",
-  READINGS: "Telemetry",
+  READINGS: "Telemetry (readings)",
   SENSORS: "Sensors",
   DASHBOARD: "Dashboard",
-  THRESHOLDS: "Thresholds",
+  THRESHOLDS: "Alert thresholds",
   ALERTS: "Alerts",
   MAINTENANCE: "Maintenance",
   USERS: "Users",
-  ROLES: "Roles",
-  GROUPS: "Groups",
-  ZONES: "Zones",
+  ROLES: "Roles & permissions",
+  GROUPS: "Machine groups",
+  ZONES: "Zones & map",
+};
+
+// Plain-language hint per module so Consulter/Éditer… is obvious per row.
+const MODULE_HINTS = {
+  MACHINES: "Create, edit and delete machines & lines",
+  READINGS: "View sensor history, charts and exports",
+  SENSORS: "View sensors and their measurement history",
+  DASHBOARD: "Open the KPI dashboard",
+  THRESHOLDS: "View and change alert thresholds",
+  ALERTS: "View alerts, acknowledge and resolve them",
+  MAINTENANCE: "View interventions, assign, edit and close them",
+  USERS: "Create, edit and delete user accounts",
+  ROLES: "Create roles and change permissions (this screen)",
+  GROUPS: "View and configure machine groups",
+  ZONES: "View and configure zones on the map",
 };
 
 // Group modules into collapsible sections (Qualisys-style layout)
@@ -123,12 +143,48 @@ export default function RolesScreen() {
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
 
+  // Backend functional-module catalog (GET /api/modules) — the source of
+  // truth behind the "Add module" action, listed under the matrix.
+  const [modules, setModules] = useState([]);
+  const [showAddModule, setShowAddModule] = useState(false);
+  const [modCode, setModCode] = useState("");
+  const [modName, setModName] = useState("");
+  const [modDesc, setModDesc] = useState("");
+  const [modBusy, setModBusy] = useState(false);
+  const [modError, setModError] = useState(null);
+
+  // Bounded height for the matrix rows: the rows scroll INSIDE the card so
+  // the "Module · Créer · Consulter · Éditer · Supprimer · Tout" header row
+  // stays pinned in place while scrolling (requested UX).
+  const win = useWindowDimensions();
+  const matrixMaxHeight = Math.max(320, Math.min(560, Math.round(win.height * 0.55)));
+
   useEffect(() => {
     if (canView) {
       dispatch(fetchRoles());
       dispatch(fetchRolePrivilegesCatalog());
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch, canView]);
+
+  // Module catalog: best-effort (403 for roles without module read access
+  // just hides the list — the matrix above never depends on it).
+  useEffect(() => {
+    if (!canView) return;
+    let alive = true;
+    moduleService
+      .getAll()
+      .then((rows) => {
+        if (alive) setModules(rows || []);
+      })
+      .catch(() => {
+        if (alive) setModules([]);
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canView]);
 
   const current = useMemo(
     () => (list || []).find((r) => r.name === activeRole) || (list || [])[0] || null,
@@ -208,8 +264,34 @@ export default function RolesScreen() {
     try {
       await dispatch(updateRole({ name: current.name, body: { privileges: [...checked] } })).unwrap();
       dispatch(fetchRoles());
+      // Refresh THIS session (/api/auth/me) so the permission gates update
+      // immediately instead of waiting for the 60 s session poll.
+      dispatch(refreshSession());
     } catch {
       // Inline save error below.
+    }
+  }
+
+  /** POST /api/modules — add a module to the backend catalog (ROLE_CREATE). */
+  async function handleAddModule() {
+    const code = modCode.trim().toUpperCase();
+    const name = modName.trim();
+    if (code.length < 2 || name.length < 2) return;
+    setModBusy(true);
+    setModError(null);
+    try {
+      await moduleService.create({ code, name, description: modDesc.trim() || undefined });
+      const rows = await moduleService.getAll();
+      setModules(rows);
+      setModCode("");
+      setModName("");
+      setModDesc("");
+      setShowAddModule(false);
+      dialog.alert("Module created", `${code} was added to the backend module catalog.`, "success");
+    } catch (e) {
+      setModError(e?.message || "Failed to create module");
+    } finally {
+      setModBusy(false);
     }
   }
 
@@ -424,7 +506,14 @@ export default function RolesScreen() {
                   ))}
                 </View>
 
-                {/* Grouped modules */}
+                {/* Grouped modules — the rows scroll inside a bounded area
+                    so the column-header row above stays visible ("pinned")
+                    while scrolling the matrix. */}
+                <ScrollView
+                  style={{ maxHeight: matrixMaxHeight }}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator={false}
+                >
                 {MODULE_GROUPS.map((group) => {
                   const groupRows = MATRIX.filter((row) =>
                     group.modules.includes(row.module)
@@ -462,6 +551,11 @@ export default function RolesScreen() {
                               <Text className={`text-sm font-inter ${headerText}`}>
                                 {MODULE_LABELS[row.module] || row.module}
                               </Text>
+                              {MODULE_HINTS[row.module] ? (
+                                <Text className={`text-[10px] font-inter mt-0.5 ${subText}`} numberOfLines={2}>
+                                  {MODULE_HINTS[row.module]}
+                                </Text>
+                              ) : null}
                             </View>
                             <CheckCell row={row} codes={row.create} />
                             <CheckCell row={row} codes={row.read} />
@@ -487,12 +581,98 @@ export default function RolesScreen() {
                     </View>
                   );
                 })}
+                </ScrollView>
               </Card>
             ) : (
               <Card>
                 <EmptyState title="No roles yet" message="Roles are seeded automatically on backend start." />
               </Card>
             )}
+
+            {/* Backend module catalog (GET /api/modules) — list + the
+                "Add module" action that POSTs a new module there. */}
+            <Card className="mt-4">
+              <View className="flex-row items-center justify-between mb-2 gap-2">
+                <Text className={`text-base font-bold font-inter ${headerText}`}>
+                  Functional modules (backend catalog)
+                </Text>
+                {canCreate && (
+                  <Button
+                    title={showAddModule ? "Close" : "+ Add module"}
+                    variant="outline"
+                    size="sm"
+                    onPress={() => {
+                      setShowAddModule((v) => !v);
+                      setModError(null);
+                    }}
+                  />
+                )}
+              </View>
+
+              {showAddModule && (
+                <View className={`mb-3 pb-3 border-b ${cellBorder}`}>
+                  <View className={`${isDesktop ? "flex-row gap-3 items-end" : "gap-3"}`}>
+                    <View style={isDesktop ? { width: 170 } : undefined}>
+                      <Input
+                        label="Code *"
+                        placeholder="REPORTS"
+                        value={modCode}
+                        onChangeText={(t) => setModCode(t.toUpperCase())}
+                        autoCapitalize="characters"
+                      />
+                    </View>
+                    <View className="flex-1">
+                      <Input label="Display name *" placeholder="Reports" value={modName} onChangeText={setModName} />
+                    </View>
+                    <View className="flex-1">
+                      <Input
+                        label="Description (optional)"
+                        placeholder="Shift reports & exports"
+                        value={modDesc}
+                        onChangeText={setModDesc}
+                      />
+                    </View>
+                    <Button
+                      title="Add module"
+                      variant="primary"
+                      size="sm"
+                      loading={modBusy}
+                      disabled={modCode.trim().length < 2 || modName.trim().length < 2}
+                      onPress={handleAddModule}
+                    />
+                  </View>
+                  {modError && <Text className="text-sm text-danger font-inter mt-2">{modError}</Text>}
+                </View>
+              )}
+
+              {modules.length === 0 ? (
+                <Text className={`text-sm font-inter ${subText}`}>
+                  No modules returned by the backend (GET /api/modules).
+                </Text>
+              ) : (
+                modules.map((m) => (
+                  <View key={m.id || m.code} className={`flex-row items-center justify-between py-2 border-b ${cellBorder}`}>
+                    <View className="flex-1 pr-3">
+                      <Text className={`text-sm font-bold font-inter ${headerText}`}>{m.name || m.code}</Text>
+                      <Text className={`text-[11px] font-inter ${subText}`}>
+                        {m.code}
+                        {m.description ? ` · ${m.description}` : ""}
+                      </Text>
+                    </View>
+                    <View className="flex-row items-center gap-2">
+                      {m.systemModule && (
+                        <View className="px-2 py-0.5 rounded-chip bg-primary-soft">
+                          <Text className="text-[10px] font-bold text-primary font-inter">system</Text>
+                        </View>
+                      )}
+                      <Text className={`text-[11px] font-inter ${subText}`}>
+                        {(m.privileges || []).length} priv.
+                      </Text>
+                    </View>
+                  </View>
+                ))
+              )}
+            </Card>
           </>
         )}
       </ScrollView>

@@ -96,6 +96,10 @@ export async function create(body) {
     priority: body.priority || undefined, // defaults to MEDIUM server-side
     alertId: body.alertId || undefined,
     anomalyId: body.anomalyId || undefined,
+    // BOTH fields on purpose: the current backend validates the single
+    // technicianId (@NotBlank) and ignores technicianIds; a team-aware
+    // backend (coworker spec) uses technicianIds when present.
+    technicianId: team[0] || undefined,
     technicianIds: team.length > 0 ? team : undefined,
     scheduledAt: body.scheduledAt || undefined,
   });
@@ -105,6 +109,9 @@ export async function create(body) {
 /**
  * PUT /api/maintenance/:id/assign (CONFIRMED US43) → updated intervention.
  * Accepts ONE technician id or a LIST (the whole team is replaced).
+ * Body carries BOTH shapes: `technicianId` (first = lead) satisfies the
+ * current backend's @NotBlank check; `technicianIds` is the full team for
+ * the team-aware backend variant (unknown fields are ignored server-side).
  */
 export async function assign(id, technicianIds) {
   const team = Array.isArray(technicianIds)
@@ -113,7 +120,10 @@ export async function assign(id, technicianIds) {
       ? [technicianIds]
       : [];
   const url = buildUrl(ENDPOINTS.INTERVENTION_ASSIGN, { id });
-  const response = await api.put(url, { technicianIds: team });
+  const response = await api.put(url, {
+    technicianId: team[0] || undefined,
+    technicianIds: team,
+  });
   return normalizeIntervention(response.data);
 }
 

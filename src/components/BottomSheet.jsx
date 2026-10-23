@@ -19,6 +19,9 @@
 //   visible, onClose, title?, subtitle?
 //   children      body content
 //   footer?       node pinned at the bottom (action buttons)
+//   overlay?      optional full-screen layer PAINTED ABOVE the sheet, inside
+//                 the SAME modal (use for nested popups — a separate <Modal>
+//                 stacks behind this one on some platforms / z-index layers)
 //   maxWidth      desktop card width (default 620)
 //   maxHeightRatio 0.92 default
 //   scroll        false (default) — opt in only for genuinely long content
@@ -36,6 +39,7 @@ export default function BottomSheet({
   subtitle,
   children,
   footer,
+  overlay = null,
   maxWidth = 620,
   maxHeightRatio = 0.92,
   scroll = false,
@@ -83,6 +87,15 @@ export default function BottomSheet({
     </View>
   ) : null;
 
+  // Nested popup layer (technician picker, …): an absolute fill rendered
+  // AFTER the sheet card inside this same modal, so it is always painted
+  // ON TOP — a second <Modal> would stack behind this one (z-index bug).
+  const overlayNode = overlay ? (
+    <View style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}>
+      {overlay}
+    </View>
+  ) : null;
+
   const panel = (
     <>
       {!!(title || subtitle) && (
@@ -119,6 +132,7 @@ export default function BottomSheet({
               {panel}
             </Pressable>
           </Pressable>
+          {overlayNode}
         </KeyboardAvoidingView>
       </Modal>
     );
@@ -144,6 +158,7 @@ export default function BottomSheet({
             {panel}
           </Pressable>
         </Pressable>
+        {overlayNode}
       </KeyboardAvoidingView>
     </Modal>
   );

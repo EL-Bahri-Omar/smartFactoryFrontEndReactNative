@@ -30,6 +30,19 @@ export default function Input({
         className={`flex-row items-center border rounded-btn px-3 py-2.5 gap-2 ${
           error ? "border-danger" : focused ? "border-primary" : dark ? "border-white/15" : "border-border"
         } ${dark ? "bg-white/5" : "bg-surface"} ${disabled ? "opacity-50" : ""}`}
+        style={
+          focused && !disabled
+            ? {
+                // Click/focus feedback: a little box shadow lifts the field
+                // being edited (review: "add a box shadow on all inputs").
+                shadowColor: "#2563EB",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.28,
+                shadowRadius: 6,
+                elevation: 4,
+              }
+            : null
+        }
       >
         {icon && <View className="mr-1">{icon}</View>}
         <TextInput

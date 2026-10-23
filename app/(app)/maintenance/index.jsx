@@ -177,22 +177,9 @@ export default function MaintenanceScreen() {
     return () => clearTimeout(timer);
   }, [searchInput, dispatch, filters.search]);
 
-  if (!canAccess("maintenance")) {
-    return (
-      <AppShell>
-        <Card className="my-4">
-          <EmptyState
-            title="Restricted area"
-            message="Maintenance is available to administrators, responsables industriels and technicians."
-            action={
-              <Button title="Go back home" variant="primary" size="sm" onPress={() => router.replace(homeRoute)} />
-            }
-          />
-        </Card>
-      </AppShell>
-    );
-  }
-
+  // NOTE: the restricted-area early return must stay BELOW every hook (the
+  // two useMemos) — on logout canAccess() flips false and an early return
+  // above a hook throws "Rendered fewer hooks than expected".
   const loading = status === "loading" && list.length === 0;
   // Refresh state — a fetch running while rows are already on screen
   // (filter change). No layout flash: BusyRow + dim.
@@ -238,6 +225,22 @@ export default function MaintenanceScreen() {
     });
     return [...groups.entries()];
   }, [list]);
+
+  if (!canAccess("maintenance")) {
+    return (
+      <AppShell>
+        <Card className="my-4">
+          <EmptyState
+            title="Restricted area"
+            message="Maintenance is available to administrators, responsables industriels and technicians."
+            action={
+              <Button title="Go back home" variant="primary" size="sm" onPress={() => router.replace(homeRoute)} />
+            }
+          />
+        </Card>
+      </AppShell>
+    );
+  }
 
   function openCreate(prefill = {}) {
     if (!canCreate) return;
@@ -309,7 +312,7 @@ export default function MaintenanceScreen() {
         </Text>
         <View
           className="px-2.5 py-0.5 rounded-chip justify-center"
-          style={{ width: 96, backgroundColor: pMeta.color + "1A" }}
+          style={{ width: 96, marginRight: 14, backgroundColor: pMeta.color + "1A" }}
         >
           <Text className="text-[10px] font-bold font-inter text-center" style={{ color: pMeta.color }}>
             {pMeta.label}
@@ -532,7 +535,7 @@ export default function MaintenanceScreen() {
                       <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 120, letterSpacing: 0.5 }}>Machine</Text>
                       <Text className={`flex-1 text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ letterSpacing: 0.5 }}>Intervention</Text>
                       <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 96, letterSpacing: 0.5 }}>Type</Text>
-                      <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 96, letterSpacing: 0.5 }}>Priority</Text>
+                      <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 96, marginRight: 14, letterSpacing: 0.5 }}>Priority</Text>
                       <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 104, letterSpacing: 0.5 }}>Status</Text>
                       <Text className={`text-[11px] font-bold font-inter uppercase text-right ${darkMuted}`} style={{ width: 110, letterSpacing: 0.5 }}>Date</Text>
                     </View>

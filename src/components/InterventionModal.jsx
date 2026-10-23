@@ -38,7 +38,7 @@ import { useAppDispatch } from "../hooks/useAppDispatch";
 import { useAppSelector } from "../hooks/useAppSelector";
 import { createIntervention } from "../store/slices/interventionSlice";
 import { fetchMachines } from "../store/slices/machineSlice";
-import { fetchTechnicians } from "../store/slices/userSlice";
+import { useTechnicians } from "../hooks/useTechnicians";
 import { TICKET_PRIORITY } from "../constants/roles";
 import { getTicketPriority, INTERVENTION_TYPE_LABELS, PREVENTIVE_SUBTYPE_LABELS } from "../lib/status";
 import { useDark } from "../hooks/useDark";
@@ -70,7 +70,10 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
   const dialog = useDialog();
   const dark = useDark();
   const { list: machines } = useAppSelector((s) => s.machine);
-  const { list: users, technicians, techniciansStatus } = useAppSelector((s) => s.user);
+  const {
+    options: technicianOptions,
+    status: techStatus,
+  } = useTechnicians();
 
   const [machineId, setMachineId] = useState("");
   const [title, setTitle] = useState("");
@@ -82,25 +85,19 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
   const [scheduledAt, setScheduledAt] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  // Technician picker: opens a CENTERED popup rendered as the sheet's
+  // `overlay` layer (above the form) instead of an inline list at the
+  // bottom of the sheet — the whole team list is visible at once.
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const machineOptions = (machines || []).map((m) => ({
     value: m.id || m.code,
     label: `${m.code || m.machineCode || m.id} — ${m.name || m.type || "Machine"}`,
   }));
 
-  // Technician candidates: GET /api/users/technicians (any authenticated
-  // role — the responsable has no USER_READ). Fallback to the full users
-  // list when that endpoint is not available yet (backend not restarted).
+  // Technician candidates come from the shared useTechnicians hook
+  // (GET /api/users?role=TECHNICIAN, with a lightweight-endpoint fallback).
   // Value MUST be the Mongo id (backend also accepts the email).
-  const techSource =
-    techniciansStatus === "error" || (technicians || []).length === 0
-      ? (users || []).filter((u) => u.role === "TECHNICIAN")
-      : technicians;
-  const technicianOptions = techSource.map((u) => ({
-    value: u.id || u.email,
-    label: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email,
-    sub: u.email || "",
-  }));
 
   /** Add/remove one technician from the team (multi-select). */
   function toggleTechnician(id) {
@@ -112,9 +109,8 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
   useEffect(() => {
     if (!visible) return;
     if (!prefill?.machineId) dispatch(fetchMachines({ size: 100 }));
-    // Silent best-effort fetch to fill the technician picker (deduped by
-    // the slice status — no refetch when the list is already warm).
-    if (techniciansStatus === "idle") dispatch(fetchTechnicians());
+    // The technician list loads itself via the useTechnicians hook
+    // (one shared fetch per session — see src/hooks/useTechnicians.js).
     setMachineId(prefill?.machineId || prefill?.machineCode || "");
     setTitle(prefill?.title || (prefill?.alertMessage ? `Fix: ${prefill.alertMessage}` : ""));
     setDescription(prefill?.description || "");
@@ -124,12 +120,24 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
     setTechnicianIds([]);
     setScheduledAt(null);
     setError(null);
+    setPickerOpen(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, prefill]);
 
   async function handleSubmit() {
     if (!machineId || !title.trim()) return;
     if (type === "PREVENTIVE" && !preventiveSubtype) return;
+    // Product rule (review): never create an intervention without a team —
+    // an unassigned job is invisible to the technicians who must act on it.
+    // Also wait while the technician list is still loading (a click in that
+    // first second would otherwise slip through with an empty team).
+    if (techStatus === "loading" || (technicianOptions.length > 0 && technicianIds.length === 0)) {
+      setError(
+        "Select at least one technician — an intervention cannot be created without a team."
+      );
+      setPickerOpen(true);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -161,10 +169,116 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
 
   const chipBase = dark ? "bg-white/5 border border-white/15" : "bg-bg border border-border";
   const muted = dark ? "text-white/60" : "text-text-muted";
+  // Red field border only after the "team required" validation fired.
+  const techInvalid = !!error && technicianIds.length === 0;
+
+  // ── Centered technician picker ──────────────────────────────────────
+  // Passed to BottomSheet as its `overlay` layer, so it renders INSIDE the
+  // sheet's modal, painted ABOVE the form. A separate <Modal> stacked
+  // BEHIND the create popup (z-index), which is why this is an overlay now.
+  const pickerOverlay = (
+    <Pressable
+      className="flex-1 items-center justify-center px-4"
+      style={{ backgroundColor: "rgba(2,6,23,0.55)" }}
+      onPress={() => setPickerOpen(false)}
+    >
+      <Pressable
+        onPress={() => {}}
+        style={{ width: "100%", maxWidth: 480 }}
+        className={`rounded-xl border overflow-hidden ${
+          dark ? "bg-darkcard border-white/15" : "bg-surface border-border"
+        }`}
+      >
+        <View
+          className="px-4 pt-4 pb-3"
+          style={{
+            borderBottomWidth: 1,
+            borderBottomColor: dark ? "rgba(255,255,255,0.08)" : "#E5E7EB",
+          }}
+        >
+          <Text className={`text-base font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
+            Select technicians
+          </Text>
+          <Text className={`text-xs font-inter mt-0.5 ${muted}`}>
+            {technicianIds.length > 0
+              ? `${technicianIds.length} selected — tap rows to toggle.`
+              : "Tap rows to build the team (at least one required)."}
+          </Text>
+        </View>
+
+        <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+          {technicianOptions.map((tech) => {
+            const active = technicianIds.includes(tech.value);
+            return (
+              <Pressable
+                key={tech.value}
+                onPress={() => toggleTechnician(tech.value)}
+                className={`flex-row items-center px-4 py-3 ${
+                  dark ? "border-b border-white/5" : "border-b border-border/50"
+                }`}
+                style={({ pressed }) => [
+                  { backgroundColor: active ? "rgba(37,99,235,0.10)" : "transparent" },
+                  pressed ? { opacity: 0.8 } : null,
+                ]}
+              >
+                <View
+                  className="w-5 h-5 rounded-btn items-center justify-center mr-3"
+                  style={{
+                    borderWidth: 1.5,
+                    borderColor: active
+                      ? "#2563EB"
+                      : dark
+                        ? "rgba(255,255,255,0.35)"
+                        : "#CBD5E1",
+                    backgroundColor: active ? "#2563EB" : "transparent",
+                  }}
+                >
+                  {active && <Text className="text-[11px] font-bold text-white">✓</Text>}
+                </View>
+                <View className="flex-1">
+                  <Text
+                    className={`text-sm font-inter ${
+                      active ? "font-semibold" : "font-medium"
+                    } ${dark ? "text-white" : "text-text"}`}
+                  >
+                    {tech.label}
+                  </Text>
+                  {tech.sub ? (
+                    <Text className={`text-[11px] font-inter ${muted}`} numberOfLines={1}>
+                      {tech.sub}
+                    </Text>
+                  ) : null}
+                </View>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        <View
+          className="px-4 py-3 flex-row items-center justify-between"
+          style={{
+            borderTopWidth: 1,
+            borderTopColor: dark ? "rgba(255,255,255,0.08)" : "#E5E7EB",
+          }}
+        >
+          <Text className={`text-[11px] font-inter ${muted}`}>
+            Each selected technician gets notified.
+          </Text>
+          <Button
+            title={technicianIds.length > 0 ? `Done (${technicianIds.length})` : "Done"}
+            variant="primary"
+            size="sm"
+            onPress={() => setPickerOpen(false)}
+          />
+        </View>
+      </Pressable>
+    </Pressable>
+  );
 
   return (
     <BottomSheet
       visible={visible}
+      overlay={pickerOpen ? pickerOverlay : null}
       onClose={onClose}
       maxWidth={760}
       title="Create Intervention"
@@ -185,7 +299,9 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
             disabled={
               !machineId ||
               !title.trim() ||
-              (type === "PREVENTIVE" && !preventiveSubtype)
+              (type === "PREVENTIVE" && !preventiveSubtype) ||
+              techStatus === "loading" ||
+              (technicianOptions.length > 0 && technicianIds.length === 0)
             }
           />
         </View>
@@ -279,12 +395,15 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
             </View>
           </View>
 
-          {/* ── Team of technicians (multi-select list) ── */}
+          {/* ── Team of technicians — REQUIRED. Label + field mirror the
+                 Select components (same design as the Priority field);
+                 tapping the field opens the CENTERED picker, which renders
+                 as the sheet's `overlay` layer ABOVE the form. ── */}
           {technicianOptions.length > 0 && (
-            <View>
-              <View className="flex-row items-center justify-between mb-1.5">
-                <Text className={`text-xs font-semibold font-inter ${muted}`}>
-                  Technicians {technicianIds.length > 0 ? `(${technicianIds.length} selected)` : "(optional)"}
+            <View className="gap-1">
+              <View className="flex-row items-center justify-between">
+                <Text className={`text-sm font-bold font-inter ${muted}`}>
+                  Technicians *
                 </Text>
                 {technicianIds.length > 0 && (
                   <Pressable onPress={() => setTechnicianIds([])} hitSlop={8}>
@@ -292,55 +411,40 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
                   </Pressable>
                 )}
               </View>
-              <ScrollView
-                style={{ maxHeight: 168 }}
-                className={`rounded-btn border ${dark ? "bg-white/5 border-white/15" : "bg-bg border-border"}`}
-                showsVerticalScrollIndicator={false}
+              <Pressable
+                onPress={() => setPickerOpen(true)}
+                className={`flex-row items-center justify-between border rounded-btn px-3 py-2.5 ${
+                  techInvalid ? "border-danger" : dark ? "border-white/15" : "border-border"
+                } ${dark ? "bg-white/5" : "bg-surface"}`}
+                style={({ pressed }) => (pressed ? { opacity: 0.85 } : null)}
               >
-                {technicianOptions.map((tech) => {
-                  const active = technicianIds.includes(tech.value);
-                  return (
-                    <Pressable
-                      key={tech.value}
-                      onPress={() => toggleTechnician(tech.value)}
-                      className={`flex-row items-center px-3 py-2.5 border-b ${dark ? "border-white/5" : "border-border/50"}`}
-                      style={({ pressed }) => [
-                        { backgroundColor: active ? "rgba(37,99,235,0.08)" : "transparent" },
-                        pressed ? { opacity: 0.8 } : null,
-                      ]}
-                    >
-                      {/* Checkbox */}
-                      <View
-                        className="w-5 h-5 rounded-btn items-center justify-center mr-3"
-                        style={{
-                          borderWidth: 1.5,
-                          borderColor: active ? "#2563EB" : dark ? "rgba(255,255,255,0.35)" : "#CBD5E1",
-                          backgroundColor: active ? "#2563EB" : "transparent",
-                        }}
-                      >
-                        {active && <Text className="text-[11px] font-bold text-white">✓</Text>}
-                      </View>
-                      <View className="flex-1">
-                        <Text className={`text-sm font-inter ${active ? "font-semibold" : "font-medium"} ${dark ? "text-white" : "text-text"}`}>
-                          {tech.label}
-                        </Text>
-                        {tech.sub ? (
-                          <Text className={`text-[11px] font-inter ${muted}`} numberOfLines={1}>
-                            {tech.sub}
-                          </Text>
-                        ) : null}
-                      </View>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-              <Text className={`text-[11px] font-inter mt-1 ${muted}`}>
-                Each selected technician receives the assignment notification.
+                <Text
+                  numberOfLines={1}
+                  className={`text-sm font-inter flex-1 ${
+                    technicianIds.length > 0
+                      ? dark
+                        ? "text-white"
+                        : "text-text"
+                      : "text-offline"
+                  }`}
+                >
+                  {technicianIds.length > 0
+                    ? technicianOptions
+                        .filter((t) => technicianIds.includes(t.value))
+                        .map((t) => t.label)
+                        .join(", ")
+                    : "Select technicians..."}
+                </Text>
+                <Text className={`text-xs ${dark ? "text-white/50" : "text-text-muted"}`}>▼</Text>
+              </Pressable>
+              <Text className={`text-[11px] font-inter ${muted}`}>
+                At least one technician is required — each selected technician
+                receives the assignment notification.
               </Text>
             </View>
           )}
 
-          {(techniciansStatus === "succeeded" || techniciansStatus === "error") &&
+          {(techStatus === "succeeded" || techStatus === "error") &&
             technicianOptions.length === 0 && (
             <Text className={`text-xs font-inter ${muted}`}>
               No technician accounts yet — you can assign a team later from the

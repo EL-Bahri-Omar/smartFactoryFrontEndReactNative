@@ -6,21 +6,28 @@
 // Icon buttons share one real-button treatment: light surface, light border,
 // subtle shadow, rounded — in both light and dark modes.
 
-import { useEffect } from "react";
-import { View, Text, Pressable } from "react-native";
+import { useEffect, useState } from "react";
+import { View, Text, Pressable, ActivityIndicator } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, usePathname } from "expo-router";
 import { useAppDispatch } from "../hooks/useAppDispatch";
 import { useAppSelector } from "../hooks/useAppSelector";
 import { useDark } from "../hooks/useDark";
-import { useRole } from "../hooks/useRole";
-import { useLiveTopic } from "../hooks/useLiveTopic";
+import { useRole, PERMISSIONS } from "../hooks/useRole";
 import { useDialog } from "./dialog/DialogContext";
 import { setNotifications } from "../store/slices/settingsSlice";
-import { logoutThunk } from "../store/slices/authSlice";
+import { logoutThunk, refreshSession } from "../store/slices/authSlice";
 import { markAllRead } from "../store/slices/liveSlice";
-import { refreshUnreadCount, setServerUnread } from "../store/slices/notificationSlice";
+import { fetchNotifications, refreshUnreadCount } from "../store/slices/notificationSlice";
+import { fetchAlerts } from "../store/slices/alertSlice";
+import { fetchDashboard } from "../store/slices/dashboardSlice";
+import { fetchMachines } from "../store/slices/machineSlice";
+import { fetchInterventions } from "../store/slices/interventionSlice";
+import { fetchZones } from "../store/slices/zoneSlice";
+import { fetchGroups } from "../store/slices/groupSlice";
+import { fetchUsers } from "../store/slices/userSlice";
+import { fetchRoles } from "../store/slices/roleSlice";
 import Avatar from "./Avatar";
 
 // Door + arrow exit icon (logout), drawn in currentColor-style red.
@@ -70,11 +77,12 @@ function AlertTriangleIcon({ size = 22 }) {
   );
 }
 
-function IconButton({ onPress, label, children }) {
+function IconButton({ onPress, label, children, disabled = false }) {
   const dark = useDark();
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled}
       accessibilityLabel={label}
       className={`w-10 h-10 rounded-btn items-center justify-center border ${
         dark ? "bg-white/10 border-white/15" : "bg-surface border-border"
@@ -85,7 +93,7 @@ function IconButton({ onPress, label, children }) {
         shadowOpacity: dark ? 0.3 : 0.12,
         shadowRadius: 3,
         elevation: 2,
-        opacity: pressed ? 0.75 : 1,
+        opacity: disabled ? 0.5 : pressed ? 0.75 : 1,
       })}
     >
       {children}
@@ -121,17 +129,40 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
   );
 
   // Alerts are for every role EXCEPT OPERATOR (mirrors ACCESS.alerts).
-  const { isOperator } = useRole();
+  const { role, isAdmin, isOperator, hasPermission, hasAnyPermission, canAccess } = useRole();
   const showAlertsShortcut = !isOperator;
 
-  const unreadTopic = user?.id ? `/topic/users/${user.id}/unread-count` : null;
-  const liveUnreadMessage = useLiveTopic(unreadTopic, { enabled: !!unreadTopic });
+  // ── Refresh (review: "add a refresh button in all screens to load the
+  // new changes"). One button in the TopBar = present on EVERY screen; it
+  // reloads the shared Redux data + the session's effective permissions,
+  // honouring each user's access so no screen gets a poisoned 403 error.
+  const canReadAlerts =
+    !isOperator &&
+    (hasPermission(PERMISSIONS.ALERT_READ) ||
+      ["ADMIN", "RESPONSABLE_INDUSTRIEL", "TECHNICIAN"].includes(role));
+  const canReadMaintenance = canAccess("maintenance");
+  const canReadUsers = canAccess("users");
+  const canReadGroups = canAccess("groups");
+  const canViewZones = canAccess("map") || canAccess("machines");
+  const canViewRoles =
+    isAdmin ||
+    hasAnyPermission(
+      PERMISSIONS.ROLE_READ,
+      PERMISSIONS.ROLE_CREATE,
+      PERMISSIONS.ROLE_UPDATE,
+      PERMISSIONS.ROLE_DELETE
+    );
 
-  useEffect(() => {
-    if (liveUnreadMessage && liveUnreadMessage.unreadCount != null) {
-      dispatch(setServerUnread(liveUnreadMessage.unreadCount));
-    }
-  }, [liveUnreadMessage, dispatch]);
+  // Keep the screen's own filters/page so "refresh" reloads exactly what
+  // the user is looking at (slice pagination mirrors the last fetch).
+  const machineFilters = useAppSelector((s) => s.machine.filters);
+  const machinePage = useAppSelector((s) => s.machine.pagination?.page ?? 0);
+  const maintFilters = useAppSelector((s) => s.maintenance.filters);
+  const maintPage = useAppSelector((s) => s.maintenance.pagination?.page ?? 0);
+
+  // The unread-count STOMP topic is consumed by NotificationBridge
+  // (app/(app)/_layout.jsx) — mounted once for the whole app — so the badge
+  // updates from there without this component re-subscribing per mount.
 
   // Periodic server unread sync (60 s + on mount). When the count succeeds,
   // the live counter resets so an alert arriving while the app is open is
@@ -163,6 +194,66 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
   function handleBell() {
     dispatch(markAllRead());
     router.push("/(app)/notifications");
+  }
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  /**
+   * Global refresh: fresh session (role/permissions), dashboard KPIs,
+   * machines, interventions, alerts, notifications (all pages) + badge,
+   * plus the admin lists the current user may read. allSettled so one
+   * failing endpoint never blocks the rest.
+   */
+  async function handleRefresh() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      const tasks = [
+        dispatch(refreshSession()), // role + effectivePermissions freshness
+        dispatch(
+          fetchDashboard({
+            machines: true,
+            alerts: canReadAlerts,
+            interventions: canReadMaintenance,
+          })
+        ),
+        dispatch(fetchNotifications({ page: 0, size: 100 })), // walks all pages
+        dispatch(refreshUnreadCount()), // bell badge
+      ];
+      if (canReadAlerts) tasks.push(dispatch(fetchAlerts({ page: 0, size: 100 })));
+      if (canAccess("machines")) {
+        tasks.push(
+          dispatch(
+            fetchMachines({
+              status: machineFilters?.status || undefined,
+              search: machineFilters?.search || undefined,
+              zoneId: machineFilters?.zoneId || undefined,
+              page: machinePage,
+              size: 10,
+            })
+          )
+        );
+      }
+      if (canViewZones) tasks.push(dispatch(fetchZones()));
+      if (canReadMaintenance) {
+        tasks.push(
+          dispatch(
+            fetchInterventions({
+              status: maintFilters?.status || undefined,
+              type: maintFilters?.type || undefined,
+              page: maintPage,
+              size: 100,
+            })
+          )
+        );
+      }
+      if (canReadUsers) tasks.push(dispatch(fetchUsers({ page: 0, size: 100 })));
+      if (canReadGroups) tasks.push(dispatch(fetchGroups()));
+      if (canViewRoles) tasks.push(dispatch(fetchRoles()));
+      await Promise.allSettled(tasks);
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   async function handleLogout() {
@@ -202,6 +293,29 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
       )}
 
       <View className="flex-1" />
+
+      {/* Refresh — reloads the data behind EVERY screen (session,
+          dashboard, machines, interventions, alerts, notifications). */}
+      <IconButton onPress={handleRefresh} label="Refresh data" disabled={refreshing}>
+        {refreshing ? (
+          <ActivityIndicator size="small" color={iconColor} />
+        ) : (
+          // A little smaller and optically centred inside the 40×40 button:
+          // Android's extra font padding + the glyph's line box are what
+          // pushed it off-centre before (review).
+          <Text
+            style={{
+              fontSize: 16,
+              lineHeight: 18,
+              textAlign: "center",
+              includeFontPadding: false,
+              color: iconColor,
+            }}
+          >
+            ⟳
+          </Text>
+        )}
+      </IconButton>
 
       {/* Theme toggle */}
       <IconButton onPress={toggleTheme} label="Toggle dark mode">

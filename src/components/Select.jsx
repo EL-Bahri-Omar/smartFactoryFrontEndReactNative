@@ -150,6 +150,19 @@ export default function Select({
         className={`flex-row items-center justify-between border rounded-btn px-3 py-2.5 ${
           error ? "border-danger" : dark ? "border-white/15" : "border-border"
         } ${dark ? "bg-white/5" : "bg-surface"} ${disabled ? "opacity-50" : ""}`}
+        style={
+          open && !disabled
+            ? {
+                // Same click/focus lift as Input — the field you just
+                // tapped glows while its list is open.
+                shadowColor: "#2563EB",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.28,
+                shadowRadius: 6,
+                elevation: 4,
+              }
+            : null
+        }
       >
         <View className="flex-1 flex-row items-center gap-2">
           {selectedOption?.dot ? (

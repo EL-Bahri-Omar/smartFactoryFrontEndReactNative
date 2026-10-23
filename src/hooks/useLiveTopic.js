@@ -1,6 +1,13 @@
 // src/hooks/useLiveTopic.js
 // Subscribe to a STOMP destination on mount, unsubscribe on unmount.
 // Returns the latest message for that destination from liveSlice.
+//
+// liveService.subscribe() is safe to call before the socket is up (the
+// destination is registered and auto-attached on connect, and RE-attached
+// after every reconnect), so this effect no longer waits on `connected` —
+// subscriptions can never be lost during a connection blip.
+// NOTE: the returned message may be a CACHED payload from a previous mount —
+// consumers that dispatch on it must dedupe (see NotificationBridge refs).
 
 import { useEffect } from "react";
 import { useAppSelector } from "./useAppSelector";
@@ -12,22 +19,16 @@ import * as liveService from "../store/services/liveService";
  * @returns {any} latest message payload for this destination (or undefined)
  */
 export function useLiveTopic(destination, { enabled = true } = {}) {
-  const connected = useAppSelector((state) => state.live.connected);
   const message = useAppSelector((state) => state.live.messagesByTopic[destination]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !destination) return;
     liveService.connect();
-  }, [enabled]);
-
-  useEffect(() => {
-    if (!enabled || !connected || !destination) return;
-
     const unsubscribe = liveService.subscribe(destination);
     return () => {
-      if (unsubscribe) unsubscribe();
+      unsubscribe();
     };
-  }, [destination, enabled, connected]);
+  }, [destination, enabled]);
 
   return message;
 }

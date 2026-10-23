@@ -8,10 +8,12 @@
 //
 // Remember-me model:
 // - Memory (module-level) always holds the current session. Lost on reload.
-// - Persistent storage (AsyncStorage native / localStorage web) is written
+// - Persistent storage (AsyncStorage native / sessionStorage web) is written
 //   ONLY when remember === true. bootstrapAuth rehydrates via GET /me only
 //   for remembered sessions — unchecked = session ends on app close.
 // - Remembered email is kept separately so the login field can be prefilled.
+// - WEB = sessionStorage (per browser TAB): every tab can hold a different
+//   account and logout only affects the tab where it happened.
 //
 // Every export is async to keep a uniform signature across platforms.
 
@@ -40,11 +42,15 @@ async function getStorage() {
   return AsyncStorage;
 }
 
-// ── Web localStorage helpers (guarded for SSR / non-browser envs) ──────
+// ── Web sessionStorage helpers (guarded for SSR / non-browser envs) ────
+// PER-TAB SESSION: sessionStorage (not localStorage) is what isolates
+// browser tabs — each tab keeps its OWN account, so logging in / logging
+// out in one tab never touches another tab's session. It still survives a
+// refresh of the same tab (the "refresh must not log me out" behaviour).
 function webGet(key) {
   try {
-    if (typeof localStorage === "undefined") return null;
-    return localStorage.getItem(key);
+    if (typeof sessionStorage === "undefined") return null;
+    return sessionStorage.getItem(key);
   } catch {
     return null;
   }
@@ -52,8 +58,8 @@ function webGet(key) {
 
 function webSet(key, value) {
   try {
-    if (typeof localStorage === "undefined") return;
-    localStorage.setItem(key, value);
+    if (typeof sessionStorage === "undefined") return;
+    sessionStorage.setItem(key, value);
   } catch {
     // Storage full or unavailable — session simply won't survive reload.
   }
@@ -61,8 +67,8 @@ function webSet(key, value) {
 
 function webRemove(key) {
   try {
-    if (typeof localStorage === "undefined") return;
-    localStorage.removeItem(key);
+    if (typeof sessionStorage === "undefined") return;
+    sessionStorage.removeItem(key);
   } catch {
     // Ignore.
   }
@@ -120,9 +126,9 @@ export async function clearRememberedEmail() {
 
 /**
  * Store the access token.
- * Web ALWAYS persists (localStorage) — a browser refresh must never log the
- * user out. Native persists only when remember === true (the Remember me
- * checkbox exists on mobile only).
+ * Web ALWAYS persists (sessionStorage — this tab only) — a browser refresh
+ * must never log the user out. Native persists only when remember === true
+ * (the Remember me checkbox exists on mobile only).
  */
 export async function setTokens({ accessToken, remember = false }) {
   const persist = Platform.OS === "web" ? true : remember;

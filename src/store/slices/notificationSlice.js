@@ -8,9 +8,11 @@
 // no server-side type filter, so tab filtering is client-side over `list`
 // (backend types: ALERT_CRITICAL | ALERT_HIGH | ALERT_WARNING |
 // MAINTENANCE_ASSIGNED | INFO; the "Alerts" tab groups every ALERT_*).
-// Pagination is real: the first page REPLACES the list, older pages are
-// APPENDED by fetchMoreNotifications (fetchMoreNotifications / "load older"),
-// so history (older / already-read rows) stays reachable.
+// Pagination is real: fetchNotifications now loads EVERY page up front (the
+// full history is on screen without pressing anything), fetchMoreNotifications
+// still covers pages that failed to load, and `pagination.allLoaded` tells the
+// screen when no older page remains. First page replaces the list, older pages
+// are APPENDED, so history (older / already-read rows) stays reachable.
 // The backend also broadcasts each new row on
 // /topic/users/{userId}/notifications and the unread count on
 // /topic/users/{userId}/unread-count — `receiveNotification` and
@@ -29,9 +31,39 @@ const MAX_LIST_SIZE = 1000;
 
 export const fetchNotifications = createAsyncThunk(
   "notification/fetch",
-  async ({ page = 0, size = 100 } = {}, { rejectWithValue }) => {
+  async ({ page = 0, size = 100, all = true } = {}, { rejectWithValue }) => {
     try {
-      return await notificationService.getAll({ page, size });
+      const first = await notificationService.getAll({ page, size });
+      if (!all) return { ...first, allLoaded: false };
+
+      // Load ALL older pages up front (the user asked for the full history
+      // instead of pressing "load older" repeatedly). Sequential keeps the
+      // server's page ordering; deduped by id; capped at MAX_LIST_SIZE and
+      // 20 extra pages (2000 rows > MAX, so MAX always wins).
+      const list = [...first.list];
+      const known = new Set(list.map((n) => n.id));
+      let last = first;
+      let allLoaded = (first.page ?? 0) + 1 >= (first.totalPages ?? 1);
+      let guard = 0;
+      while (!allLoaded && list.length < MAX_LIST_SIZE && guard < 20) {
+        guard += 1;
+        try {
+          last = await notificationService.getAll({
+            page: (last.page ?? 0) + 1,
+            size: last.size || size,
+          });
+        } catch {
+          break; // older pages unreachable — keep what we have
+        }
+        (last.list || []).forEach((n) => {
+          if (!known.has(n.id)) {
+            known.add(n.id);
+            list.push(n);
+          }
+        });
+        allLoaded = (last.page ?? 0) + 1 >= (last.totalPages ?? 1);
+      }
+      return { ...first, list, allLoaded };
     } catch (error) {
       return rejectWithValue(error);
     }
@@ -74,6 +106,8 @@ export const markAllNotificationsRead = createAsyncThunk(
     let guard = 0;
     while (guard < 30) {
       const { pagination } = getState().notification;
+      // Already fully loaded by fetchNotifications (all pages up front).
+      if (pagination.allLoaded) break;
       if ((pagination.page ?? 0) + 1 >= (pagination.totalPages ?? 1)) break;
       guard += 1;
       try {
@@ -115,6 +149,36 @@ export const refreshUnreadCount = createAsyncThunk(
   }
 );
 
+/**
+ * Polling safety net for LIVE notifications (review: "notifications only
+ * appeared after a manual refresh"). The STOMP bridge delivers in
+ * milliseconds when the WebSocket is healthy, but a silent connection drop
+ * must never force a manual refresh — every tick:
+ *   1. refreshes the badge count (server truth), and
+ *   2. pulls the newest page and merges rows the local list does not know
+ *      yet as live rows (deduped by id, newest ends up on top).
+ * Cheap on the LAN: two small GETs per tick, no list replacement.
+ */
+export const pollNotifications = createAsyncThunk(
+  "notification/poll",
+  async (_, { getState, dispatch, rejectWithValue }) => {
+    try {
+      const count = await notificationService.getUnreadCount();
+      dispatch(setServerUnread(count));
+
+      const first = await notificationService.getAll({ page: 0, size: 50 });
+      const known = new Set(getState().notification.list.map((n) => n.id));
+      const fresh = (first.list || []).filter((n) => n?.id && !known.has(n.id));
+      // receiveNotification prepends — feed the rows oldest-first so the
+      // newest one ends up on top of the list.
+      [...fresh].reverse().forEach((n) => dispatch(receiveNotification(n)));
+      return { fresh: fresh.length };
+    } catch (error) {
+      return rejectWithValue(error);
+    }
+  }
+);
+
 const notificationSlice = createSlice({
   name: "notification",
   initialState: {
@@ -123,7 +187,7 @@ const notificationSlice = createSlice({
     status: "idle",
     moreStatus: "idle", // idle | loading | error (older pages)
     error: null,
-    pagination: { page: 0, size: 100, totalElements: 0, totalPages: 1 },
+    pagination: { page: 0, size: 100, totalElements: 0, totalPages: 1, allLoaded: false },
     // Server truth for the TopBar badge. `server` replaces the local live
     // counter whenever a fresh count arrives; a null server value keeps
     // `local` visible (backend unreachable).
@@ -207,6 +271,7 @@ const notificationSlice = createSlice({
           size: payload.size ?? 100,
           totalElements: payload.totalElements ?? payload.list.length,
           totalPages: payload.totalPages ?? 1,
+          allLoaded: payload.allLoaded ?? false,
         };
       })
       .addCase(fetchNotifications.rejected, (state, action) => {
@@ -230,6 +295,10 @@ const notificationSlice = createSlice({
           size: payload.size ?? state.pagination.size,
           totalElements: payload.totalElements ?? state.pagination.totalElements,
           totalPages: payload.totalPages ?? state.pagination.totalPages,
+          allLoaded:
+            payload.allLoaded ??
+            ((payload.page ?? state.pagination.page) + 1 >=
+              (payload.totalPages ?? state.pagination.totalPages)),
         };
       })
       .addCase(fetchMoreNotifications.rejected, (state, action) => {

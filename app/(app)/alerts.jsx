@@ -15,8 +15,9 @@
 //  - Only the row matching the sensor's CURRENT state shows the live dot:
 //    it moves from warning to critical, and turns green when resolved. The
 //    dot color matches the status palette (lib/status).
-//  - Read vs unread: ACTIVE rows are unread (tinted + severity left border);
-//    ACKNOWLEDGED / RESOLVED rows are read (plain background + muted title).
+//  - Read vs unread (product spec): ACTIVE rows are unread (GRAY background +
+//    bold title); ACKNOWLEDGED / RESOLVED rows are read (WHITE background +
+//    light text). A Select mode marks any set of rows read at once.
 //  - The detail sheet was redesigned (severity header, key/value grid) and
 //    its "Create Intervention" jumps to the Maintenance screen's own create
 //    button (alert → intervention link). Only the responsable industriel can
@@ -39,6 +40,7 @@ import EmptyState from "../../src/components/EmptyState";
 import FilterChips from "../../src/components/FilterChips";
 import SeverityBadge from "../../src/components/SeverityBadge";
 import BottomSheet from "../../src/components/BottomSheet";
+import PaginationBar from "../../src/components/PaginationBar";
 import { useBreakpoint } from "../../src/hooks/useBreakpoint";
 import { useDark } from "../../src/hooks/useDark";
 import { useRole, PERMISSIONS } from "../../src/hooks/useRole";
@@ -107,8 +109,17 @@ export default function AlertsScreen() {
   const lastLiveRef = useRef(null);
 
   const [detailOpen, setDetailOpen] = useState(false); // mobile detail sheet
-  const [selected, setSelected] = useState(null); // alert for the ⋮ menu / sheet
+  const [selected, setSelected] = useState(null); // alert opened in the detail sheet
   const [sheetBusy, setSheetBusy] = useState(false);
+  // Selection mode: pick several alerts and mark them read (acknowledge)
+  // in one action — same UX as the Notifications screen.
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+
+  // Client-side pagination over the deduped + filtered rows (review:
+  // "add a pagination in the alerts and notification pages"). The feed
+  // loads its history up front, so paging is a pure slice.
+  const [page, setPage] = useState(0);
 
   // REST sync (CONFIRMED endpoint).
   useEffect(() => {
@@ -178,6 +189,15 @@ export default function AlertsScreen() {
     return deduped.filter((a) => normalizeAlertSeverity(a.severity) === filter);
   }, [deduped, filter]);
 
+  // Current page, clamped so a shrinking filter never leaves an empty page.
+  const PAGE_SIZE = isDesktop ? 15 : 10;
+  const alertPageCount = Math.max(1, Math.ceil(visibleAlerts.length / PAGE_SIZE));
+  const safeAlertPage = Math.min(page, alertPageCount - 1);
+  const pageAlerts = visibleAlerts.slice(
+    safeAlertPage * PAGE_SIZE,
+    (safeAlertPage + 1) * PAGE_SIZE
+  );
+
   async function handleAcknowledge(alert) {
     setSelected(null);
     setDetailOpen(false);
@@ -189,10 +209,18 @@ export default function AlertsScreen() {
   }
 
   async function handleResolve(alert) {
-    setSelected(null);
-    setDetailOpen(false);
     try {
       await dispatch(resolveAlert({ id: alert.id })).unwrap();
+      // Close only after the server confirms, then SAY what happened —
+      // the old instant-silent close made the button look like it did
+      // nothing (review feedback).
+      setSelected(null);
+      setDetailOpen(false);
+      dialog.alert(
+        "Alert resolved",
+        "The alert is now RESOLVED: it stays in the list as history (white/read row), leaves the active count, and the sensor keeps monitoring.",
+        "success"
+      );
     } catch (e) {
       dialog.alert("Failed", e?.message || "Could not resolve the alert.", "error");
     }
@@ -236,6 +264,39 @@ export default function AlertsScreen() {
     }
   }
 
+  function toggleSelectAlert(alert) {
+    if (!alert?.id) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(alert.id)) next.delete(alert.id);
+      else next.add(alert.id);
+      return next;
+    });
+  }
+
+  /** Selection action: acknowledge every selected ACTIVE row (= mark read). */
+  async function handleMarkSelectedRead() {
+    const targets = deduped.filter((a) => selectedIds.has(a.id) && a.status === "ACTIVE");
+    setSelectedIds(new Set());
+    setSelecting(false);
+    if (targets.length === 0) return;
+    setSheetBusy(true);
+    try {
+      for (const alert of targets) {
+        await dispatch(acknowledgeAlert({ id: alert.id })).unwrap();
+      }
+    } catch (e) {
+      dialog.alert("Failed", e?.message || "Could not acknowledge the alerts.", "error");
+    } finally {
+      setSheetBusy(false);
+    }
+  }
+
+  function exitSelecting() {
+    setSelecting(false);
+    setSelectedIds(new Set());
+  }
+
   if (!canRead) {
     return (
       <AppShell>
@@ -253,6 +314,11 @@ export default function AlertsScreen() {
   const empty = status !== "loading" && deduped.length === 0;
   const darkText = dark ? "text-white" : "text-text";
   const darkMuted = dark ? "text-white/60" : "text-text-muted";
+  // Read rows use a light (muted) title/body per the read-unread spec;
+  // unread rows keep FULL strength (bold title + semibold body).
+  const readTitleClass = dark ? "text-white/55" : "text-text-muted";
+  const readBodyClass = dark ? "text-white/40" : "text-text-muted/70";
+  const unreadBodyClass = dark ? "text-white/85" : "text-text";
 
   /** Shared row content resolver */
   function rowModel(alert) {
@@ -283,12 +349,22 @@ export default function AlertsScreen() {
   function renderRow(alert, onPressRow) {
     const m = rowModel(alert);
     const isActive = m.alert.status === "ACTIVE";
-    const unread = isActive;
+    const unread = isActive; // ACTIVE = unread · ACKNOWLEDGED/RESOLVED = read
     const dangerous = m.sevMeta.color === "#DC2626";
-    // Read vs unread must be obvious at a glance: unread = strong severity
-    // tint + colored left border, read = neutral slate card.
-    const unreadBg = dark ? m.sevMeta.color + "3D" : m.sevMeta.color + "33";
-    const readBg = dark ? "#152440" : "#F1F5F9";
+    const isSel = selectedIds.has(m.alert.id);
+    // Read vs unread (product spec, hardened in review): unread = CLEAR gray
+    // background + bold title AND semibold body; read = WHITE background +
+    // light text. Dark: light gray slab vs. the plain card.
+    const unreadBg = dark ? "#374151" : "#D1D5DB";
+    const readBg = dark ? "#0B1220" : "#FFFFFF";
+    // Status pill — makes "Resolve" visibly DO something: the chip flips
+    // Active → Acknowledged → Resolved right on the row.
+    const statusTint =
+      m.alert.status === "RESOLVED"
+        ? { bg: "rgba(22,163,74,0.15)", fg: "#16A34A" }
+        : m.alert.status === "ACKNOWLEDGED"
+          ? { bg: "rgba(37,99,235,0.15)", fg: "#2563EB" }
+          : { bg: "rgba(220,38,38,0.15)", fg: "#DC2626" };
 
     return (
       <Pressable
@@ -297,16 +373,39 @@ export default function AlertsScreen() {
         className={`flex-row items-center px-3 py-3 border-b ${dark ? "border-white/5" : "border-border/50"}`}
         style={({ pressed }) => [
           {
-            borderLeftWidth: 3,
-            borderLeftColor: unread ? m.sevMeta.color : "transparent",
-            backgroundColor: unread
-              ? unreadBg
-              : readBg,
+            // Selection highlight only — no severity border on rows anymore.
+            borderLeftWidth: isSel ? 3 : 0,
+            borderLeftColor: isSel ? "#2563EB" : "transparent",
+            backgroundColor: unread ? unreadBg : readBg,
             opacity: m.alert.status === "RESOLVED" ? 0.85 : 1,
           },
           pressed ? { opacity: 0.85 } : null,
         ]}
       >
+        {/* Selection indicator — only in selection mode (whole row toggles). */}
+        {selecting && (
+          <View className="mr-3 items-center justify-center" style={{ width: 22, height: 22 }}>
+            {isSel ? (
+              <View
+                className="items-center justify-center rounded-full"
+                style={{ width: 20, height: 20, backgroundColor: "#2563EB" }}
+              >
+                <Text style={{ color: "#fff", fontSize: 11, fontWeight: "bold" }}>✓</Text>
+              </View>
+            ) : (
+              <View
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: 10,
+                  borderWidth: 1.5,
+                  borderColor: dark ? "rgba(255,255,255,0.4)" : "#94A3B8",
+                }}
+              />
+            )}
+          </View>
+        )}
+
         {/* Severity icon circle */}
         <View
           className="w-10 h-10 rounded-full items-center justify-center mr-3"
@@ -321,11 +420,18 @@ export default function AlertsScreen() {
         <View className="flex-1 mr-3">
           <Text
             numberOfLines={1}
-            className={`text-sm font-inter ${unread ? "font-bold" : "font-medium"} ${darkText}`}
+            className={`text-sm font-inter ${unread ? "font-bold" : "font-medium"} ${
+              unread ? darkText : readTitleClass
+            }`}
           >
             {alertTitle(m.alert)}
           </Text>
-          <Text numberOfLines={2} className={`text-xs font-inter mt-0.5 ${darkMuted}`}>
+          <Text
+            numberOfLines={2}
+            className={`text-xs font-inter mt-0.5 ${
+              unread ? `font-semibold ${unreadBodyClass}` : readBodyClass
+            }`}
+          >
             {[
               m.machineCode,
               m.machineType || "",
@@ -338,9 +444,14 @@ export default function AlertsScreen() {
           </Text>
         </View>
 
-        {/* Right: severity chip + relative time + live state dot */}
+        {/* Right: severity chip + STATUS pill + relative time */}
         <View className="items-end gap-1">
           <SeverityBadge severity={m.alert.severity} />
+          <View className="px-1.5 py-0.5 rounded-chip" style={{ backgroundColor: statusTint.bg }}>
+            <Text className="text-[9px] font-bold font-inter" style={{ color: statusTint.fg }}>
+              {m.statusMeta.label}
+            </Text>
+          </View>
           <Text className={`text-[10px] font-inter ${darkMuted}`}>{relativeTime(m.alert.timestamp)}</Text>
         </View>
 
@@ -371,18 +482,9 @@ export default function AlertsScreen() {
           )}
         </View>
 
-        {isDesktop ? (
-          <Pressable
-            onPress={() => setSelected(m.alert)}
-            hitSlop={8}
-            className="ml-1 w-8 h-8 items-center justify-center rounded-btn"
-            style={({ pressed }) => (pressed ? { opacity: 0.7 } : {})}
-          >
-            <Text className={darkMuted}>⋮</Text>
-          </Pressable>
-        ) : (
-          <Text className={`ml-2 ${darkMuted}`}>›</Text>
-        )}
+        {/* Row tap opens the detail sheet everywhere — the old ⋮ menu button
+            is removed (top bar already owns navigation, sheet owns actions). */}
+        {!isDesktop && <Text className={`ml-2 ${darkMuted}`}>›</Text>}
       </Pressable>
     );
   }
@@ -421,7 +523,14 @@ export default function AlertsScreen() {
               />
             )}
             {canAcknowledge && alert.status !== "RESOLVED" && (
-              <Button title="Resolve" variant="outline" size="sm" onPress={() => handleResolve(alert)} />
+              <Button
+                title={ackStatus === "loading" ? "Resolving…" : "Resolve"}
+                variant="outline"
+                size="sm"
+                onPress={() => handleResolve(alert)}
+                loading={ackStatus === "loading"}
+                disabled={ackStatus === "loading"}
+              />
             )}
             {/* Only the responsable industriel creates interventions. */}
             {isResponsable && (
@@ -495,17 +604,51 @@ export default function AlertsScreen() {
                 Threshold breaches and offline sensors arrive here in real time.
               </Text>
             </View>
-            {canAcknowledge && (
-              <Button
-                title={sheetBusy ? "Marking…" : "Mark all as read"}
-                variant="outline"
-                size={isDesktop ? "sm" : "md"}
-                loading={sheetBusy}
-                disabled={deduped.length === 0}
-                onPress={handleMarkAllRead}
-                className={isDesktop ? "" : "mt-2 w-full"}
-              />
-            )}
+            {canAcknowledge &&
+              (selecting ? (
+                <View className={isDesktop ? "flex-row gap-2" : "flex-row gap-2 mt-2 w-full"}>
+                  <Button
+                    title="Cancel"
+                    variant="outline"
+                    size={isDesktop ? "sm" : "md"}
+                    className={isDesktop ? "" : "flex-1"}
+                    onPress={exitSelecting}
+                  />
+                  <Button
+                    title={`Mark as read${selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}`}
+                    variant="primary"
+                    size={isDesktop ? "sm" : "md"}
+                    className={isDesktop ? "" : "flex-1"}
+                    loading={sheetBusy}
+                    disabled={selectedIds.size === 0}
+                    onPress={handleMarkSelectedRead}
+                  />
+                </View>
+              ) : (
+                <View className={isDesktop ? "flex-row gap-2" : "flex-row gap-2 mt-2 w-full"}>
+                  <Button
+                    title="Select"
+                    variant="outline"
+                    size={isDesktop ? "sm" : "md"}
+                    className={isDesktop ? "" : "flex-1"}
+                    disabled={deduped.length === 0}
+                    onPress={() => {
+                      setSelected(null); // make sure no detail sheet is open
+                      setDetailOpen(false);
+                      setSelecting(true);
+                    }}
+                  />
+                  <Button
+                    title={sheetBusy ? "Marking…" : "Mark all as read"}
+                    variant="outline"
+                    size={isDesktop ? "sm" : "md"}
+                    className={isDesktop ? "" : "flex-1"}
+                    loading={sheetBusy}
+                    disabled={deduped.length === 0}
+                    onPress={handleMarkAllRead}
+                  />
+                </View>
+              ))}
           </View>
         </View>
 
@@ -513,7 +656,10 @@ export default function AlertsScreen() {
         <FilterChips
           chips={FILTER_CHIPS.map((c) => ({ ...c, count: counts[c.key] ?? 0 }))}
           active={filter}
-          onChange={(key) => dispatch(setFilter(key))}
+          onChange={(key) => {
+            dispatch(setFilter(key));
+            setPage(0);
+          }}
           className="mb-4"
         />
 
@@ -563,11 +709,35 @@ export default function AlertsScreen() {
                   message="Try another filter."
                 />
               ) : (
-                visibleAlerts.map((alert) =>
-                  renderRow(alert, isDesktop ? () => setSelected(alert) : () => { setSelected(alert); setDetailOpen(true); })
+                pageAlerts.map((alert) =>
+                  renderRow(alert, () => {
+                    // Selection mode: the whole row toggles the checkbox.
+                    if (selecting) {
+                      toggleSelectAlert(alert);
+                      return;
+                    }
+                    if (isDesktop) {
+                      setSelected(alert); // sheet opens on `selected` (web)
+                    } else {
+                      setSelected(alert);
+                      setDetailOpen(true);
+                    }
+                  })
                 )
               )}
             </View>
+          )}
+
+          {/* Prev / "Page X of Y" / Next — hidden automatically on a single
+              page. The negative margins cancel the card's p-4 so the bar sits
+              edge-to-edge, matching the notifications list card. */}
+          {!loading && !empty && visibleAlerts.length > 0 && (
+            <PaginationBar
+              page={safeAlertPage}
+              totalPages={alertPageCount}
+              onPageChange={setPage}
+              className="-mx-4 -mb-4"
+            />
           )}
         </Card>
 
