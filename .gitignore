@@ -1,46 +1,35 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+# ── Secrets: NEVER push ──────────────────────────────────────────────────
+# Android FCM client config — keep out of public repos (ships in the APK,
+# but no reason to have it in git either).
+google-services.json
 
-# dependencies
+# ── Dependencies ─────────────────────────────────────────────────────────
 node_modules/
 
-# Expo
+# ── Expo / Metro ─────────────────────────────────────────────────────────
 .expo/
 dist/
 web-build/
 expo-env.d.ts
-
-# Native
-.kotlin/
 *.orig.*
+
+# ── Native builds (npx expo run:android / ios) ──────────────────────────
+android/
+ios/
+*.apk
+*.aab
 *.jks
-*.p8
-*.p12
-*.key
-*.mobileprovision
+*.keystore
 
-# Metro
-.metro-health-check*
-
-# debug
+# ── Logs / OS ───────────────────────────────────────────────────────────
 npm-debug.*
 yarn-debug.*
 yarn-error.*
 *.log
-
-# editors / OS
-.vscode/
-.idea/
-# macOS
 .DS_Store
-*.pem
+Thumbs.db
 
-# local env files
+# ── Env ─────────────────────────────────────────────────────────────────
 .env
-.env*.local
-
-# typescript
-*.tsbuildinfo
-
-# generated native folders
-/ios
-/android
+.env.*
+!.env.example
