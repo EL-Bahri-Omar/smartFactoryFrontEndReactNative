@@ -228,6 +228,10 @@ const interventionSlice = createSlice({
     setFilters(state, action) {
       state.filters = { ...state.filters, ...action.payload };
     },
+    clearMutatingError(state) {
+      state.mutating = "idle";
+      state.mutatingError = null;
+    },
     clearRecommendations(state) {
       state.recommendations = [];
       state.recommendationsStatus = "idle";
@@ -299,8 +303,9 @@ const interventionSlice = createSlice({
           if (target.status === "PENDING") target.status = "ASSIGNED";
         }
       })
-      .addCase(assignIntervention.rejected, (state) => {
+      .addCase(assignIntervention.rejected, (state, action) => {
         state.mutating = "error";
+        state.mutatingError = action.payload?.message || "Assignment failed";
       })
       .addCase(assignIntervention.fulfilled, (state, action) => {
         state.mutating = "succeeded";
@@ -314,8 +319,9 @@ const interventionSlice = createSlice({
         const target = row || (state.current?.id === id ? state.current : null);
         if (target && status) target.status = status;
       })
-      .addCase(updateInterventionStatus.rejected, (state) => {
+      .addCase(updateInterventionStatus.rejected, (state, action) => {
         state.mutating = "error";
+        state.mutatingError = action.payload?.message || "Status change failed";
       })
       .addCase(updateInterventionStatus.fulfilled, (state, action) => {
         state.mutating = "succeeded";
@@ -351,8 +357,9 @@ const interventionSlice = createSlice({
       .addCase(addInterventionDiagnosis.pending, (state) => {
         state.mutating = "loading";
       })
-      .addCase(addInterventionDiagnosis.rejected, (state) => {
+      .addCase(addInterventionDiagnosis.rejected, (state, action) => {
         state.mutating = "error";
+        state.mutatingError = action.payload?.message || "Diagnosis failed";
       })
       .addCase(addInterventionDiagnosis.fulfilled, (state, action) => {
         state.mutating = "succeeded";
@@ -431,5 +438,5 @@ const interventionSlice = createSlice({
   },
 });
 
-export const { setFilters, clearRecommendations } = interventionSlice.actions;
+export const { setFilters, clearMutatingError, clearRecommendations } = interventionSlice.actions;
 export default interventionSlice.reducer;

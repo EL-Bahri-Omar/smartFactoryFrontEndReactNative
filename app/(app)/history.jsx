@@ -102,6 +102,7 @@ export default function HistoryScreen() {
   const [showCustom, setShowCustom] = useState(false);
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
+  const [customApplied, setCustomApplied] = useState(false);
 
   // Fetch machines for the selector
   useEffect(() => {
@@ -191,6 +192,7 @@ export default function HistoryScreen() {
   function handleRangeChange(val) {
     setRange(val);
     setChartRanges({}); // reset per-chart overrides when global changes
+    setCustomApplied(false);
   }
 
   function handleChartRange(sensorType, newRange) {
@@ -374,6 +376,8 @@ export default function HistoryScreen() {
                         customFrom,
                         customTo,
                       }));
+                      setShowCustom(false);
+                      setCustomApplied(true);
                     }
                   }}
                 />
@@ -390,6 +394,33 @@ export default function HistoryScreen() {
               </View>
             </View>
           </Card>
+        )}
+
+        {/* Custom filter applied feedback */}
+        {customApplied && !showCustom && (
+          <View className={`flex-row items-center justify-between py-2 px-4 rounded-btn mb-4 ${dark ? "bg-success/15 border border-success/30" : "bg-green-50 border border-green-200"}`}>
+            <View className="flex-row items-center gap-2">
+              <Text style={{ fontSize: 16, color: "#22C55E" }}>{"✓"}</Text>
+              <Text className={`text-sm font-semibold font-inter ${dark ? "text-success" : "text-green-700"}`}>
+                {"Custom filter applied"}
+              </Text>
+              <Text className={`text-xs font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>
+                {`${new Date(customFrom).toLocaleDateString()} – ${new Date(customTo).toLocaleDateString()}`}
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => {
+                setCustomApplied(false);
+                setCustomFrom("");
+                setCustomTo("");
+                if (selectedMachine) {
+                  dispatch(fetchReadings({ machineId: selectedMachine, range }));
+                }
+              }}
+            >
+              <Text className={`text-xs font-bold font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>{"✕ Clear"}</Text>
+            </Pressable>
+          </View>
         )}
 
         {/* Tabs */}

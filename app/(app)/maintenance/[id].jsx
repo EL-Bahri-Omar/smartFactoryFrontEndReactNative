@@ -46,6 +46,7 @@ import {
   updateInterventionDiagnosis,
   updateInterventionAction,
   updateInterventionObservation,
+  clearMutatingError,
 } from "../../../src/store/slices/interventionSlice";
 import { useTechnicians } from "../../../src/hooks/useTechnicians";
 import {
@@ -76,7 +77,7 @@ export default function InterventionDetailScreen() {
   const dark = useDark();
   const { role, user } = useRole();
 
-  const { current, currentStatus, currentError, mutating } = useAppSelector((s) => s.maintenance);
+  const { current, currentStatus, currentError, mutating, mutatingError } = useAppSelector((s) => s.maintenance);
   const knownUsers = useAppSelector((s) => s.user?.list || []);
   const { options: technicianOptions, status: techStatus } = useTechnicians();
 
@@ -149,7 +150,7 @@ export default function InterventionDetailScreen() {
   const canObserve = isTechnician && canWorkOnIt;
   const canClose = isResponsable || (isTechnician && canWorkOnIt);
   const canEditDetails = isResponsable;
-  const canChangeStatus = isTechnician && canWorkOnIt;
+  const canChangeStatus = isResponsable || (isTechnician && canWorkOnIt);
   const openStatus = current && current.status !== "COMPLETED" && current.status !== "CANCELLED";
 
   // technicianOptions comes from the shared useTechnicians hook (declared
@@ -526,15 +527,29 @@ export default function InterventionDetailScreen() {
                 {/* Item 10 — technician status control. Default is "To do"
                     (PENDING); "In progress" starts the work, "Complete" is
                     the close flow. */}
-                {canChangeStatus && openStatus && (
+                {canChangeStatus && openStatus && current.status !== "IN_PROGRESS" && (
                   <Button
-                    title={
-                      current.status === "IN_PROGRESS" ? "✓ Mark completed" : "▶ Start intervention"
-                    }
+                    title="▶ Start intervention"
+                    variant="primary"
+                    size="md"
+                    loading={mutating === "loading"}
+                    onPress={async () => {
+                      dispatch(clearMutatingError());
+                      try {
+                        await dispatch(updateInterventionStatus({ id, status: "IN_PROGRESS" })).unwrap();
+                      } catch (e) {
+                        // Error captured in mutatingError
+                      }
+                    }}
+                  />
+                )}
+                {canChangeStatus && openStatus && current.status === "IN_PROGRESS" && (
+                  <Button
+                    title="✓ Mark completed"
                     variant="primary"
                     size="md"
                     onPress={() => {
-                      setStatusChoice(current.status === "IN_PROGRESS" ? "COMPLETED" : "IN_PROGRESS");
+                      setStatusChoice("COMPLETED");
                       setSheetError(null);
                       setSheet("status");
                     }}
@@ -576,12 +591,15 @@ export default function InterventionDetailScreen() {
               </View>
               {mutating === "loading" && <BusyRow label="Saving…" className="mt-2" />}
               {mutating === "error" && (
-                <Text className="text-xs font-inter text-danger mt-1">
-                  The last action failed — retry, or reload the intervention. Status
-                  changes go through PUT /api/maintenance/{"{id}"} (resp/admin);
-                  technicians start with their first diagnosis/action and finish
-                  with Close — all of those endpoints exist on the backend.
-                </Text>
+                <View className={`rounded-btn p-3 mt-2 ${dark ? "bg-danger/10" : "bg-red-50"}`}>
+                  <Text className="text-xs font-bold font-inter text-danger mb-1">{"Action failed"}</Text>
+                  <Text className={`text-xs font-inter ${dark ? "text-white/70" : "text-text"}`}>
+                    {mutatingError || "The last action failed. Please retry."}
+                  </Text>
+                  <Pressable className="mt-2" onPress={() => dispatch(clearMutatingError())}>
+                    <Text className="text-xs font-bold font-inter text-primary">{"Dismiss"}</Text>
+                  </Pressable>
+                </View>
               )}
             </Card>
 
