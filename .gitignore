@@ -32,6 +32,9 @@ yarn-error.*
 Thumbs.db
 
 # ── Env ─────────────────────────────────────────────────────────────────
-.env
+# .env is DELIBERATELY tracked: it only holds the LAN backend URL, and EAS
+# Build only uploads git-tracked files. If it were ignored, the release APK
+# would get an undefined API base URL and every request would fail with
+# "Network error". Add real secrets to .env.local instead (still ignored).
 .env.*
 !.env.example

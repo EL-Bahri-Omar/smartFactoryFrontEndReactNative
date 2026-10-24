@@ -40,6 +40,16 @@ export default {
         },
       ],
       "expo-notifications",
+      [
+        "expo-build-properties",
+        {
+          android: {
+            // Release APKs block plain http:// by default (Android 9+).
+            // Our backend runs on a LAN IP over http, so permit it.
+            usesCleartextTraffic: true,
+          },
+        },
+      ],
     ],
 
     extra: {
