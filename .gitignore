@@ -1,7 +1,8 @@
-# ── Secrets: NEVER push ──────────────────────────────────────────────────
-# Android FCM client config — keep out of public repos (ships in the APK,
-# but no reason to have it in git either).
-google-services.json
+# ── Secrets ──────────────────────────────────────────────────────────────
+# NOTE: google-services.json is DELIBERATELY NOT ignored — EAS cloud builds
+# only upload git-TRACKED files, and the build fails without it. It is a
+# client config (ships inside every APK anyway), so committing it is safe.
+# NEVER put the firebase-adminsdk (service account) key in the frontend.
 
 # ── Dependencies ─────────────────────────────────────────────────────────
 node_modules/
