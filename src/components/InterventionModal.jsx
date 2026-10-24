@@ -108,7 +108,10 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
 
   useEffect(() => {
     if (!visible) return;
-    if (!prefill?.machineId) dispatch(fetchMachines({ size: 100 }));
+    // ALWAYS load the machines — a prefill (alert → intervention) still needs
+    // the list so the machine Select shows the picked machine, not a blank
+    // field (review: "auto-pick the machine … it's not picked").
+    dispatch(fetchMachines({ size: 100 }));
     // The technician list loads itself via the useTechnicians hook
     // (one shared fetch per session — see src/hooks/useTechnicians.js).
     setMachineId(prefill?.machineId || prefill?.machineCode || "");
@@ -121,8 +124,23 @@ export default function InterventionModal({ visible, onClose, prefill = null }) 
     setScheduledAt(null);
     setError(null);
     setPickerOpen(false);
+    // `prefill` is deliberately NOT a dependency: it is often an inline
+    // object from the parent, and re-running on its identity reset the
+    // fields mid-typing (review: "the field closes").
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, prefill]);
+  }, [visible]);
+
+  // A prefill can carry the machine CODE (alerts pass machineCode) while the
+  // Select options use Mongo ids — resolve it once the list is loaded so the
+  // field shows the machine instead of the placeholder.
+  useEffect(() => {
+    if (!machineId || !machines?.length) return;
+    if ((machines || []).some((m) => (m.id || m.code) === machineId)) return;
+    const byCode = (machines || []).find(
+      (m) => m.code === machineId || m.machineCode === machineId
+    );
+    if (byCode) setMachineId(byCode.id || byCode.code);
+  }, [machineId, machines]);
 
   async function handleSubmit() {
     if (!machineId || !title.trim()) return;

@@ -42,7 +42,10 @@ export default function BottomSheet({
   overlay = null,
   maxWidth = 620,
   maxHeightRatio = 0.92,
-  scroll = false,
+  // Review fix (mobile typing): long forms MUST scroll — with scroll off the
+  // body clipped its lower fields, so tapping them hit the backdrop and
+  // CLOSED the sheet instead of focusing the input.
+  scroll = true,
   bodyClassName = "",
 }) {
   const isDesktop = useBreakpoint() === "desktop";

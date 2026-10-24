@@ -60,6 +60,7 @@ import {
   setType,
 } from "../../src/store/slices/notificationSlice";
 import { fetchAlerts, prependAlert } from "../../src/store/slices/alertSlice";
+import { fetchInterventions } from "../../src/store/slices/interventionSlice";
 import { normalizeAlert } from "../../src/store/services/alertService";
 import {
   buildSensorStates,
@@ -213,6 +214,7 @@ export default function NotificationsScreen() {
 
   const { list, type, status, moreStatus, error, pagination } = useAppSelector((s) => s.notification);
   const { list: alertList } = useAppSelector((s) => s.alert);
+  const interventions = useAppSelector((s) => s.maintenance?.list || []);
   const liveConnected = useAppSelector((s) => s.live.connected);
 
   // Live rows arrive through NotificationBridge (app/(app)/_layout.jsx) —
@@ -328,7 +330,7 @@ export default function NotificationsScreen() {
   }
 
   /** Row press: in selection mode just toggle the checkbox. */
-  function handleRowPress(row) {
+  async function handleRowPress(row) {
     if (selecting) {
       toggleSelect(row);
       return;
@@ -357,7 +359,22 @@ export default function NotificationsScreen() {
       if (interventionId) {
         router.push(`/(app)/maintenance/${String(interventionId)}`);
       } else {
-        router.push("/(app)/maintenance");
+        // Old rows (created before the backend save-order fix) carry no id —
+        // resolve the intervention by its title against the loaded list
+        // (fresh fetch as fallback) so the tap still opens the DETAIL page.
+        const wanted = extractAssignedTitle(n);
+        let match = wanted
+          ? interventions.find((t) => (t.title || "").trim().toLowerCase() === wanted)
+          : null;
+        if (!match && wanted) {
+          try {
+            const res = await dispatch(fetchInterventions({ page: 0, size: 100 }));
+            const rows = res?.payload?.list || [];
+            match = rows.find((t) => (t.title || "").trim().toLowerCase() === wanted) || null;
+          } catch { /* fall back to the list */ }
+        }
+        if (match?.id) router.push(`/(app)/maintenance/${String(match.id)}`);
+        else router.push("/(app)/maintenance");
       }
     } else {
       const machineKey = n.machineId || n.machineCode;

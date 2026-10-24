@@ -592,64 +592,49 @@ export default function AlertsScreen() {
   return (
     <AppShell>
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View className="mb-4">
-          <View className={isDesktop ? "flex-row items-start justify-between gap-3" : ""}>
-            <View className="flex-1">
-              <View className="flex-row items-center gap-2">
-                <Text className={`text-xl font-bold font-inter ${darkText}`}>Alerts</Text>
-                {connected && <View className="w-2 h-2 rounded-full" style={{ backgroundColor: "#16A34A" }} />}
-              </View>
-              <Text className={`text-sm font-inter ${darkMuted}`}>
-                Threshold breaches and offline sensors arrive here in real time.
-              </Text>
-            </View>
-            {canAcknowledge &&
-              (selecting ? (
-                <View className={isDesktop ? "flex-row gap-2" : "flex-row gap-2 mt-2 w-full"}>
-                  <Button
-                    title="Cancel"
-                    variant="outline"
-                    size={isDesktop ? "sm" : "md"}
-                    className={isDesktop ? "" : "flex-1"}
-                    onPress={exitSelecting}
-                  />
-                  <Button
-                    title={`Mark as read${selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}`}
-                    variant="primary"
-                    size={isDesktop ? "sm" : "md"}
-                    className={isDesktop ? "" : "flex-1"}
-                    loading={sheetBusy}
-                    disabled={selectedIds.size === 0}
-                    onPress={handleMarkSelectedRead}
-                  />
-                </View>
-              ) : (
-                <View className={isDesktop ? "flex-row gap-2" : "flex-row gap-2 mt-2 w-full"}>
-                  <Button
-                    title="Select"
-                    variant="outline"
-                    size={isDesktop ? "sm" : "md"}
-                    className={isDesktop ? "" : "flex-1"}
-                    disabled={deduped.length === 0}
-                    onPress={() => {
-                      setSelected(null); // make sure no detail sheet is open
-                      setDetailOpen(false);
-                      setSelecting(true);
-                    }}
-                  />
-                  <Button
-                    title={sheetBusy ? "Marking…" : "Mark all as read"}
-                    variant="outline"
-                    size={isDesktop ? "sm" : "md"}
-                    className={isDesktop ? "" : "flex-1"}
-                    loading={sheetBusy}
-                    disabled={deduped.length === 0}
-                    onPress={handleMarkAllRead}
-                  />
-                </View>
-              ))}
+        {/* Header — same compact recipe as Notifications: title + small
+            actions on ONE row, no description sentence (review). */}
+        <View className="mb-4 flex-row items-center justify-between gap-2 flex-wrap">
+          <View className="flex-row items-center gap-2">
+            <Text className={`text-xl font-bold font-inter ${darkText}`}>Alerts</Text>
+            {connected && <View className="w-2 h-2 rounded-full" style={{ backgroundColor: "#16A34A" }} />}
           </View>
+          {canAcknowledge &&
+            (selecting ? (
+              <View className="flex-row gap-2">
+                <Button title="Cancel" variant="outline" size="sm" onPress={exitSelecting} />
+                <Button
+                  title={`Mark as read${selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}`}
+                  variant="primary"
+                  size="sm"
+                  loading={sheetBusy}
+                  disabled={selectedIds.size === 0}
+                  onPress={handleMarkSelectedRead}
+                />
+              </View>
+            ) : (
+              <View className="flex-row gap-2">
+                <Button
+                  title="Select"
+                  variant="outline"
+                  size="sm"
+                  disabled={deduped.length === 0}
+                  onPress={() => {
+                    setSelected(null); // make sure no detail sheet is open
+                    setDetailOpen(false);
+                    setSelecting(true);
+                  }}
+                />
+                <Button
+                  title={sheetBusy ? "Marking…" : "Mark all as read"}
+                  variant="outline"
+                  size="sm"
+                  loading={sheetBusy}
+                  disabled={deduped.length === 0}
+                  onPress={handleMarkAllRead}
+                />
+              </View>
+            ))}
         </View>
 
         {/* Filter chips */}

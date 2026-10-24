@@ -108,6 +108,16 @@ export default function MachinesListScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch, filters.status, filters.search, filters.zoneId, page, canReadMachines]);
 
+  // Settings → Machines → auto-refresh interval (review: "add the machines
+  // settings"): silently refetch the current page every N seconds when set.
+  const autoRefreshSeconds = useAppSelector((s) => s.settings.machines?.autoRefreshSeconds || 0);
+  useEffect(() => {
+    if (!canReadMachines || !autoRefreshSeconds) return undefined;
+    const timer = setInterval(() => dispatch(fetchMachines(query())), autoRefreshSeconds * 1000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dispatch, autoRefreshSeconds, canReadMachines, filters.status, filters.search, filters.zoneId, page]);
+
   // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => {

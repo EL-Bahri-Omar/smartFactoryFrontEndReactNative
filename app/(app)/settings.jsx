@@ -27,9 +27,13 @@ import {
   updateSettings,
   setGeneral,
   setNotifications,
+  setMachines,
   clearSaveStatus,
 } from "../../src/store/slices/settingsSlice";
 import { useDialog } from "../../src/components/dialog/DialogContext";
+import { useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { setNotificationsEnabled } from "../../src/store/services/pushService";
 
 const TABS = [
   { key: "general", label: "General" },
@@ -58,13 +62,14 @@ const DATE_FORMAT_OPTIONS = [
 
 export default function SettingsScreen() {
   const dispatch = useAppDispatch();
+  const router = useRouter();
   const dialog = useDialog();
   const breakpoint = useBreakpoint();
   const dark = useDark();
   const { isAdmin } = useRole();
   const isDesktop = breakpoint === "desktop";
 
-  const { general, notifications, status, saveStatus, error } = useAppSelector(
+  const { general, notifications, machines, status, saveStatus, error } = useAppSelector(
     (s) => s.settings
   );
   const [activeTab, setActiveTab] = useState("general");
@@ -85,7 +90,7 @@ export default function SettingsScreen() {
   }, [saveStatus, dispatch]);
 
   function handleSave() {
-    dispatch(updateSettings({ general, notifications }));
+    dispatch(updateSettings({ general, notifications, machines }));
   }
 
   const visibleTabs = TABS.filter((t) => !t.adminOnly || isAdmin);
@@ -151,7 +156,13 @@ export default function SettingsScreen() {
           <Toggle
             label="Enable Notifications"
             value={notifications.enableNotifications}
-            onChange={(v) => dispatch(setNotifications({ enableNotifications: v }))}
+            onChange={(v) => {
+              // Works immediately (review): flips the foreground banner
+              // handler in pushService AND persists for the next launch.
+              dispatch(setNotifications({ enableNotifications: v }));
+              setNotificationsEnabled(v);
+              AsyncStorage.setItem("@sf_notifications_enabled", v ? "1" : "0").catch(() => {});
+            }}
           />
         </View>
       </Card>
@@ -165,12 +176,37 @@ export default function SettingsScreen() {
           Machine Configuration
         </Text>
         <Text className={`text-sm font-inter mb-4 ${dark ? "text-white/60" : "text-text-muted"}`}>
-          Configure global machine settings and thresholds.
+          Global behaviour of the Machines screens.
         </Text>
-        <View className={`rounded-btn p-4 items-center ${dark ? "bg-white/5" : "bg-bg"}`}>
-          <Text className={`text-sm font-inter ${dark ? "text-white/60" : "text-text-muted"}`}>
-            Machine configuration will be available in a future sprint.
-          </Text>
+        <View className="gap-5">
+          <View>
+            <Select
+              label="Auto-refresh machines list"
+              value={String(machines?.autoRefreshSeconds ?? 0)}
+              onValueChange={(v) => dispatch(setMachines({ autoRefreshSeconds: Number(v) }))}
+              options={[
+                { value: "0", label: "Off" },
+                { value: "15", label: "Every 15 seconds" },
+                { value: "30", label: "Every 30 seconds" },
+                { value: "60", label: "Every 60 seconds" },
+              ]}
+            />
+            <Text className={`text-xs font-inter mt-1.5 ${dark ? "text-white/50" : "text-text-muted"}`}>
+              Applies to the Machines list — rows refresh in the background. Saved with Save below.
+            </Text>
+          </View>
+          <Divider />
+          <View className="flex-row items-center justify-between gap-3">
+            <Text className={`text-sm font-inter flex-1 ${dark ? "text-white/60" : "text-text-muted"}`}>
+              Per-machine sensor thresholds are managed on each machine's detail page → Settings tab.
+            </Text>
+            <Button
+              title="Open Machines"
+              variant="outline"
+              size="sm"
+              onPress={() => router.push("/(app)/machines")}
+            />
+          </View>
         </View>
       </Card>
     );

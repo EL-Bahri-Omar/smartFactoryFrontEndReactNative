@@ -12,7 +12,11 @@ export const fetchSettings = createAsyncThunk(
   "settings/fetch",
   async (_, { getState }) => {
     const { settings } = getState();
-    return { general: settings.general, notifications: settings.notifications };
+    return {
+      general: settings.general,
+      notifications: settings.notifications,
+      machines: settings.machines || { autoRefreshSeconds: 0 },
+    };
   }
 );
 
@@ -38,6 +42,10 @@ const settingsSlice = createSlice({
       enableNotifications: true,
       darkMode: false, // TODO: wired to state only, does not apply a theme yet
     },
+    // Machines settings (review: "add the machines settings").
+    machines: {
+      autoRefreshSeconds: 0, // 0 = off, else refetch the machines list every N seconds
+    },
     status: "idle",    // 'idle' | 'loading' | 'succeeded' | 'error'
     saveStatus: "idle", // 'idle' | 'saving' | 'saved' | 'error'
     error: null,
@@ -48,6 +56,9 @@ const settingsSlice = createSlice({
     },
     setNotifications(state, action) {
       state.notifications = { ...state.notifications, ...action.payload };
+    },
+    setMachines(state, action) {
+      state.machines = { ...(state.machines || {}), ...action.payload };
     },
     clearSaveStatus(state) {
       state.saveStatus = "idle";
@@ -64,6 +75,7 @@ const settingsSlice = createSlice({
         state.status = "succeeded";
         if (action.payload?.general) state.general = action.payload.general;
         if (action.payload?.notifications) state.notifications = action.payload.notifications;
+        if (action.payload?.machines) state.machines = action.payload.machines;
       })
       .addCase(fetchSettings.rejected, (state, action) => {
         state.status = "error";
@@ -80,6 +92,7 @@ const settingsSlice = createSlice({
         state.saveStatus = "saved";
         if (action.payload?.general) state.general = { ...state.general, ...action.payload.general };
         if (action.payload?.notifications) state.notifications = { ...state.notifications, ...action.payload.notifications };
+        if (action.payload?.machines) state.machines = { ...state.machines, ...action.payload.machines };
       })
       .addCase(updateSettings.rejected, (state, action) => {
         state.saveStatus = "error";
@@ -88,5 +101,5 @@ const settingsSlice = createSlice({
   },
 });
 
-export const { setGeneral, setNotifications, clearSaveStatus } = settingsSlice.actions;
+export const { setGeneral, setNotifications, setMachines, clearSaveStatus } = settingsSlice.actions;
 export default settingsSlice.reducer;

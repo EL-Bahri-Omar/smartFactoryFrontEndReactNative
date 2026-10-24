@@ -77,7 +77,20 @@ export default function InterventionDetailScreen() {
   const { role, user } = useRole();
 
   const { current, currentStatus, currentError, mutating } = useAppSelector((s) => s.maintenance);
+  const knownUsers = useAppSelector((s) => s.user?.list || []);
   const { options: technicianOptions, status: techStatus } = useTechnicians();
+
+  // Display "First Last" instead of the raw email the backend stamps on
+  // timeline entries (review: "saved by first and last name, not the email").
+  const nameOf = (v) => {
+    if (!v) return v;
+    const s = String(v);
+    if (!s.includes("@")) return s;
+    const hit = (knownUsers || []).find(
+      (u) => (u?.email || "").toLowerCase() === s.toLowerCase() || u?.username === s
+    );
+    return hit?.firstName ? `${hit.firstName} ${hit.lastName || ""}`.trim() : s;
+  };
 
   const [sheet, setSheet] = useState(null); // 'assign' | 'diagnosis' | 'action' | 'observation' | 'close' | 'status' | 'details' | 'editDiagnosis' | 'editAction' | 'editObservation' | null
   const [assignTeam, setAssignTeam] = useState([]); // team: [mongoId]
@@ -428,12 +441,13 @@ export default function InterventionDetailScreen() {
                           : [current.technicianName || current.technicianId])
                     )
                       .filter(Boolean)
+                      .map(nameOf)
                       .join(", ") || "Unassigned",
                   ],
                   ["Scheduled", current.scheduledAt ? formatDateTime(current.scheduledAt) : "—"],
                   ["Created", formatDateTime(current.createdAt)],
-                  ...(current.assignedAt ? [["Assigned", `${formatDateTime(current.assignedAt)}${current.assignedBy ? ` by ${current.assignedBy}` : ""}`]] : []),
-                  ...(current.closedAt ? [["Closed", `${formatDateTime(current.closedAt)}${current.closedBy ? ` by ${current.closedBy}` : ""}`]] : []),
+                  ...(current.assignedAt ? [["Assigned", `${formatDateTime(current.assignedAt)}${current.assignedBy ? ` by ${nameOf(current.assignedBy)}` : ""}`]] : []),
+                  ...(current.closedAt ? [["Closed", `${formatDateTime(current.closedAt)}${current.closedBy ? ` by ${nameOf(current.closedBy)}` : ""}`]] : []),
                 ].map(([k, v]) => (
                   <View
                     key={k}
@@ -543,7 +557,9 @@ export default function InterventionDetailScreen() {
               {mutating === "loading" && <BusyRow label="Saving…" className="mt-2" />}
               {mutating === "error" && (
                 <Text className="text-xs font-inter text-danger mt-1">
-                  The last action failed — retry or reload the page.
+                  The last action failed. Status changes (Start / Complete) need the backend
+                  endpoint PUT /api/maintenance/{"{id}"}/status — spec handed to the backend
+                  team. Diagnoses, actions, observations and Close still work.
                 </Text>
               )}
             </Card>
@@ -582,7 +598,7 @@ export default function InterventionDetailScreen() {
                         <Text className={`text-xs font-inter ${darkMuted}`}>{d.details}</Text>
                       ) : null}
                       {d.technicianName ? (
-                        <Text className={`text-[10px] font-inter mt-1 ${darkMuted}`}>by {d.technicianName}</Text>
+                        <Text className={`text-[10px] font-inter mt-1 ${darkMuted}`}>by {nameOf(d.technicianName)}</Text>
                       ) : null}
                     </View>
                   ))}
@@ -660,7 +676,7 @@ export default function InterventionDetailScreen() {
                       </View>
                       <Text className={`text-sm font-inter ${darkText}`}>{o.content}</Text>
                       {o.authorName ? (
-                        <Text className={`text-[10px] font-inter mt-1 ${darkMuted}`}>by {o.authorName}</Text>
+                        <Text className={`text-[10px] font-inter mt-1 ${darkMuted}`}>by {nameOf(o.authorName)}</Text>
                       ) : null}
                     </View>
                   ))}

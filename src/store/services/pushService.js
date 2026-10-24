@@ -15,6 +15,7 @@
 // `isExpoGo()` below. Push then simply stays inactive; everything else works.
 
 import { Platform } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { ENDPOINTS } from "../../constants/api";
 import api from "../../lib/axios";
@@ -168,6 +169,14 @@ export async function handleNotificationResponse(dispatch, router, response) {
  * @param {{ dispatch: Function, router: any, isAuthenticated: boolean }} opts
  * @returns {Promise<boolean>} true when push is active on this platform.
  */
+// Settings → Notifications on/off (review: "let the notification (on/off)
+// button work"): module-scoped flag read LIVE by the foreground handler.
+let notificationsEnabled = true;
+
+export function setNotificationsEnabled(v) {
+  notificationsEnabled = !!v;
+}
+
 export async function initPush({ dispatch, router, isAuthenticated = false } = {}) {
   if (Platform.OS === "web" || !isAuthenticated) return false;
 
@@ -188,15 +197,22 @@ export async function initPush({ dispatch, router, isAuthenticated = false } = {
   }
 
   try {
-    // Foreground: show the banner instead of silently dropping it.
+    // Foreground: show the banner instead of silently dropping it — unless
+    // the user turned notifications OFF in Settings.
     Notifications.setNotificationHandler({
       handleNotification: async () => ({
-        shouldShowBanner: true,
-        shouldShowList: true,
+        shouldShowBanner: notificationsEnabled,
+        shouldShowList: notificationsEnabled,
         shouldPlaySound: false,
-        shouldSetBadge: true,
+        shouldSetBadge: notificationsEnabled,
       }),
     });
+
+    // Restore the persisted on/off choice (Settings → Notifications).
+    try {
+      const raw = await AsyncStorage.getItem("@sf_notifications_enabled");
+      if (raw != null) notificationsEnabled = raw === "1";
+    } catch { /* keep default */ }
 
     // Android 8+ requires a channel; without one FCM messages can be dropped
     // silently — especially while the app is closed. Create it before asking

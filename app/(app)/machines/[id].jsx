@@ -39,6 +39,7 @@ import { fetchReadings } from "../../../src/store/slices/readingSlice";
 import { fetchMachineSensors } from "../../../src/store/slices/sensorSlice";
 import { fetchThresholds, saveThreshold, deleteThreshold } from "../../../src/store/slices/thresholdSlice";
 import { fetchMachineAlerts, acknowledgeAlert } from "../../../src/store/slices/alertSlice";
+import { fetchInterventions } from "../../../src/store/slices/interventionSlice";
 import { getSensorStatus, getAlertSeverity, normalizeAlertSeverity, getAlertStatus } from "../../../src/lib/status";
 import { relativeTime } from "../../../src/lib/time";
 import { formatAlertMessage } from "../../../src/lib/alertText";
@@ -174,6 +175,8 @@ export default function MachineDetailScreen() {
   const liveConnected = useAppSelector((s) => s.live.connected);
 
   const [tab, setTab] = useState("overview");
+  const maintenanceList = useAppSelector((s) => s.maintenance?.list || []);
+  const maintenanceStatus = useAppSelector((s) => s.maintenance?.status);
   const [chartRange, setChartRange] = useState("6h");
   const [showCustomRange, setShowCustomRange] = useState(false);
   const [customRangeFrom, setCustomRangeFrom] = useState("");
@@ -218,6 +221,16 @@ export default function MachineDetailScreen() {
     current && (current.id === machineId || current.code === machineId || current.machineCode === machineId)
       ? current
       : machineFromList;
+
+  // Maintenance tab — load the interventions for THIS machine (review:
+  // "add the interventions that has the same machine id").
+  useEffect(() => {
+    if (tab !== "maintenance") return;
+    const key = machine?.id || machine?.code;
+    if (!key) return;
+    dispatch(fetchInterventions({ machineId: key, size: 100 }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, machine?.id, machine?.code]);
 
   // The backend broadcasts every reading to BOTH the Mongo-id topic and the
   // code topic. Prefer the code topic (stable, human-readable) once loaded.
@@ -1072,6 +1085,58 @@ export default function MachineDetailScreen() {
     );
   }
 
+  /* Maintenance tab — interventions for THIS machine (review: "add the
+     interventions that has the same machine id"). */
+  function MaintenanceBody() {
+    const rows = (maintenanceList || []).filter(
+      (t) =>
+        (machine?.id && String(t.machineId) === String(machine.id)) ||
+        (machine?.code && t.machineCode === machine.code)
+    );
+    const loading = maintenanceStatus === "loading" && rows.length === 0;
+
+    if (loading) {
+      return (
+        <Card className="mb-4">
+          <BusyRow label="Loading interventions…" />
+        </Card>
+      );
+    }
+
+    if (rows.length === 0) {
+      return (
+        <EmptyState
+          icon={<Text className="text-3xl">🛠️</Text>}
+          title="No interventions yet"
+          message={`Maintenance tickets for ${machine?.code || "this machine"} will appear here.`}
+        />
+      );
+    }
+
+    return (
+      <View className="gap-3">
+        {rows.map((t) => (
+          <Card key={t.id}>
+            <Pressable
+              onPress={() => router.push(`/(app)/maintenance/${String(t.id)}`)}
+              className="flex-row items-center justify-between gap-3"
+            >
+              <View className="flex-1">
+                <Text className={`text-sm font-bold font-inter ${dark ? "text-white" : "text-text"}`} numberOfLines={1}>
+                  {t.title || "Intervention"}
+                </Text>
+                <Text className={`text-xs font-inter mt-0.5 ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>
+                  {t.type || "—"} · {t.priority || "—"} · {relativeTime(t.createdAt)}
+                </Text>
+              </View>
+              <StatusBadge status={t.status} />
+            </Pressable>
+          </Card>
+        ))}
+      </View>
+    );
+  }
+
   function SettingsBody() {
     if (!machine) {
       return (
@@ -1318,6 +1383,7 @@ export default function MachineDetailScreen() {
           : tab === "live" ? LiveDataBody()
           : tab === "history" ? HistoryBody()
           : tab === "alerts" ? AlertsBody()
+          : tab === "maintenance" ? MaintenanceBody()
           : tab === "settings" ? SettingsBody()
           : ComingSoon()}
       </ScrollView>

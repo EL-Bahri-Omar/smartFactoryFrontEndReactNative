@@ -118,7 +118,7 @@ export default function MaintenanceScreen() {
   const params = useLocalSearchParams();
   const isDesktop = useBreakpoint() === "desktop";
   const dark = useDark();
-  const { canAccess, homeRoute, role } = useRole();
+  const { canAccess, homeRoute, role, user } = useRole();
 
   const { list, status, error, filters, pagination } = useAppSelector((s) => s.maintenance);
   const [tab, setTab] = useState("interventions");
@@ -178,14 +178,28 @@ export default function MaintenanceScreen() {
   }, [searchInput, dispatch, filters.search]);
 
   // NOTE: the restricted-area early return must stay BELOW every hook (the
-  // two useMemos) — on logout canAccess() flips false and an early return
+  // useMemos) — on logout canAccess() flips false and an early return
   // above a hook throws "Rendered fewer hooks than expected".
+  //
+  // Per-user scope (review): every connected user sees only the interventions
+  // assigned to them or created by them. ADMIN keeps the full factory view.
+  const myList = useMemo(() => {
+    if (role === "ADMIN") return list;
+    const keys = [user?.id, user?.email, user?.username].filter(Boolean).map(String);
+    if (keys.length === 0) return list;
+    const mine = (t) =>
+      [t.technicianId, ...(Array.isArray(t.technicianIds) ? t.technicianIds : []), t.assignedBy]
+        .filter(Boolean)
+        .some((v) => keys.includes(String(v)));
+    return list.filter((t) => mine(t));
+  }, [list, role, user]);
+
   const loading = status === "loading" && list.length === 0;
   // Refresh state — a fetch running while rows are already on screen
   // (filter change). No layout flash: BusyRow + dim.
   const refreshing = status === "loading" && list.length > 0;
   const searchPending = searchInput !== (filters.search || "");
-  const empty = status !== "loading" && !error && list.length === 0;
+  const empty = status !== "loading" && !error && myList.length === 0;
   const failed = status === "error" && list.length === 0;
   // 403 means the role is missing MAINTENANCE_READ (backend role table) —
   // that is a permission problem, not a network problem, and retrying will
@@ -197,7 +211,7 @@ export default function MaintenanceScreen() {
   // Client-side filters (not server params): priority + free-text search.
   const visibleList = useMemo(
     () =>
-      list.filter((t) => {
+      myList.filter((t) => {
         if (filters.priority && t.priority !== filters.priority) return false;
         if (filters.search) {
           const q = filters.search.toLowerCase();
@@ -208,13 +222,50 @@ export default function MaintenanceScreen() {
         }
         return true;
       }),
-    [list, filters.priority, filters.search]
+    [myList, filters.priority, filters.search]
   );
   const clientFiltered = Boolean(filters.priority || filters.search);
 
+  // Filter options with LIVE COUNTS over the visible list (review: "add
+  // numbers count in interventions filters").
+  const countOf = (field, value) => myList.filter((t) => t[field] === value).length;
+  const statusOptions = useMemo(
+    () =>
+      STATUS_OPTIONS.map((o) => ({
+        ...o,
+        label: o.value
+          ? `${o.label} (${countOf("status", o.value)})`
+          : `All Statuses (${myList.length})`,
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [myList]
+  );
+  const typeOptions = useMemo(
+    () =>
+      TYPE_OPTIONS.map((o) => ({
+        ...o,
+        label: o.value
+          ? `${o.label} (${countOf("type", o.value)})`
+          : `All Types (${myList.length})`,
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [myList]
+  );
+  const priorityOptions = useMemo(
+    () =>
+      PRIORITY_OPTIONS.map((o) => ({
+        ...o,
+        label: o.value
+          ? `${o.label} (${countOf("priority", o.value)})`
+          : `All Priorities (${myList.length})`,
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [myList]
+  );
+
   // Schedule tab: interventions that carry a planned date, grouped by day.
   const scheduleGroups = useMemo(() => {
-    const planned = list
+    const planned = myList
       .filter((t) => t.scheduledAt && t.status !== "COMPLETED" && t.status !== "CANCELLED")
       .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt));
     const groups = new Map();
@@ -224,7 +275,7 @@ export default function MaintenanceScreen() {
       groups.get(day).push(t);
     });
     return [...groups.entries()];
-  }, [list]);
+  }, [myList]);
 
   if (!canAccess("maintenance")) {
     return (
@@ -422,7 +473,7 @@ export default function MaintenanceScreen() {
                   <Select
                     value={filters.status}
                     onValueChange={(val) => { setPage(0); dispatch(setFilters({ status: val })); }}
-                    options={STATUS_OPTIONS}
+                    options={statusOptions}
                     placeholder="All Statuses"
                   />
                 </View>
@@ -430,7 +481,7 @@ export default function MaintenanceScreen() {
                   <Select
                     value={filters.type}
                     onValueChange={(val) => { setPage(0); dispatch(setFilters({ type: val })); }}
-                    options={TYPE_OPTIONS}
+                    options={typeOptions}
                     placeholder="All Types"
                   />
                 </View>
@@ -438,7 +489,7 @@ export default function MaintenanceScreen() {
                   <Select
                     value={filters.priority}
                     onValueChange={(val) => dispatch(setFilters({ priority: val }))}
-                    options={PRIORITY_OPTIONS}
+                    options={priorityOptions}
                     placeholder="All Priorities"
                   />
                 </View>
@@ -454,7 +505,7 @@ export default function MaintenanceScreen() {
                     <Select
                       value={filters.status}
                       onValueChange={(val) => { setPage(0); dispatch(setFilters({ status: val })); }}
-                      options={STATUS_OPTIONS}
+                      options={statusOptions}
                       placeholder="All Statuses"
                     />
                   </View>
@@ -462,7 +513,7 @@ export default function MaintenanceScreen() {
                     <Select
                       value={filters.type}
                       onValueChange={(val) => { setPage(0); dispatch(setFilters({ type: val })); }}
-                      options={TYPE_OPTIONS}
+                      options={typeOptions}
                       placeholder="All Types"
                     />
                   </View>
@@ -470,7 +521,7 @@ export default function MaintenanceScreen() {
                     <Select
                       value={filters.priority}
                       onValueChange={(val) => dispatch(setFilters({ priority: val }))}
-                      options={PRIORITY_OPTIONS}
+                      options={priorityOptions}
                       placeholder="All Priorities"
                     />
                   </View>
