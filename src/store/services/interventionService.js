@@ -128,15 +128,21 @@ export async function assign(id, technicianIds) {
 }
 
 /**
- * PUT /api/maintenance/:id/status { status } — explicit technician-driven
- * status change (PENDING → ASSIGNED → IN_PROGRESS → COMPLETED).
+ * PUT /api/maintenance/:id { status } — CONFIRMED (Sprint 7 backend pull).
+ * There is NO dedicated `/status` route: `status` is part of
+ * InterventionUpdateRequest and is written by the planning endpoint
+ * `PUT /api/maintenance/{id}` (also title / description / priority /
+ * scheduledAt / technicianIds).
  *
- * NOTE: not yet in the backend MaintenanceController (see docs/backend-todo).
- * The slice surfaces a clear "unsupported" message if it 404s so the UI never
- * silently fails.
+ * Backend rules the UI must respect:
+ *  - RESPONSABLE_INDUSTRIEL / ADMIN → direct status change works.
+ *  - TECHNICIAN / OPERATOR → 403 "Seul le rôle RESPONSABLE_INDUSTRIEL…".
+ *    Technicians drive status through their own work instead:
+ *    first diagnosis/action auto-moves PENDING/ASSIGNED → IN_PROGRESS
+ *    (startedAt stamped) and Close → COMPLETED.
  */
 export async function updateStatus(id, status) {
-  const url = buildUrl(ENDPOINTS.INTERVENTION_STATUS, { id });
+  const url = buildUrl(ENDPOINTS.INTERVENTION_BY_ID, { id });
   const response = await api.put(url, { status });
   return normalizeIntervention(response.data);
 }
@@ -334,10 +340,12 @@ export function normalizeIntervention(row) {
     observations: Array.isArray(row.observations)
       ? row.observations.map((o) => ({
           id: o.id ?? null,
-          content: o.content ?? "",
-          authorName: o.authorName ?? o.authorId ?? null,
+          // Real entity field is `content` (+ legacy `comment` alias kept).
+          content: o.content ?? o.comment ?? "",
+          authorName: o.authorName ?? o.observedByName ?? null,
           category: o.category || "GENERAL",
-          recordedAt: o.recordedAt ?? null,
+          // Real entity stamps `createdAt` (mission doc says observedAt).
+          recordedAt: o.recordedAt ?? o.createdAt ?? o.observedAt ?? null,
         }))
       : [],
     scheduledAt: row.scheduledAt ?? null,

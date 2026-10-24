@@ -82,14 +82,24 @@ export default function InterventionDetailScreen() {
 
   // Display "First Last" instead of the raw email the backend stamps on
   // timeline entries (review: "saved by first and last name, not the email").
+  // Sources, in order: the loaded users list (admin/responsable), the current
+  // user (everyone), then a prettified local part ("tech02@x.com" → "Tech02")
+  // so a raw address is NEVER shown even without directory data.
   const nameOf = (v) => {
     if (!v) return v;
     const s = String(v);
     if (!s.includes("@")) return s;
+    const lower = s.toLowerCase();
     const hit = (knownUsers || []).find(
-      (u) => (u?.email || "").toLowerCase() === s.toLowerCase() || u?.username === s
+      (u) => (u?.email || "").toLowerCase() === lower || u?.username === s
     );
-    return hit?.firstName ? `${hit.firstName} ${hit.lastName || ""}`.trim() : s;
+    if (hit?.firstName) return `${hit.firstName} ${hit.lastName || ""}`.trim();
+    if (user?.email && user.email.toLowerCase() === lower && user.firstName) {
+      return `${user.firstName} ${user.lastName || ""}`.trim();
+    }
+    // Fallback: "resp01@smartfactory.com" → "Resp01".
+    const local = s.split("@")[0].replace(/[._-]+/g, " ").trim();
+    return local ? local.charAt(0).toUpperCase() + local.slice(1) : s;
   };
 
   const [sheet, setSheet] = useState(null); // 'assign' | 'diagnosis' | 'action' | 'observation' | 'close' | 'status' | 'details' | 'editDiagnosis' | 'editAction' | 'editObservation' | null
@@ -130,10 +140,11 @@ export default function InterventionDetailScreen() {
         (current.technicianId === user?.id || current.technicianId === user?.email);
   const canWorkOnIt = !isTechnician || assignedToMe;
   // Different edit scopes for the two editing roles:
-  //  - RESPONSABLE_INDUSTRIEL: assignment, core details, closure.
+  //  - RESPONSABLE_INDUSTRIEL + ADMIN: assignment (mission B.2 "Modifier les
+  //    techniciens" — backend PUT /{id}/assign allows both roles).
+  //  - RESPONSABLE_INDUSTRIEL: core details, closure planning.
   //  - TECHNICIAN: diagnoses / actions / observations, work status, closure.
-  //  - ADMIN: read-only consult (only the responsable creates; RESP + TECH edit).
-  const canAssign = isResponsable;
+  const canAssign = isResponsable || role === "ADMIN";
   const canDiagnose = isTechnician && canWorkOnIt;
   const canObserve = isTechnician && canWorkOnIt;
   const canClose = isResponsable || (isTechnician && canWorkOnIt);
@@ -241,9 +252,18 @@ export default function InterventionDetailScreen() {
       setStatusChoice(null);
       setSheet(null);
     } catch (e) {
+      const msg = String(e?.message || "");
+      // Backend rule (Sprint 7): PUT /api/maintenance/{id} is resp/admin
+      // only — a technician gets 403 because their status moves on its own:
+      // first diagnosis/action → IN_PROGRESS, Close → COMPLETED. Say that
+      // instead of leaking the raw French 403.
+      const forbidden =
+        e?.status === 403 || /FORBIDDEN|403|refus/i.test(msg) || /responsable/i.test(msg);
       setSheetError(
-        e?.message ||
-          "Could not change the status. Close this sheet and retry — the backend rejected the transition."
+        forbidden && isTechnician
+          ? "Technicians don't set the status by hand: record your first diagnosis or action and the intervention starts automatically (In progress) — use Close when the job is done."
+          : msg ||
+            "Could not change the status. Close this sheet and retry — the backend rejected the transition."
       );
     }
   }
@@ -557,9 +577,10 @@ export default function InterventionDetailScreen() {
               {mutating === "loading" && <BusyRow label="Saving…" className="mt-2" />}
               {mutating === "error" && (
                 <Text className="text-xs font-inter text-danger mt-1">
-                  The last action failed. Status changes (Start / Complete) need the backend
-                  endpoint PUT /api/maintenance/{"{id}"}/status — spec handed to the backend
-                  team. Diagnoses, actions, observations and Close still work.
+                  The last action failed — retry, or reload the intervention. Status
+                  changes go through PUT /api/maintenance/{"{id}"} (resp/admin);
+                  technicians start with their first diagnosis/action and finish
+                  with Close — all of those endpoints exist on the backend.
                 </Text>
               )}
             </Card>

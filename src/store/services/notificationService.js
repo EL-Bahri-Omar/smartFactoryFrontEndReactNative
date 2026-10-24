@@ -5,17 +5,23 @@
 //   GET   /api/notifications?page=&size=           → Page<AppNotification>
 //         (current user only; server defaults to 20/page, newest first)
 //   PUT   /api/notifications/:id/read              → marked-read notification
+//   PUT   /api/notifications/mark-read (NO body)   → { message, unreadCount }
+//         marks EVERY unread notification of the user in one call
 //   GET   /api/notifications/unread-count          → { unreadCount }
-//   POST  /api/notifications/tokens { token, deviceType }  (native FCM)
-//   DELETE /api/notifications/tokens/:token
+//   POST  /api/notifications/tokens { token, deviceType, deviceId? } (native FCM)
+//   DELETE /api/notifications/tokens/:token   (also body { token } variant)
+//   NOTE: there is NO DELETE /:id nor /clear-all in the backend — the UI
+//   must not offer per-row delete.
 //
-// AppNotification row: { id, userId, alertId?, machineId?, title, message,
-// type: ALERT_CRITICAL | ALERT_HIGH | ALERT_WARNING | MAINTENANCE_ASSIGNED | INFO,
-// isRead, createdAt }. Backend never created the INFO type yet, but the
-// field allows it, so the UI treats it as a fourth tab.
+// AppNotification row: { id, userId, userEmail?, machineId?, interventionId?,
+// data? { interventionId, machineId, severity, screen, type }, title, message,
+// type: ALERT_CRITICAL | ALERT_WARNING | MAINTENANCE | GROUP_MEMBER_ADDED |
+// GROUP_MEMBER_REMOVED (+ legacy ALERT_HIGH / MAINTENANCE_ASSIGNED), read |
+// isRead, createdAt, readAt? }. interventionId + data are the DIRECT route to
+// the intervention detail page (tap-a-push / tap-a-row).
 // Live delivery: /topic/users/{userId}/notifications (row payload) and
-// /topic/users/{userId}/unread-count (exact badge count). There is NO batch
-// mark-read; "mark all" is a sequential markRead loop in the slice.
+// /topic/users/{userId}/unread-count (exact badge count). "Mark all" is the
+// single bulk call PUT /api/notifications/mark-read.
 
 import api from "../../lib/axios";
 import { ENDPOINTS, buildUrl } from "../../constants/api";
@@ -62,6 +68,16 @@ export async function markRead(id) {
 }
 
 /**
+ * PUT /api/notifications/mark-read — CONFIRMED bulk endpoint. No body and no
+ * id → the server marks EVERY unread notification of the connected user and
+ * answers { message, unreadCount }. Replaces the old per-row markRead loop.
+ */
+export async function markAllRead() {
+  const response = await api.put(`${ENDPOINTS.NOTIFICATIONS}/mark-read`);
+  return response.data || {};
+}
+
+/**
  * POST /api/notifications/tokens (CONFIRMED) — registers an FCM device
  * token. Only useful on native builds with expo-notifications; the web
  * app never calls this (no Firebase project is wired for web push).
@@ -102,6 +118,11 @@ export function normalizeNotification(row) {
     type,
     alertId: row.alertId ?? null,
     machineId: row.machineId ?? row.relatedId ?? null,
+    machineCode: row.machineCode ?? null,
+    // Direct navigation keys (Sprint 7 backend): rows carry interventionId
+    // top-level and/or inside `data` — used by row press + push taps.
+    interventionId: row.interventionId ?? row.data?.interventionId ?? null,
+    data: row.data && typeof row.data === "object" ? row.data : null,
     title: row.title || "",
     message: row.message || row.content || "",
     isRead: row.isRead ?? row.read ?? false,

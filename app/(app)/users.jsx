@@ -226,7 +226,7 @@ export default function UsersScreen() {
                 );
               })}
             </View>
-            <View className={`flex-row items-center border rounded-btn px-3 py-2 gap-2 ${dark ? "bg-white/5 border-white/15" : "bg-bg border-border"}`} style={{ width: 220 }}>
+            <View className={`flex-row items-center border rounded-btn px-3 py-1.5 gap-2 ${dark ? "bg-white/5 border-white/15" : "bg-bg border-border"}`} style={{ width: 220 }}>
               <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
               <TextInput
                 className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}
@@ -335,7 +335,7 @@ export default function UsersScreen() {
           )}
         </View>
 
-        <View className={`flex-row items-center border rounded-btn px-3 py-2 gap-2 mb-3 ${dark ? "bg-white/5 border-white/15" : "bg-surface border-border"}`}>
+        <View className={`flex-row items-center border rounded-btn px-3 py-1.5 gap-2 mb-3 ${dark ? "bg-white/5 border-white/15" : "bg-surface border-border"}`}>
           <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
           <TextInput
             className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}

@@ -103,7 +103,7 @@ function IconButton({ onPress, label, children, disabled = false }) {
 
 const ROOT_PATHS = ["/(app)", "/(app)/dashboard", "/dashboard"];
 
-export default function TopBar({ user, onMenuPress, showMenu = false }) {
+export default function TopBar({ user, onMenuPress, showMenu = false, isMobile = false }) {
   const router = useRouter();
   const pathname = usePathname();
   const dispatch = useAppDispatch();
@@ -341,22 +341,26 @@ export default function TopBar({ user, onMenuPress, showMenu = false }) {
         </IconButton>
       )}
 
-      {/* Notification bell — badge + link to the Notifications screen */}
-      <IconButton onPress={handleBell} label="Notifications">
-        <View className="items-center justify-center">
-          <Text style={{ fontSize: 18 }}>{"🔔"}</Text>
-          {unreadCount > 0 && (
-            <View
-              className="absolute -top-0.5 -right-1 min-w-4 px-1 h-4 rounded-full items-center justify-center border"
-              style={{ backgroundColor: "#DC2626", borderColor: dark ? "#0B1D3A" : "#FFFFFF" }}
-            >
-              <Text className="text-[9px] font-bold text-white" style={{ lineHeight: 11 }}>
-                {unreadCount > 99 ? "99+" : unreadCount}
-              </Text>
-            </View>
-          )}
-        </View>
-      </IconButton>
+      {/* Notification bell — desktop/tablet only. On mobile it lives in the
+          BottomTabs bar (review: "remove notifications from top bar and put
+          it in bottom menu bar"). */}
+      {!isMobile && (
+        <IconButton onPress={handleBell} label="Notifications">
+          <View className="items-center justify-center">
+            <Text style={{ fontSize: 18 }}>{"🔔"}</Text>
+            {unreadCount > 0 && (
+              <View
+                className="absolute -top-0.5 -right-1 min-w-4 px-1 h-4 rounded-full items-center justify-center border"
+                style={{ backgroundColor: "#DC2626", borderColor: dark ? "#0B1D3A" : "#FFFFFF" }}
+              >
+                <Text className="text-[9px] font-bold text-white" style={{ lineHeight: 11 }}>
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </Text>
+              </View>
+            )}
+          </View>
+        </IconButton>
+      )}
 
       {/* Logout — red exit icon */}
       <IconButton onPress={handleLogout} label="Log out">

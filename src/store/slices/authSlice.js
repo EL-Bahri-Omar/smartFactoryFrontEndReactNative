@@ -7,6 +7,7 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import * as authService from "../services/authService";
 import * as storage from "../../lib/storage";
+import { unregisterPushToken } from "../services/pushService";
 
 // ── Thunks ──────────────────────────────────────────────────────────────
 
@@ -132,6 +133,15 @@ export const meThunk = createAsyncThunk(
 export const logoutThunk = createAsyncThunk(
   "auth/logout",
   async (_, { rejectWithValue }) => {
+    // Backend contract (Sprint 7): DELETE /api/notifications/tokens must run
+    // BEFORE the session dies (the call needs the still-valid JWT) so this
+    // device stops receiving FCM pushes after logout. Best-effort: never
+    // blocks the local logout.
+    try {
+      await unregisterPushToken();
+    } catch {
+      /* token cleanup is optional */
+    }
     try {
       await authService.logout();
     } catch {

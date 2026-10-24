@@ -24,8 +24,8 @@
 //
 // Row tap → PUT /api/notifications/:id/read + navigate to the related screen.
 // Deduped alert rows keep every underlying notification id, so tapping marks
-// all copies read (no stale badge). "Mark all" walks unread rows (no batch
-// endpoint). Selection mode (Select button) marks any set of rows read at once.
+// all copies read (no stale badge). "Mark all" = one bulk PUT
+// /api/notifications/mark-read. Selection mode marks any set of rows read.
 //
 // Live rows + the badge are handled globally by NotificationBridge
 // (app/(app)/_layout.jsx) — this screen only joins the /topic/alerts feed for
@@ -84,12 +84,20 @@ const TABS = [
 /** Tab key ← backend notification type. ALERT_WARNING also belongs to Alerts. */
 function tabForType(type) {
   if (isAlertNotificationType(type)) return "ALERTS";
-  if (type === "MAINTENANCE_ASSIGNED") return "MAINTENANCE";
-  return "INFO";
+  if (type === "MAINTENANCE_ASSIGNED" || type === "MAINTENANCE") return "MAINTENANCE";
+  return "INFO"; // GROUP_MEMBER_* rows live in Info (and in All/Unread)
 }
 
+// Per-type chip (mission A.2): ALERT_CRITICAL 🚨 vivid red, ALERT_WARNING
+// ⚠️ amber, MAINTENANCE 🛠️ cyan-blue, GROUP_MEMBER_* 👥 violet/green.
 const TYPE_META = {
-  MAINTENANCE_ASSIGNED: { label: "Maintenance", color: "#F59E0B", icon: "🔧" },
+  ALERT_CRITICAL: { label: "Critical", color: "#DC2626", icon: "🚨" },
+  ALERT_HIGH: { label: "High", color: "#F97316", icon: "⚠️" },
+  ALERT_WARNING: { label: "Warning", color: "#F59E0B", icon: "⚠️" },
+  MAINTENANCE: { label: "Maintenance", color: "#0EA5E9", icon: "🛠️" },
+  MAINTENANCE_ASSIGNED: { label: "Maintenance", color: "#0EA5E9", icon: "🛠️" },
+  GROUP_MEMBER_ADDED: { label: "Group", color: "#8B5CF6", icon: "👥" },
+  GROUP_MEMBER_REMOVED: { label: "Group", color: "#10B981", icon: "👥" },
   INFO: { label: "Info", color: "#2563EB", icon: "•" },
 };
 
@@ -329,7 +337,18 @@ export default function NotificationsScreen() {
     await markRowsRead(targets);
   }
 
-  /** Row press: in selection mode just toggle the checkbox. */
+  /** Notification title → the intervention title it carries.
+ *  Handles both raw forms the backend sends:
+ *  "🔧 Nouvelle intervention assignée : <title>" and "New intervention assigned: <title>". */
+function extractAssignedTitle(n) {
+  const m = String(n?.title || "").match(
+    /^(?:🔧?\s*)?(?:Nouvelle intervention(?: de maintenance)? assignée|New intervention assigned)\s*:\s*(.+)$/i
+  );
+  const raw = m ? m[1] : String(n?.title || "");
+  return raw.trim().toLowerCase() || null;
+}
+
+/** Row press: in selection mode just toggle the checkbox. */
   async function handleRowPress(row) {
     if (selecting) {
       toggleSelect(row);

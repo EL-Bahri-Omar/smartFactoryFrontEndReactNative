@@ -109,7 +109,7 @@ export default function MultiSelect({
       <Text className={`text-sm font-bold px-4 pt-3 pb-2 font-inter ${dark ? "text-white" : "text-text"}`}>
         {label || "Select"} ({values.length} selected)
       </Text>
-      <View className={`mx-4 mb-2 flex-row items-center border rounded-btn px-3 py-2 gap-2 ${dark ? "bg-white/5 border-white/15" : "bg-bg border-border"}`}>
+      <View className={`mx-4 mb-2 flex-row items-center border rounded-btn px-3 py-1.5 gap-2 ${dark ? "bg-white/5 border-white/15" : "bg-bg border-border"}`}>
         <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>🔍</Text>
         <TextInput
           className={`flex-1 text-sm font-inter ${dark ? "text-white" : "text-text"}`}

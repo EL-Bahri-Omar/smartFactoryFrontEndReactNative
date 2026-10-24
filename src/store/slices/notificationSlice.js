@@ -97,43 +97,23 @@ export const markNotificationRead = createAsyncThunk(
   }
 );
 
-/** Mark every unread row read, one PUT at a time (no batch endpoint). */
+/**
+ * Mark EVERY unread notification read — CONFIRMED bulk endpoint:
+ * `PUT /api/notifications/mark-read` with no body. One call replaces the old
+ * sequential per-row loop (and no longer needs every page pre-loaded: the
+ * server marks rows the client has never fetched too).
+ */
 export const markAllNotificationsRead = createAsyncThunk(
   "notification/markAll",
-  async (_, { getState, dispatch, rejectWithValue }) => {
-    // Load the remaining pages first, otherwise "mark all" would only cover
-    // what happens to be on screen and the server count would stay > 0.
-    let guard = 0;
-    while (guard < 30) {
-      const { pagination } = getState().notification;
-      // Already fully loaded by fetchNotifications (all pages up front).
-      if (pagination.allLoaded) break;
-      if ((pagination.page ?? 0) + 1 >= (pagination.totalPages ?? 1)) break;
-      guard += 1;
-      try {
-        await dispatch(fetchMoreNotifications({ page: (pagination.page ?? 0) + 1 })).unwrap();
-      } catch {
-        break; // backend unreachable for extra pages — mark what we have
-      }
+  async (_, { rejectWithValue }) => {
+    try {
+      const result = await notificationService.markAllRead();
+      return {
+        unreadCount: typeof result?.unreadCount === "number" ? result.unreadCount : 0,
+      };
+    } catch (error) {
+      return rejectWithValue(error);
     }
-
-    const unreadIds = getState().notification.list
-      .filter((n) => !n.isRead)
-      .map((n) => n.id);
-    let failures = 0;
-    for (const id of unreadIds) {
-      try {
-        await dispatch(markNotificationRead(id)).unwrap();
-      } catch (error) {
-        failures += 1;
-      }
-    }
-    // Optimistic flips were already applied in pending; only surface an
-    // error when NO row could be marked.
-    if (failures > 0 && failures === unreadIds.length && unreadIds.length > 0) {
-      return rejectWithValue({ message: "Failed to mark notifications as read" });
-    }
-    return { marked: unreadIds.length - failures };
   }
 );
 
@@ -318,6 +298,11 @@ const notificationSlice = createSlice({
 
     builder
       .addCase(markAllNotificationsRead.fulfilled, (state) => {
+        // Bulk endpoint marks everything server-side — mirror it locally so
+        // the rows repaint read without a refetch.
+        state.list.forEach((n) => {
+          n.isRead = true;
+        });
         if (state.unread.server !== null) state.unread.server = 0;
       });
 

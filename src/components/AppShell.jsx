@@ -29,7 +29,7 @@ export default function AppShell({ children }) {
 
       {/* Main content area */}
       <View className="flex-1 flex-col">
-        <TopBar user={user} showMenu={!isDesktop} onMenuPress={() => setNavOpen(true)} />
+        <TopBar user={user} showMenu={!isDesktop} onMenuPress={() => setNavOpen(true)} isMobile={isMobile} />
 
         {/* Scrollable content */}
         <View className="flex-1 p-4">

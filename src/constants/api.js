@@ -74,6 +74,7 @@ export const ENDPOINTS = Object.freeze({
   // plus FCM push for closed-app delivery (mobile).
   NOTIFICATIONS: "/api/notifications", // CONFIRMED — GET ?page=&size= (default 20) → Page<AppNotification>, current user only
   NOTIFICATION_MARK_READ: "/api/notifications/:id/read", // CONFIRMED — PUT ?userId= → marked-read notification
+  NOTIFICATION_MARK_ALL: "/api/notifications/mark-read", // CONFIRMED — PUT with NO body/id → marks ALL unread at once { message, unreadCount }
   NOTIFICATIONS_UNREAD_COUNT: "/api/notifications/unread-count", // CONFIRMED — GET ?userId= → { unreadCount }
   NOTIFICATION_TOKENS: "/api/notifications/tokens", // CONFIRMED — POST { token, deviceType } (native FCM registration)
 
@@ -87,7 +88,9 @@ export const ENDPOINTS = Object.freeze({
   INTERVENTIONS: "/api/maintenance", // CONFIRMED — GET ?machineId=&technicianId=&type=&subtype=&status=&from=&to=&page=&size=&sort= → Page; POST create
   INTERVENTION_BY_ID: "/api/maintenance/:id", // CONFIRMED — GET one
   INTERVENTION_ASSIGN: "/api/maintenance/:id/assign", // CONFIRMED — PUT { technicianId } (US43)
-  INTERVENTION_STATUS: "/api/maintenance/:id/status", // TODO BACKEND — PUT { status } explicit technician status change (PENDING → ASSIGNED → IN_PROGRESS → COMPLETED)
+  // NOTE: the backend has NO dedicated /status route — status travels inside
+  // InterventionUpdateRequest on `PUT /api/maintenance/:id` (see
+  // interventionService.updateStatus).
   INTERVENTION_ANOMALY: "/api/maintenance/:id/anomaly", // CONFIRMED — GET anomaly + contextual readings Map (US44)
   INTERVENTION_DIAGNOSES: "/api/maintenance/:id/diagnoses", // CONFIRMED — POST { probableCause, details? } (US45)
   INTERVENTION_ACTIONS: "/api/maintenance/:id/actions", // CONFIRMED — POST { description, partsReplaced?, durationMinutes?, performedAt? } (US46)

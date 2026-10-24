@@ -226,41 +226,48 @@ export default function MaintenanceScreen() {
   );
   const clientFiltered = Boolean(filters.priority || filters.search);
 
-  // Filter options with LIVE COUNTS over the visible list (review: "add
-  // numbers count in interventions filters").
-  const countOf = (field, value) => myList.filter((t) => t[field] === value).length;
+  // Filter options with LIVE COUNTS (review: "add numbers count in
+  // interventions filters"). Counts run over an UNFILTERED snapshot of the
+  // list: status/type are SERVER params (fetch effect above), so picking one
+  // filter shrinks `myList` to just that subset and every other count would
+  // read 0 (review: "when i select a filter the other filters count become
+  // 0"). The snapshot only refreshes while no status/type filter is active,
+  // so the numbers stay stable while the user compares options.
+  const [countBase, setCountBase] = useState([]);
+  useEffect(() => {
+    if (!filters.status && !filters.type) setCountBase(myList);
+  }, [myList, filters.status, filters.type]);
+  const countOf = (field, value) => countBase.filter((t) => t[field] === value).length;
+  // Compact labels ("All (12)", "Pending (3)") — the mobile width can't fit
+  // "All Statuses (12)" (review: "filters count not seen in mobile"). The
+  // empty-value option carries the total so the count is visible even before
+  // any filter is picked.
   const statusOptions = useMemo(
     () =>
-      STATUS_OPTIONS.map((o) => ({
+      STATUS_OPTIONS.filter((o) => o.value).map((o) => ({
         ...o,
-        label: o.value
-          ? `${o.label} (${countOf("status", o.value)})`
-          : `All Statuses (${myList.length})`,
+        label: `${o.label} (${countOf("status", o.value)})`,
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [myList]
+    [countBase]
   );
   const typeOptions = useMemo(
     () =>
-      TYPE_OPTIONS.map((o) => ({
+      TYPE_OPTIONS.filter((o) => o.value).map((o) => ({
         ...o,
-        label: o.value
-          ? `${o.label} (${countOf("type", o.value)})`
-          : `All Types (${myList.length})`,
+        label: `${o.label} (${countOf("type", o.value)})`,
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [myList]
+    [countBase]
   );
   const priorityOptions = useMemo(
     () =>
-      PRIORITY_OPTIONS.map((o) => ({
+      PRIORITY_OPTIONS.filter((o) => o.value).map((o) => ({
         ...o,
-        label: o.value
-          ? `${o.label} (${countOf("priority", o.value)})`
-          : `All Priorities (${myList.length})`,
+        label: `${o.label} (${countOf("priority", o.value)})`,
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [myList]
+    [countBase]
   );
 
   // Schedule tab: interventions that carry a planned date, grouped by day.
@@ -473,7 +480,7 @@ export default function MaintenanceScreen() {
                   <Select
                     value={filters.status}
                     onValueChange={(val) => { setPage(0); dispatch(setFilters({ status: val })); }}
-                    options={statusOptions}
+                    options={[{ value: "", label: `All (${countBase.length})` }, ...statusOptions]}
                     placeholder="All Statuses"
                   />
                 </View>
@@ -481,7 +488,7 @@ export default function MaintenanceScreen() {
                   <Select
                     value={filters.type}
                     onValueChange={(val) => { setPage(0); dispatch(setFilters({ type: val })); }}
-                    options={typeOptions}
+                    options={[{ value: "", label: `All (${countBase.length})` }, ...typeOptions]}
                     placeholder="All Types"
                   />
                 </View>
@@ -489,7 +496,7 @@ export default function MaintenanceScreen() {
                   <Select
                     value={filters.priority}
                     onValueChange={(val) => dispatch(setFilters({ priority: val }))}
-                    options={priorityOptions}
+                    options={[{ value: "", label: `All (${countBase.length})` }, ...priorityOptions]}
                     placeholder="All Priorities"
                   />
                 </View>
@@ -505,7 +512,7 @@ export default function MaintenanceScreen() {
                     <Select
                       value={filters.status}
                       onValueChange={(val) => { setPage(0); dispatch(setFilters({ status: val })); }}
-                      options={statusOptions}
+                      options={[{ value: "", label: `All (${countBase.length})` }, ...statusOptions]}
                       placeholder="All Statuses"
                     />
                   </View>
@@ -513,7 +520,7 @@ export default function MaintenanceScreen() {
                     <Select
                       value={filters.type}
                       onValueChange={(val) => { setPage(0); dispatch(setFilters({ type: val })); }}
-                      options={typeOptions}
+                      options={[{ value: "", label: `All (${countBase.length})` }, ...typeOptions]}
                       placeholder="All Types"
                     />
                   </View>
@@ -521,7 +528,7 @@ export default function MaintenanceScreen() {
                     <Select
                       value={filters.priority}
                       onValueChange={(val) => dispatch(setFilters({ priority: val }))}
-                      options={priorityOptions}
+                      options={[{ value: "", label: `All (${countBase.length})` }, ...priorityOptions]}
                       placeholder="All Priorities"
                     />
                   </View>
@@ -637,7 +644,7 @@ export default function MaintenanceScreen() {
 function SearchBox({ value, onChange, dark, busy = false }) {
   return (
     <View
-      className={`flex-row items-center gap-2 border rounded-btn px-3 py-2.5 ${dark ? "border-white/15 bg-white/5" : "border-border bg-surface"}`}
+      className={`flex-row items-center gap-2 border rounded-btn px-3 py-1.5 ${dark ? "border-white/15 bg-white/5" : "border-border bg-surface"}`}
     >
       {busy ? (
         <ActivityIndicator size="small" color={dark ? "#60A5FA" : "#2563EB"} />

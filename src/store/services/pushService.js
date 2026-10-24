@@ -20,12 +20,14 @@ import Constants from "expo-constants";
 import { ENDPOINTS } from "../../constants/api";
 import api from "../../lib/axios";
 import * as notificationService from "./notificationService";
-import { markNotificationRead } from "../slices/notificationSlice";
+import { markNotificationRead, refreshUnreadCount } from "../slices/notificationSlice";
 
 const DEVICE_TYPE = Platform.OS === "ios" ? "IOS" : Platform.OS === "android" ? "ANDROID" : "UNKNOWN";
+const PUSH_TOKEN_KEY = "@sf_push_token"; // last token uploaded to the backend
 
 let responseSubscription = null;
 let tokenSubscription = null;
+let receivedSubscription = null;
 let lastResponseKey = null;
 
 // Expo Go (SDK 53+) is not allowed to do remote push: the native modules are
@@ -133,7 +135,16 @@ async function registerToken(Notifications) {
     }
   }
   if (token) {
-    await api.post(ENDPOINTS.NOTIFICATION_TOKENS, { token, deviceType: DEVICE_TYPE });
+    await api.post(ENDPOINTS.NOTIFICATION_TOKENS, {
+      token,
+      deviceType: DEVICE_TYPE,
+      deviceId: Constants?.deviceName || undefined, // recommended by the API
+    });
+    // Remember what we uploaded: logout must unregister even if the FCM
+    // module can no longer resolve the token (mission: DELETE on logout).
+    try {
+      await AsyncStorage.setItem(PUSH_TOKEN_KEY, token);
+    } catch { /* non-fatal */ }
   }
   return token;
 }
@@ -246,8 +257,24 @@ export async function initPush({ dispatch, router, isAuthenticated = false } = {
         const token = deviceToken?.data;
         if (!token) return;
         api
-          .post(ENDPOINTS.NOTIFICATION_TOKENS, { token, deviceType: DEVICE_TYPE })
+          .post(ENDPOINTS.NOTIFICATION_TOKENS, {
+            token,
+            deviceType: DEVICE_TYPE,
+            deviceId: Constants?.deviceName || undefined,
+          })
+          .then(() => AsyncStorage.setItem(PUSH_TOKEN_KEY, token).catch(() => {}))
           .catch(() => {});
+      });
+    }
+
+    // Foreground receipt (mission A.1.4): a push that lands while the app is
+    // open refreshes the unread badge immediately — independent of the STOMP
+    // socket, so the header stays truthful even when live feed is down.
+    if (!receivedSubscription) {
+      receivedSubscription = Notifications.addNotificationReceivedListener(() => {
+        try {
+          dispatch(refreshUnreadCount());
+        } catch { /* badge refresh is best-effort */ }
       });
     }
 
@@ -265,19 +292,44 @@ export async function initPush({ dispatch, router, isAuthenticated = false } = {
   }
 }
 
-/** Best-effort token cleanup on logout (never throws). */
+/**
+ * Best-effort token cleanup on logout (never throws). Mission: call
+ * DELETE /api/notifications/tokens before clearing local credentials.
+ * Resolves the token from the FCM module first, then from the persisted
+ * copy of what we actually uploaded (`@sf_push_token`).
+ */
 export async function unregisterPushToken() {
   if (Platform.OS === "web") return;
-  const Notifications = notificationsModule();
-  if (!Notifications) return;
+  let token = null;
   try {
-    const deviceToken = await Notifications.getDevicePushTokenAsync();
-    if (deviceToken?.data) {
-      await api.delete(`${ENDPOINTS.NOTIFICATION_TOKENS}/${encodeURIComponent(deviceToken.data)}`);
-    }
+    const Notifications = notificationsModule();
+    const deviceToken = await Notifications?.getDevicePushTokenAsync?.();
+    token = deviceToken?.data || null;
   } catch {
-    /* ignore */
+    token = null;
   }
+  if (!token) {
+    try {
+      token = await AsyncStorage.getItem(PUSH_TOKEN_KEY);
+    } catch {
+      token = null;
+    }
+  }
+  if (!token) return;
+  try {
+    // CONFIRMED: path variant (DELETE /tokens/{token}).
+    await api.delete(`${ENDPOINTS.NOTIFICATION_TOKENS}/${encodeURIComponent(token)}`);
+  } catch {
+    try {
+      // CONFIRMED: body variant (DELETE /tokens { token }).
+      await api.delete(ENDPOINTS.NOTIFICATION_TOKENS, { data: { token } });
+    } catch {
+      /* token cleanup is best-effort */
+    }
+  }
+  try {
+    await AsyncStorage.removeItem(PUSH_TOKEN_KEY);
+  } catch { /* non-fatal */ }
 }
 
 /**

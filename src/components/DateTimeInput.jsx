@@ -174,18 +174,6 @@ export default function DateTimeInput({
               ? "bg-white/5 border-white/15"
               : "bg-surface border-border"
         }`}
-        style={
-          open && !disabled
-            ? {
-                // Same click/focus lift as Input while the picker is open.
-                shadowColor: "#2563EB",
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.28,
-                shadowRadius: 6,
-                elevation: 4,
-              }
-            : null
-        }
       >
         <View className="flex-row items-center gap-2 flex-1">
           <Text style={{ fontSize: 14, color: iconColor }}>📅</Text>
