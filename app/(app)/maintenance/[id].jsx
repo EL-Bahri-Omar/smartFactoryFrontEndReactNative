@@ -254,15 +254,18 @@ export default function InterventionDetailScreen() {
       setSheet(null);
     } catch (e) {
       const msg = String(e?.message || "");
-      // Backend rule (Sprint 7): PUT /api/maintenance/{id} is resp/admin
-      // only — a technician gets 403 because their status moves on its own:
-      // first diagnosis/action → IN_PROGRESS, Close → COMPLETED. Say that
-      // instead of leaking the raw French 403.
+      // Backend STILL blocks technicians on PUT /api/maintenance/{id} in two
+      // places (the service layer already allows ROLE_TECHNICIAN, but these
+      // two guards were never updated):
+      //   SecurityConfig.java:122   PUT "/api/maintenance/*"  → ADMIN / RESPONSABLE only
+      //   MaintenanceController:60  @PreAuthorize              → "!hasRole('TECHNICIAN')"
+      // Until both are relaxed, don't leak the raw French 403 — say what a
+      // technician CAN do instead (diagnosis/action auto-start, Close to finish).
       const forbidden =
         e?.status === 403 || /FORBIDDEN|403|refus/i.test(msg) || /responsable/i.test(msg);
       setSheetError(
         forbidden && isTechnician
-          ? "Technicians don't set the status by hand: record your first diagnosis or action and the intervention starts automatically (In progress) — use Close when the job is done."
+          ? "Your profile can't set the status from this screen yet (backend restriction on PUT /api/maintenance/:id). Meanwhile: record your first diagnosis or action and the intervention starts automatically (In progress) — use Close when the job is done."
           : msg ||
             "Could not change the status. Close this sheet and retry — the backend rejected the transition."
       );

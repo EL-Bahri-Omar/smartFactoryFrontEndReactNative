@@ -32,8 +32,7 @@ import {
 } from "../../src/store/slices/settingsSlice";
 import { useDialog } from "../../src/components/dialog/DialogContext";
 import { useRouter } from "expo-router";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { setNotificationsEnabled } from "../../src/store/services/pushService";
+import { applyNotificationPreference } from "../../src/store/services/pushService";
 
 const TABS = [
   { key: "general", label: "General" },
@@ -157,11 +156,10 @@ export default function SettingsScreen() {
             label="Enable Notifications"
             value={notifications.enableNotifications}
             onChange={(v) => {
-              // Works immediately (review): flips the foreground banner
-              // handler in pushService AND persists for the next launch.
+              // Foreground handler flag + persistence + real token
+              // registration/unregistration (backend stops or starts pushing).
               dispatch(setNotifications({ enableNotifications: v }));
-              setNotificationsEnabled(v);
-              AsyncStorage.setItem("@sf_notifications_enabled", v ? "1" : "0").catch(() => {});
+              applyNotificationPreference(v).catch(() => {});
             }}
           />
         </View>

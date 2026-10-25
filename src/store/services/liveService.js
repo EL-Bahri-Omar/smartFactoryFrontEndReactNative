@@ -18,6 +18,10 @@
 //  - subscribe() never throws: registering a destination while the socket is
 //    down simply waits for the next connect (then auto-attaches).
 
+// MUST stay first: React Native has no TextEncoder/TextDecoder and
+// @stomp/stompjs throws without them (socket never opens -> "reconnecting…").
+import "../../lib/stompPolyfill";
+import { Platform } from "react-native";
 import { Client } from "@stomp/stompjs";
 import { WS_URL } from "../../constants/api";
 
@@ -108,18 +112,35 @@ export function connect() {
 
   if (stompClient?.active) return; // already activated (auto-reconnecting)
 
-  stompClient = new Client({
-    brokerURL: WS_URL.replace(/^http/, "ws"),
+  const wsUrl = WS_URL.replace(/^http/, "ws");
+  const isNative = Platform.OS !== "web";
+
+  console.log(`[liveService] connecting to ${wsUrl} (platform=${Platform.OS})`);
+
+  const config = {
+    brokerURL: wsUrl,
     reconnectDelay: 5000,
     heartbeatIncoming: 10000,
     heartbeatOutgoing: 10000,
+    // React Native's WebSocket CHOPS any message at a NULL byte. Every STOMP
+    // frame ends with a NULL octet, so on a device the CONNECTED / MESSAGE
+    // frames were truncated, the parser never completed a frame and
+    // onConnect never fired -> the UI stayed on "reconnecting…" forever while
+    // the browser (no such bug) worked. @stomp/stompjs ships these switches:
+    //   appendMissingNULLonIncoming — re-appends the chopped NULL
+    //   forceBinaryWSFrames — forces binary mode which avoids the chop entirely
+    // BOTH are needed on React Native for reliable connectivity.
+    appendMissingNULLonIncoming: isNative,
+    forceBinaryWSFrames: isNative,
 
     onConnect: () => {
+      console.log("[liveService] STOMP CONNECTED");
       setConnected(true);
       attachAll(); // (re)subscribe everything the app cares about
     },
 
     onDisconnect: () => {
+      console.log("[liveService] STOMP DISCONNECTED");
       setConnected(false);
       detachAll();
     },
@@ -127,12 +148,14 @@ export function connect() {
     // The socket died (sleep, network blip, server restart): mark offline NOW
     // and drop the dead handles — the STOMP client retries by itself and
     // onConnect will re-attach the registry.
-    onWebSocketClose: () => {
+    onWebSocketClose: (evt) => {
+      console.log("[liveService] WebSocket closed", evt?.code, evt?.reason);
       setConnected(false);
       detachAll();
     },
 
-    onWebSocketError: () => {
+    onWebSocketError: (evt) => {
+      console.warn("[liveService] WebSocket error", evt?.message || evt);
       setConnected(false);
     },
 
@@ -141,8 +164,18 @@ export function connect() {
       setConnected(false);
       detachAll();
     },
-  });
 
+    debug: isNative ? (msg) => console.log("[STOMP]", msg) : () => {},
+  };
+
+  // On React Native, provide an explicit webSocketFactory for reliability.
+  // The default relies on the global WebSocket but React Native's version
+  // may behave differently from the browser's (e.g. protocol negotiation).
+  if (isNative) {
+    config.webSocketFactory = () => new WebSocket(wsUrl);
+  }
+
+  stompClient = new Client(config);
   stompClient.activate();
 }
 

@@ -19,7 +19,7 @@ const NAV_GROUPS = [
     label: "Supervision",
     items: [
       { label: "Dashboard", icon: "📊", path: "/(app)/dashboard", access: "dashboard" },
-      { label: "Machines", icon: "⚙️", path: "/(app)/machines", access: "machines" },
+      { label: "Machines", icon: "🏭", path: "/(app)/machines", access: "machines" },
       { label: "Map & Zones", icon: "🗺️", path: "/(app)/map", access: "map" },
     ],
   },
@@ -38,7 +38,7 @@ const NAV_GROUPS = [
     label: "Management",
     items: [
       { label: "Users", icon: "👥", path: "/(app)/users", access: "users" },
-      { label: "Groups", icon: "👪", path: "/(app)/groups", access: "groups" },
+      { label: "Groups", icon: "👪", path: "/(app)/groups", access: "groups", excludeRoles: [ROLES.TECHNICIAN, ROLES.RESPONSABLE_INDUSTRIEL] },
       { label: "My Group", icon: "👤", path: "/(app)/my-group", access: "myGroup", roles: [ROLES.OPERATOR, ROLES.RESPONSABLE_INDUSTRIEL] },
       { label: "Roles", icon: "🛡️", path: "/(app)/roles", access: "roles" },
     ],
@@ -102,7 +102,8 @@ export default function Sidebar({ user, onNavigate }) {
       }
       return (
         (!item.access || canAccess(item.access)) &&
-        (!item.roles || (role && item.roles.includes(role)))
+        (!item.roles || (role && item.roles.includes(role))) &&
+        (!item.excludeRoles || !(role && item.excludeRoles.includes(role)))
       );
     });
   }

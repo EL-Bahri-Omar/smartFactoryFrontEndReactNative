@@ -134,10 +134,16 @@ export async function assign(id, technicianIds) {
  * `PUT /api/maintenance/{id}` (also title / description / priority /
  * scheduledAt / technicianIds).
  *
- * Backend rules the UI must respect:
+ * Backend rules the UI must respect (verified with a live technician probe:
+ * PUT returned 403, GET returned 404 — the service layer was relaxed but the
+ * two route guards were NOT):
  *  - RESPONSABLE_INDUSTRIEL / ADMIN → direct status change works.
- *  - TECHNICIAN / OPERATOR → 403 "Seul le rôle RESPONSABLE_INDUSTRIEL…".
- *    Technicians drive status through their own work instead:
+ *  - TECHNICIAN → still 403 from BOTH:
+ *      SecurityConfig.java:122  .requestMatchers(PUT, "/api/maintenance/*", ...)
+ *                               → hasAnyAuthority(ADMIN, RESPONSABLE_INDUSTRIEL)
+ *      MaintenanceController:60 @PreAuthorize(... and !hasRole('TECHNICIAN'))
+ *    Keep this endpoint as the primary path (it starts working the moment the
+ *    two guards are relaxed) and fall back to the technician's own flow:
  *    first diagnosis/action auto-moves PENDING/ASSIGNED → IN_PROGRESS
  *    (startedAt stamped) and Close → COMPLETED.
  */

@@ -352,11 +352,9 @@ export default function AlertsScreen() {
     const unread = isActive; // ACTIVE = unread · ACKNOWLEDGED/RESOLVED = read
     const dangerous = m.sevMeta.color === "#DC2626";
     const isSel = selectedIds.has(m.alert.id);
-    // Read vs unread (product spec, hardened in review): unread = CLEAR gray
-    // background + bold title AND semibold body; read = WHITE background +
-    // light text. Dark: light gray slab vs. the plain card.
-    const unreadBg = dark ? "#374151" : "#D1D5DB";
-    const readBg = dark ? "#0B1220" : "#FFFFFF";
+    // Read vs unread: unread = brighter/highlighted, read = plain base.
+    const unreadBg = dark ? "#1E3A5F" : "#E0EDFF";
+    const readBg = dark ? "#0F172A" : "#FFFFFF";
     // Status pill — makes "Resolve" visibly DO something: the chip flips
     // Active → Acknowledged → Resolved right on the row.
     const statusTint =
@@ -373,9 +371,8 @@ export default function AlertsScreen() {
         className={`flex-row items-center px-3 py-3 border-b ${dark ? "border-white/5" : "border-border/50"}`}
         style={({ pressed }) => [
           {
-            // Selection highlight only — no severity border on rows anymore.
-            borderLeftWidth: isSel ? 3 : 0,
-            borderLeftColor: isSel ? "#2563EB" : "transparent",
+            borderLeftWidth: isSel ? 3 : unread ? 4 : 0,
+            borderLeftColor: isSel ? "#2563EB" : unread ? "#3B82F6" : "transparent",
             backgroundColor: unread ? unreadBg : readBg,
             opacity: m.alert.status === "RESOLVED" ? 0.85 : 1,
           },

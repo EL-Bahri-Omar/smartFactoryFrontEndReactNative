@@ -484,7 +484,9 @@ export default function HistoryScreen() {
             ) : (
               <View
                 className={`mb-4 ${isDesktop ? "flex-row gap-3" : ""}`}
-                style={readingsRefreshing ? { opacity: 0.55 } : undefined}
+                // Metric cards stay fully opaque while a filter re-fetches.
+                // Dimming them made the white cards read as gray padding
+                // inside the card as soon as a filter was selected.
               >
                 {isDesktop ? (
                   avgCards.map((m) => (

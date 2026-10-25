@@ -113,6 +113,36 @@ async function markTappedRead(dispatch, { notificationId, title }) {
 }
 
 /**
+ * Remove the PREVIOUSLY uploaded token before registering a new one.
+ *
+ * Root cause of "the technician gets two phone notifications for one
+ * intervention": FCM rotates the token (reinstall / refresh) and the old row
+ * stays alive in the backend table, so the backend fans out to BOTH tokens.
+ * The backend de-duplicates by token, not by device — only the client knows
+ * which row is stale. Best-effort: a failing delete must never block register.
+ */
+async function dropPreviousToken(incoming) {
+  let previous = null;
+  try {
+    previous = await AsyncStorage.getItem(PUSH_TOKEN_KEY);
+  } catch {
+    previous = null;
+  }
+  if (!previous || previous === incoming) return;
+  try {
+    // CONFIRMED: path variant (DELETE /tokens/{token}).
+    await api.delete(`${ENDPOINTS.NOTIFICATION_TOKENS}/${encodeURIComponent(previous)}`);
+  } catch {
+    try {
+      // CONFIRMED: body variant (DELETE /tokens { token }).
+      await api.delete(ENDPOINTS.NOTIFICATION_TOKENS, { data: { token: previous } });
+    } catch {
+      /* token cleanup is best-effort */
+    }
+  }
+}
+
+/**
  * Upload the device token to the backend (POST /api/notifications/tokens).
  * Prefer the raw FCM token (what the backend's Firebase sender needs); fall
  * back to the Expo push token. Returns the token when one was registered.
@@ -135,6 +165,9 @@ async function registerToken(Notifications) {
     }
   }
   if (token) {
+    // Kill the stale row first (see dropPreviousToken) so one event is not
+    // pushed to both the old and the new token.
+    await dropPreviousToken(token);
     await api.post(ENDPOINTS.NOTIFICATION_TOKENS, {
       token,
       deviceType: DEVICE_TYPE,
@@ -186,6 +219,33 @@ let notificationsEnabled = true;
 
 export function setNotificationsEnabled(v) {
   notificationsEnabled = !!v;
+}
+
+/**
+ * Settings → Notifications on/off. Persisting the flag alone was not enough:
+ * the device token stayed registered with the backend, so the OS tray kept
+ * receiving pushes (the foreground handler only suppresses banners while the
+ * app is OPEN). Toggling now registers / unregisters the token for real.
+ */
+export async function applyNotificationPreference(enabled) {
+  const on = !!enabled;
+  notificationsEnabled = on;
+  try {
+    await AsyncStorage.setItem("@sf_notifications_enabled", on ? "1" : "0");
+  } catch { /* non-fatal */ }
+
+  if (Platform.OS === "web") return;
+  const Notifications = notificationsModule();
+  if (!Notifications) return;
+  if (on) {
+    try {
+      const { status } = await Notifications.getPermissionsAsync();
+      if (status !== "granted") return; // cannot push without permission
+      await registerToken(Notifications);
+    } catch { /* token upload is best-effort */ }
+  } else {
+    await unregisterPushToken();
+  }
 }
 
 export async function initPush({ dispatch, router, isAuthenticated = false } = {}) {
@@ -256,12 +316,16 @@ export async function initPush({ dispatch, router, isAuthenticated = false } = {
       tokenSubscription = Notifications.addPushTokenListener((deviceToken) => {
         const token = deviceToken?.data;
         if (!token) return;
-        api
-          .post(ENDPOINTS.NOTIFICATION_TOKENS, {
-            token,
-            deviceType: DEVICE_TYPE,
-            deviceId: Constants?.deviceName || undefined,
-          })
+        // Notifications were switched off in Settings: never re-register.
+        if (!notificationsEnabled) return;
+        dropPreviousToken(token)
+          .then(() =>
+            api.post(ENDPOINTS.NOTIFICATION_TOKENS, {
+              token,
+              deviceType: DEVICE_TYPE,
+              deviceId: Constants?.deviceName || undefined,
+            })
+          )
           .then(() => AsyncStorage.setItem(PUSH_TOKEN_KEY, token).catch(() => {}))
           .catch(() => {});
       });
@@ -279,6 +343,15 @@ export async function initPush({ dispatch, router, isAuthenticated = false } = {
     }
 
     if (effective !== "granted") return false; // token would never arrive
+
+    // Settings → Notifications was turned OFF: never upload the token, and
+    // drop a token left over from a previous launch so the backend stops
+    // pushing to this device entirely (foreground handler above already
+    // suppresses banners, but the OS tray works even with the app closed).
+    if (!notificationsEnabled) {
+      await unregisterPushToken();
+      return true;
+    }
 
     // Register the device token so the backend can push while the app is
     // closed (item 11).

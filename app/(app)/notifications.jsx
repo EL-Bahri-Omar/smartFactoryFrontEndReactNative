@@ -71,7 +71,11 @@ import {
 } from "../../src/lib/sensorAlerts";
 import { getAlertSeverity, normalizeAlertSeverity } from "../../src/lib/status";
 import { relativeTime } from "../../src/lib/time";
-import { formatNotificationTitle, formatNotificationMessage } from "../../src/lib/alertText";
+import {
+  formatNotificationTitle,
+  formatNotificationMessage,
+  parseAssignmentMessage,
+} from "../../src/lib/alertText";
 
 const TABS = [
   { key: "ALL", label: "All" },
@@ -86,6 +90,15 @@ function tabForType(type) {
   if (isAlertNotificationType(type)) return "ALERTS";
   if (type === "MAINTENANCE_ASSIGNED" || type === "MAINTENANCE") return "MAINTENANCE";
   return "INFO"; // GROUP_MEMBER_* rows live in Info (and in All/Unread)
+}
+
+// Colour used for the bold PRIORITY word of an assignment row.
+function priorityColor(priority) {
+  const p = String(priority || "").toUpperCase();
+  if (p === "HIGH" || p === "CRITICAL") return "#DC2626";
+  if (p === "MEDIUM" || p === "WARNING") return "#D97706";
+  if (p === "LOW") return "#16A34A";
+  return "#2563EB";
 }
 
 // Per-type chip (mission A.2): ALERT_CRITICAL 🚨 vivid red, ALERT_WARNING
@@ -422,13 +435,13 @@ function extractAssignedTitle(n) {
   // only appears when older pages still failed to load.
   const canLoadMore =
     !pagination.allLoaded && (pagination.page ?? 0) + 1 < (pagination.totalPages ?? 1);
-  // Read vs unread must be obvious at a glance (product spec, hardened in
-  // review — the old pair was too subtle to notice):
-  //   unread = CLEAR gray background + bold title AND semibold body
-  //   read   = WHITE background + light title/body
-  // Dark mode gets the same jump: a light gray slab vs. the plain card.
-  const unreadBg = dark ? "#374151" : "#D1D5DB";
-  const readBg = dark ? "#0B1220" : "#FFFFFF";
+  // Read vs unread must be obvious at a glance (product spec):
+  //   unread = HIGHLIGHTED background (stands out) + bold title + semibold body
+  //   read   = PLAIN background (recedes) + light title/body
+  // Dark mode: unread = brighter slate blue, read = dark base.
+  // Light mode: unread = soft blue-gray tint, read = plain white.
+  const unreadBg = dark ? "#1E3A5F" : "#E0EDFF";
+  const readBg = dark ? "#0F172A" : "#FFFFFF";
   const readTitleClass = dark ? "text-white/55" : "text-text-muted";
   const readBodyClass = dark ? "text-white/40" : "text-text-muted/70";
   const unreadBodyClass = dark ? "text-white/85" : "text-text";
@@ -439,6 +452,11 @@ function extractAssignedTitle(n) {
     const unread = !row.isRead;
     const dot = notificationDot(row, sensorStates);
     const isSel = selected.has(rowKeyOf(row));
+    // Maintenance assignment → 3-line layout (bolder title, bold priority,
+    // machine · type · assigned-at), mirroring the phone notification design.
+    const detail = parseAssignmentMessage(n.message);
+    const titleText =
+      formatNotificationTitle(n.title) || formatNotificationMessage(n.message) || "Notification";
 
     return (
       <Pressable
@@ -447,10 +465,8 @@ function extractAssignedTitle(n) {
         className={`flex-row items-center px-3 py-3 border-b ${dark ? "border-white/5" : "border-border/50"}`}
         style={({ pressed }) => [
           {
-            // Selection highlight (primary bar); otherwise the gray/white
-            // read-unread recipe with no accent border.
-            borderLeftWidth: isSel ? 3 : 0,
-            borderLeftColor: isSel ? "#2563EB" : "transparent",
+            borderLeftWidth: isSel ? 3 : unread ? 4 : 0,
+            borderLeftColor: isSel ? "#2563EB" : unread ? "#3B82F6" : "transparent",
             backgroundColor: unread ? unreadBg : readBg,
           },
           pressed ? { opacity: 0.85 } : null,
@@ -486,24 +502,53 @@ function extractAssignedTitle(n) {
           <Text style={{ fontSize: 15, color: meta.color }}>{meta.icon}</Text>
         </View>
         <View className="flex-1 mr-3">
-          <Text
-            numberOfLines={1}
-            className={`text-sm font-inter ${unread ? "font-bold" : "font-medium"} ${
-              unread ? darkText : readTitleClass
-            }`}
-          >
-            {formatNotificationTitle(n.title) || formatNotificationMessage(n.message) || "Notification"}
-          </Text>
-          <Text
-            numberOfLines={2}
-            className={`text-xs font-inter mt-0.5 ${
-              unread ? `font-semibold ${unreadBodyClass}` : readBodyClass
-            }`}
-          >
-            {n.title && n.message
-              ? formatNotificationMessage(n.message)
-              : [n.machineCode, n.sensorType].filter(Boolean).join(" · ")}
-          </Text>
+          {detail ? (
+            <>
+              {/* 1 — title: the heaviest line on the row. */}
+              <Text
+                numberOfLines={1}
+                className={`text-[15px] font-inter ${
+                  unread ? "font-extrabold" : "font-bold"
+                } ${unread ? darkText : readTitleClass}`}
+              >
+                {titleText}
+              </Text>
+              {/* 2 — PRIORITY (bold) · machine · type */}
+              <Text numberOfLines={1} className="text-xs font-inter mt-1">
+                <Text style={{ fontWeight: "800", color: priorityColor(detail.priority) }}>
+                  {detail.priority}
+                </Text>
+                <Text className={unread ? unreadBodyClass : readBodyClass}>
+                  {`  ·  ${detail.machine}  ·  ${detail.type}`}
+                </Text>
+              </Text>
+              {/* 3 — assigned at (date) */}
+              <Text numberOfLines={1} className={`text-[10px] font-inter mt-0.5 ${darkMuted}`}>
+                {`Assigned ${detail.assignedAt}`}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text
+                numberOfLines={1}
+                className={`text-sm font-inter ${unread ? "font-bold" : "font-medium"} ${
+                  unread ? darkText : readTitleClass
+                }`}
+              >
+                {titleText}
+              </Text>
+              <Text
+                numberOfLines={2}
+                className={`text-xs font-inter mt-0.5 ${
+                  unread ? `font-semibold ${unreadBodyClass}` : readBodyClass
+                }`}
+              >
+                {n.title && n.message
+                  ? formatNotificationMessage(n.message)
+                  : [n.machineCode, n.sensorType].filter(Boolean).join(" · ")}
+              </Text>
+            </>
+          )}
         </View>
         <View className="items-end gap-1">
           <View

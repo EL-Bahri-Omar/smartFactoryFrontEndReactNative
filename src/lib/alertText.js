@@ -140,4 +140,35 @@ export function formatNotificationMessage(raw) {
   return formatAlertMessage(repaired);
 }
 
+/**
+ * Structured view of the maintenance-assignment body so the row can be laid
+ * out like the phone notification design:
+ *   New intervention assigned: <name>   (bolder)
+ *   HIGH (bold) · machine · type
+ *   Assigned <date>
+ *
+ * Matches the backend French template
+ *   "Machine : X | Type : Y | Priorité : Z | Affectée le : D"
+ * and an English variant of the same shape. Returns null for anything else,
+ * in which case the caller falls back to the plain translated message.
+ */
+export function parseAssignmentMessage(raw) {
+  const repaired = repairEncoding(String(raw || "")).replace(/\s+/g, " ").trim();
+  if (!repaired) return null;
+  const m = repaired.match(
+    /^\s*Machine\s*:\s*([^|]+?)\s*\|\s*Type\s*:\s*([^|]+?)\s*\|\s*(?:Priorité|Priority)\s*:\s*([^|]+?)\s*\|\s*(?:Affectée le|Assigned(?: at)?)\s*:\s*(.+)$/i
+  );
+  if (!m) return null;
+  const rawPriority = m[3].trim();
+  const priority =
+    SEVERITY_WORDS[rawPriority.toUpperCase()] ||
+    rawPriority.charAt(0).toUpperCase() + rawPriority.slice(1).toLowerCase();
+  return {
+    machine: m[1].trim(),
+    type: m[2].trim().toUpperCase(),
+    priority,
+    assignedAt: m[4].trim(),
+  };
+}
+
 export default formatAlertMessage;

@@ -67,7 +67,7 @@ const WEB_TABS = [
 
 const MOBILE_TABS = [
   { key: "overview", label: "Overview" },
-  { key: "live", label: "Sensor Data" },
+  { key: "live", label: "Live Sensors" },
   { key: "history", label: "History" },
   { key: "alerts", label: "Alerts" },
   { key: "settings", label: "Settings" },
@@ -335,6 +335,45 @@ export default function MachineDetailScreen() {
     }
   }
 
+  // Shared "Custom" date-range panel. It used to exist ONLY inside
+  // OverviewBody, so on mobile the Custom chip of the Live Sensors and
+  // History tabs toggled state without ever rendering anything —
+  // "clicking Custom does nothing". One definition, rendered by every tab.
+  function CustomRangeCard() {
+    if (!showCustomRange) return null;
+    return (
+      <Card className="mb-3">
+        <View className={`${isDesktop ? "flex-row items-end gap-3" : "gap-3"}`}>
+          <View className="flex-1">
+            <Text className={`text-xs font-inter mb-1 ${dark ? "text-white/60" : "text-text-muted"}`}>{'From'}</Text>
+            <DateTimeInput value={customRangeFrom} onChange={setCustomRangeFrom} placeholder="Select start date..." />
+          </View>
+          <View className="flex-1">
+            <Text className={`text-xs font-inter mb-1 ${dark ? "text-white/60" : "text-text-muted"}`}>{'To'}</Text>
+            <DateTimeInput value={customRangeTo} onChange={setCustomRangeTo} placeholder="Select end date..." />
+          </View>
+        </View>
+        {customRangeFrom !== "" && customRangeTo !== "" && (
+          <View className={`flex-row items-center gap-2 py-2 px-3 rounded-btn mt-2 ${dark ? "bg-success/10" : "bg-green-50"}`}>
+            <Text style={{ fontSize: 14, color: "#22C55E" }}>{"✓"}</Text>
+            <Text className={`text-xs font-inter ${dark ? "text-white/80" : "text-text"}`}>
+              {`Selected: ${new Date(customRangeFrom).toLocaleString()} → ${new Date(customRangeTo).toLocaleString()}`}
+            </Text>
+          </View>
+        )}
+        <View className="flex-row gap-2 mt-2">
+          <Button title="Apply Filter" variant="primary" size="sm" disabled={!customRangeFrom || !customRangeTo} onPress={applyCustomRange} />
+          <Button
+            title="Cancel"
+            variant="outline"
+            size="sm"
+            onPress={() => { setShowCustomRange(false); setCustomRangeFrom(""); setCustomRangeTo(""); }}
+          />
+        </View>
+      </Card>
+    );
+  }
+
   function summaryText() {
     return `${code} (${typeLabel}) — Status: ${status || "unknown"}`;
   }
@@ -570,7 +609,7 @@ export default function MachineDetailScreen() {
           <View className={`${isDesktop ? "flex-row items-center justify-between mb-3" : "mb-3"}`}>
             <View className="flex-row items-center gap-2 mb-2">
               <Text className={`text-base font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
-                Sensor Data
+                Live Sensors
               </Text>
               {!liveConnected && (
                 <View className="px-2 py-0.5 rounded-chip bg-warning/15">
@@ -597,32 +636,7 @@ export default function MachineDetailScreen() {
               </Pressable>
             </View>
           </View>
-          {showCustomRange && (
-            <Card className="mb-3">
-              <View className={`${isDesktop ? "flex-row items-end gap-3" : "gap-3"}`}>
-                <View className="flex-1">
-                  <Text className={`text-xs font-inter mb-1 ${dark ? "text-white/60" : "text-text-muted"}`}>{'From'}</Text>
-                  <DateTimeInput value={customRangeFrom} onChange={setCustomRangeFrom} placeholder="Select start date..." />
-                </View>
-                <View className="flex-1">
-                  <Text className={`text-xs font-inter mb-1 ${dark ? "text-white/60" : "text-text-muted"}`}>{'To'}</Text>
-                  <DateTimeInput value={customRangeTo} onChange={setCustomRangeTo} placeholder="Select end date..." />
-                </View>
-              </View>
-              {customRangeFrom !== "" && customRangeTo !== "" && (
-                <View className={`flex-row items-center gap-2 py-2 px-3 rounded-btn mt-2 ${dark ? "bg-success/10" : "bg-green-50"}`}>
-                  <Text style={{ fontSize: 14, color: "#22C55E" }}>{"✓"}</Text>
-                  <Text className={`text-xs font-inter ${dark ? "text-white/80" : "text-text"}`}>
-                    {`Selected: ${new Date(customRangeFrom).toLocaleString()} → ${new Date(customRangeTo).toLocaleString()}`}
-                  </Text>
-                </View>
-              )}
-              <View className="flex-row gap-2 mt-2">
-                <Button title="Apply Filter" variant="primary" size="sm" disabled={!customRangeFrom || !customRangeTo} onPress={applyCustomRange} />
-                <Button title="Cancel" variant="outline" size="sm" onPress={() => { setShowCustomRange(false); setCustomRangeFrom(""); setCustomRangeTo(""); }} />
-              </View>
-            </Card>
-          )}
+          <CustomRangeCard />
 
           {readingsRefreshing && (
             <BusyRow label="Updating charts…" className="mb-3" />
@@ -733,7 +747,7 @@ export default function MachineDetailScreen() {
         <View className={`${isDesktop ? "flex-row items-center justify-between mb-3" : "mb-3"}`}>
           <View className="flex-row items-center gap-2 mb-2">
             <Text className={`text-base font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
-              Sensor Data
+              Live Sensors
             </Text>
             {!liveConnected && (
               <View className="px-2 py-0.5 rounded-chip bg-warning/15">
@@ -756,6 +770,8 @@ export default function MachineDetailScreen() {
             </Pressable>
           </View>
         </View>
+
+        <CustomRangeCard />
 
         {readingsRefreshing && (
           <BusyRow label="Updating charts…" className="mb-3" />
@@ -861,6 +877,8 @@ export default function MachineDetailScreen() {
             </Pressable>
           </View>
         </View>
+
+        <CustomRangeCard />
 
         {/* Charts */}
         {readingsRefreshing && (
