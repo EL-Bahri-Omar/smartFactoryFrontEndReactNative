@@ -31,7 +31,7 @@
 
 ## Overview
 
-SmartFactory is an industrial IoT supervision platform. This frontend provides:
+SmartFactory is an industrial IoT supervision platform. This frontend provides :
 
 - **Machine monitoring** — list, detail, status, health bars, live sensor data
 - **Zone management** — factory map with color-coded zones and machine markers
