@@ -27,6 +27,8 @@ export const ACCESS = Object.freeze({
   machines: SUPERVISORS,
   alerts: ALERT_ROLES,
   maintenance: MAINTENANCE_ROLES,
+  // Reports (Sprint 7, ui-notes §9): RESPONSABLE INDUSTRIEL + ADMIN only.
+  reports: SUPERVISORS,
   users: [ROLES.ADMIN],
   groups: [ROLES.ADMIN],
 });

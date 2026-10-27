@@ -92,10 +92,10 @@ function tabForType(type) {
   return "INFO"; // GROUP_MEMBER_* rows live in Info (and in All/Unread)
 }
 
-// Colour used for the bold PRIORITY word of an assignment row.
+// Colour for the bold PRIORITY word of an assignment row (2nd line).
 function priorityColor(priority) {
   const p = String(priority || "").toUpperCase();
-  if (p === "HIGH" || p === "CRITICAL") return "#DC2626";
+  if (p === "HIGH" || p === "CRITICAL" || p === "URGENT") return "#DC2626";
   if (p === "MEDIUM" || p === "WARNING") return "#D97706";
   if (p === "LOW") return "#16A34A";
   return "#2563EB";
@@ -452,11 +452,19 @@ function extractAssignedTitle(n) {
     const unread = !row.isRead;
     const dot = notificationDot(row, sensorStates);
     const isSel = selected.has(rowKeyOf(row));
-    // Maintenance assignment → 3-line layout (bolder title, bold priority,
-    // machine · type · assigned-at), mirroring the phone notification design.
-    const detail = parseAssignmentMessage(n.message);
     const titleText =
       formatNotificationTitle(n.title) || formatNotificationMessage(n.message) || "Notification";
+    // 3-line layout for intervention-assignment rows. Two ways in: the title
+    // says "assigned", or the message carries all four assignment fields
+    // (covers a mangled title). Alerts/threshold rows never pass either test.
+    const parsed = parseAssignmentMessage(n.message);
+    const isAssignment =
+      /assign/i.test(String(n.title || "")) ||
+      !!(parsed && parsed.priority && parsed.machine && parsed.type && parsed.assignedAt);
+    const detail = isAssignment ? parsed : null;
+    const detailLine = detail
+      ? [detail.machine, detail.type].filter(Boolean).join("  ·  ")
+      : "";
 
     return (
       <Pressable
@@ -507,31 +515,39 @@ function extractAssignedTitle(n) {
               {/* 1 — title: the heaviest line on the row. */}
               <Text
                 numberOfLines={1}
-                className={`text-[15px] font-inter ${
-                  unread ? "font-extrabold" : "font-bold"
+                className={`text-[13px] font-inter ${
+                  unread ? "font-bold" : "font-semibold"
                 } ${unread ? darkText : readTitleClass}`}
               >
                 {titleText}
               </Text>
-              {/* 2 — PRIORITY (bold) · machine · type */}
-              <Text numberOfLines={1} className="text-xs font-inter mt-1">
-                <Text style={{ fontWeight: "800", color: priorityColor(detail.priority) }}>
-                  {detail.priority}
+              {/* 2 — PRIORITY (colour + bold) · machine · type */}
+              {!!(detail.priority || detailLine) && (
+                <Text numberOfLines={1} className="text-xs font-inter mt-1">
+                  {!!detail.priority && (
+                    <Text style={{ fontWeight: "800", color: priorityColor(detail.priority) }}>
+                      {detail.priority}
+                    </Text>
+                  )}
+                  {!!detailLine && (
+                    <Text className={unread ? unreadBodyClass : readBodyClass}>
+                      {(detail.priority ? "  ·  " : "") + detailLine}
+                    </Text>
+                  )}
                 </Text>
-                <Text className={unread ? unreadBodyClass : readBodyClass}>
-                  {`  ·  ${detail.machine}  ·  ${detail.type}`}
-                </Text>
-              </Text>
+              )}
               {/* 3 — assigned at (date) */}
-              <Text numberOfLines={1} className={`text-[10px] font-inter mt-0.5 ${darkMuted}`}>
-                {`Assigned ${detail.assignedAt}`}
-              </Text>
+              {!!detail.assignedAt && (
+                <Text numberOfLines={1} className={`text-[10px] font-inter mt-0.5 ${darkMuted}`}>
+                  {`Assigned ${detail.assignedAt}`}
+                </Text>
+              )}
             </>
           ) : (
             <>
               <Text
                 numberOfLines={1}
-                className={`text-sm font-inter ${unread ? "font-bold" : "font-medium"} ${
+                className={`text-[13px] font-inter ${unread ? "font-bold" : "font-medium"} ${
                   unread ? darkText : readTitleClass
                 }`}
               >

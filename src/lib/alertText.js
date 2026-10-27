@@ -141,33 +141,53 @@ export function formatNotificationMessage(raw) {
 }
 
 /**
- * Structured view of the maintenance-assignment body so the row can be laid
- * out like the phone notification design:
- *   New intervention assigned: <name>   (bolder)
- *   HIGH (bold) · machine · type
- *   Assigned <date>
+ * Structured view of a maintenance-assignment body so the row can be laid
+ * out in 3 lines:
+ *   New intervention assigned: <name>          (bolder)
+ *   MEDIUM (colour + bold) · machine · type     (2nd line)
+ *   Assigned <date>                            (3rd line)
  *
- * Matches the backend French template
- *   "Machine : X | Type : Y | Priorité : Z | Affectée le : D"
- * and an English variant of the same shape. Returns null for anything else,
- * in which case the caller falls back to the plain translated message.
+ * Two passes: labelled fields first (the backend's FR and EN templates), then
+ * a token fallback for stripped/mangled variants — every assignment row must
+ * take the 3-line branch, not silently fall back to the plain 2-line one.
+ * Returns null when nothing looks like an assignment.
  */
 export function parseAssignmentMessage(raw) {
   const repaired = repairEncoding(String(raw || "")).replace(/\s+/g, " ").trim();
   if (!repaired) return null;
-  const m = repaired.match(
-    /^\s*Machine\s*:\s*([^|]+?)\s*\|\s*Type\s*:\s*([^|]+?)\s*\|\s*(?:Priorité|Priority)\s*:\s*([^|]+?)\s*\|\s*(?:Affectée le|Assigned(?: at)?)\s*:\s*(.+)$/i
-  );
-  if (!m) return null;
-  const rawPriority = m[3].trim();
-  const priority =
-    SEVERITY_WORDS[rawPriority.toUpperCase()] ||
-    rawPriority.charAt(0).toUpperCase() + rawPriority.slice(1).toLowerCase();
+
+  const find = (re) => {
+    const m = repaired.match(re);
+    return m ? String(m[1] || "").trim() : "";
+  };
+
+  // Pass 1 — labelled fields:
+  //   FR "Machine : X | Type : Y | Priorité : Z | Affectée le : D"
+  //   EN "Priority : Z Machine : X | Type : Y | Assigned at D"
+  let priority = find(/\b(?:Priorit[eé]|Priority)\s*:\s*([A-Za-z]+)/i);
+  let machine = find(/\bMachine\s*:\s*([A-Za-z0-9][\w.-]*)/i);
+  let type = find(/\bType\s*:\s*([A-Za-z_]+)/i);
+  let assignedAt =
+    find(/\bAffect[eé]e?\s*le\s*:\s*([^|]+)/i) || find(/\bAssigned(?:\s+at)?\s*:?\s*(.+)$/i);
+
+  // Pass 2 — bare tokens (labels lost in transit / partial translation).
+  if (!priority) priority = find(/\b(HIGH|MEDIUM|LOW|CRITICAL|URGENT|WARNING)\b/i);
+  if (!machine) machine = find(/\b([A-Za-z]{2,5}-\d{1,4})\b/);
+  if (!type) type = find(/\b(CORRECTIVE|PREVENTIVE|PREDICTIVE|CORRECTIF|PR[ÉE]VENTIF)\b/i);
+  if (!assignedAt) {
+    assignedAt = find(/\b(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*Z?)/);
+  }
+
+  if (!priority && !machine && !type && !assignedAt) return null;
+
   return {
-    machine: m[1].trim(),
-    type: m[2].trim().toUpperCase(),
-    priority,
-    assignedAt: m[4].trim(),
+    priority: priority
+      ? SEVERITY_WORDS[priority.toUpperCase()] ||
+        priority.charAt(0).toUpperCase() + priority.slice(1).toLowerCase()
+      : "",
+    machine: machine || "",
+    type: type ? type.toUpperCase() : "",
+    assignedAt: (assignedAt || "").replace(/\s*\|\s*$/, "").trim(),
   };
 }
 

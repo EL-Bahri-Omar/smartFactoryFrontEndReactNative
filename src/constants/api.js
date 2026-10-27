@@ -113,18 +113,27 @@ export const ENDPOINTS = Object.freeze({
   EVENTS: "/api/events", // ASSUMED — confirm with backend
   EVENT_BY_ID: "/api/events/:id", // ASSUMED — confirm with backend
 
-  // --- Dashboard ---
+  // --- Dashboard (Sprint 7 — ALL ASSUMED, docs/prompts/12-dashboard.md) ---
+  // The landing screen does NOT depend on these: dashboardSlice fans out over
+  // CONFIRMED sources and derives the KPIs it can. These two light up extra
+  // numbers (OEE, deltas, MTBF/MTTR) the day the coworker ships them; a 404
+  // is expected until then and degrades to the derived values / em dashes.
   DASHBOARD_SUMMARY: "/api/dashboard/summary", // ASSUMED — confirm with backend
-  DASHBOARD_KPI: "/api/dashboard/kpi", // ASSUMED — confirm with backend
+  DASHBOARD_KPI: "/api/dashboard/kpi", // ASSUMED — legacy spelling, kept for safety
+  DASHBOARD_KPIS: "/api/dashboard/kpis", // ASSUMED — Sprint 7 (prompt 12): { totalMachines, availability, activeAlerts, oee, deltas: {...} }
 
   // --- Analytics ---
   ANALYTICS_TRENDS: "/api/analytics/trends", // ASSUMED — confirm with backend
   ANALYTICS_COMPARISON: "/api/analytics/comparison", // ASSUMED — confirm with backend
 
-  // --- Reports ---
+  // --- Reports (Sprint 7 — ALL ASSUMED, docs/prompts/13-reports.md) ---
+  // A 404/500 renders the chart's empty/error state — expected until the
+  // backend ships, not a bug.
   REPORTS: "/api/reports", // ASSUMED — confirm with backend
   REPORT_BY_ID: "/api/reports/:id", // ASSUMED — confirm with backend
-  REPORT_GENERATE: "/api/reports/generate", // ASSUMED — confirm with backend
+  REPORT_DOWNTIME: "/api/reports/downtime", // ASSUMED — GET ?from=&to=
+  REPORT_PERFORMANCE: "/api/reports/performance", // ASSUMED — GET ?range=this_week|this_month|last_month
+  REPORT_GENERATE: "/api/reports/generate", // ASSUMED — POST { tab, range, from, to, format }
 
   // --- Users (CONFIRMED — UserController, permission-guarded) ---
   USERS: "/api/users", // CONFIRMED — GET paginated (?search=&role=&page=&size=&sort=, USER_READ); POST create (USER_WRITE)

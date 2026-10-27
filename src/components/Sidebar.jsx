@@ -47,7 +47,7 @@ const NAV_GROUPS = [
     key: "analytics",
     label: "Analytics",
     items: [
-      { label: "Reports", icon: "📄", path: "/(app)/reports" },
+      { label: "Reports", icon: "📄", path: "/(app)/reports", access: "reports" },
       { label: "AI Analytics", icon: "🤖", path: "/(app)/ai" },
     ],
   },
