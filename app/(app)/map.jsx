@@ -7,7 +7,7 @@
 // Dispatches fetchZones + fetchRecentEvents on mount.
 // Subscribes to /topic/zones for live updates via liveSlice.
 
-import { useEffect, useState } from "react";
+import { useEffect, Fragment, useState } from "react";
 import { View, Text, ScrollView, Pressable, TextInput } from "react-native";
 import { useRouter } from "expo-router";
 import AppShell from "../../src/components/AppShell";
@@ -21,12 +21,13 @@ import { useDark } from "../../src/hooks/useDark";
 import { useAppDispatch } from "../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../src/hooks/useAppSelector";
 import { useRole, PERMISSIONS } from "../../src/hooks/useRole";
-import { fetchZones, fetchZoneMachines } from "../../src/store/slices/zoneSlice";
+import { fetchZones, fetchZoneMachines, fetchZoneDetails } from "../../src/store/slices/zoneSlice";
 import { updateMachine } from "../../src/store/slices/machineSlice";
 import { fetchRecentEvents } from "../../src/store/slices/eventSlice";
 import { useDialog } from "../../src/components/dialog/DialogContext";
 import { useLiveTopic } from "../../src/hooks/useLiveTopic";
 import { relativeTime } from "../../src/lib/time";
+import { getMachineStatus } from "../../src/lib/status";
 
 // Zone color mapping
 const ZONE_COLORS = {
@@ -45,6 +46,27 @@ const EVENT_DOTS = {
   default: "#94A3B8",
 };
 
+// Health-grade → ring colour for the machine health score
+// (GET /api/dashboard/zones/{zoneId}.machines[].healthGrade, US55). Falls back
+// to the score band when the backend could not grade the machine.
+const HEALTH_COLORS = {
+  EXCELLENT: "#16A34A",
+  GOOD: "#0EA5E9",
+  WARNING: "#F59E0B",
+  CRITICAL: "#DC2626",
+  INSUFFICIENT_DATA: "#94A3B8",
+};
+
+function healthColorOf(grade, score) {
+  const g = String(grade || "").toUpperCase();
+  if (HEALTH_COLORS[g]) return HEALTH_COLORS[g];
+  if (score == null) return "#94A3B8";
+  if (score >= 85) return "#16A34A";
+  if (score >= 70) return "#0EA5E9";
+  if (score >= 50) return "#F59E0B";
+  return "#DC2626";
+}
+
 export default function MapScreen() {
   const dispatch = useAppDispatch();
   const router = useRouter();
@@ -57,7 +79,7 @@ export default function MapScreen() {
   const canView = canAccess("map");
   const isDesktop = breakpoint === "desktop";
 
-  const { list: zones, machinesByZone, status: zoneStatus, error: zoneError } =
+  const { list: zones, machinesByZone, status: zoneStatus, error: zoneError, details: zoneDetails } =
     useAppSelector((s) => s.zone);
   const { list: events, status: eventStatus } = useAppSelector((s) => s.event);
 
@@ -208,14 +230,36 @@ export default function MapScreen() {
         </View>
         {slotZones.filter(zoneMatches).map((z) => {
           const color = ZONE_COLORS[z.slot] || ZONE_COLORS.A;
-          const machineCount = z.machineCount ?? (machinesByZone[z.id] || []).length;
-          const alertCount = z.alertCount || 0; // no alertCount in Sprint 1 — always 0
+          const fallbackMachines = machinesByZone[z.id] || [];
+          const detailEntry = zoneDetails[z.id] || null;
+          const detail = detailEntry?.data || null;
+          // Prefer the Sprint 7 detail — it is the only source that carries
+          // healthScore / healthGrade / alerts per machine. While it loads (or
+          // when this role may not call /api/dashboard/**) fall back to the
+          // plain /api/zones/{id}/machines rows, whose health simply reads "—".
+          const zoneMachines = detail?.machines?.length ? detail.machines : fallbackMachines;
+          const machineCount = detail?.totalMachines ?? z.machineCount ?? zoneMachines.length;
+          const statusSplit = detail?.machinesByStatus || null;
+          const zoneAlerts = detail?.activeAlertsCount ?? z.alertCount ?? 0;
+          const loadingDetail = detailEntry?.status === "loading";
           const isSelected = selectedZone === z.slot;
 
+          const toggleZone = () => {
+            if (isSelected) {
+              setSelectedZone(null);
+              return;
+            }
+            setSelectedZone(z.slot);
+            // First expand only — a rejected (403) detail is cached as `error`
+            // so we never hammer a route this role cannot call.
+            const entry = zoneDetails[z.id];
+            if (!entry || entry.status === "idle") dispatch(fetchZoneDetails(z.id));
+          };
+
           return (
+            <Fragment key={z.id}>
             <Pressable
-              key={z.id}
-              onPress={() => setSelectedZone(isSelected ? null : z.slot)}
+              onPress={toggleZone}
               className={`flex-row items-center py-2.5 px-2 rounded-btn mb-1 ${
                 isSelected ? (dark ? "bg-white/10" : "bg-bg") : ""
               }`}
@@ -236,16 +280,171 @@ export default function MapScreen() {
               <View className="flex-1">
                 <Text className={`text-sm font-inter ${dark ? "text-white" : "text-text"}`}>
                   {machineCount} machine{machineCount !== 1 ? "s" : ""}
-                  {alertCount > 0 && (
+                  {zoneAlerts > 0 && (
                     <Text className="text-danger font-inter">
-                      {" "}· {alertCount} alert{alertCount !== 1 ? "s" : ""}
+                      {" "}· {zoneAlerts} alert{zoneAlerts !== 1 ? "s" : ""}
                     </Text>
                   )}
                 </Text>
               </View>
 
-              <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>›</Text>
+              <Text className={`text-sm ${dark ? "text-white/50" : "text-text-muted"}`}>
+                {isSelected ? "⌄" : "›"}
+              </Text>
             </Pressable>
+
+            {/* Expanded: EVERY machine in this zone with its name, a coloured
+                status glyph and a health-score ring (docs/ui/map&zones.png).
+                Rendered only while the zone is selected. */}
+            {isSelected ? (
+              <View
+                className="ml-4 mb-3 pl-3 pt-1"
+                style={{ borderLeftWidth: 2, borderLeftColor: `${color}59` }}
+              >
+                {/* Zone status split + alerts, straight from
+                    GET /api/dashboard/zones/{zoneId} */}
+                {statusSplit ? (
+                  <View className="flex-row flex-wrap gap-1.5 mb-2">
+                    {["RUNNING", "IDLE", "MAINTENANCE", "FAILURE", "OFFLINE"]
+                      .filter((k) => Number(statusSplit[k]) > 0)
+                      .map((k) => {
+                        const st = getMachineStatus(k);
+                        return (
+                          <View
+                            key={k}
+                            className="flex-row items-center gap-1 px-2 py-0.5 rounded-chip"
+                            style={{ backgroundColor: `${st.color}14` }}
+                          >
+                            <View
+                              className="w-1.5 h-1.5 rounded-full"
+                              style={{ backgroundColor: st.color }}
+                            />
+                            <Text
+                              className="text-[10px] font-semibold font-inter"
+                              style={{ color: st.color }}
+                            >
+                              {Number(statusSplit[k])} {st.label}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    {zoneAlerts > 0 ? (
+                      <View className="flex-row items-center gap-1 px-2 py-0.5 rounded-chip bg-danger/15">
+                        <Text className="text-[10px] font-semibold font-inter text-danger">
+                          🚨 {zoneAlerts} alert{zoneAlerts !== 1 ? "s" : ""}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                {loadingDetail && zoneMachines.length === 0 ? (
+                  <Text className={`text-xs font-inter py-2 ${dark ? "text-white/50" : "text-text-muted"}`}>
+                    Loading zone details…
+                  </Text>
+                ) : zoneMachines.length === 0 ? (
+                  <Text className={`text-xs font-inter py-2 ${dark ? "text-white/50" : "text-text-muted"}`}>
+                    No machines in this zone yet.
+                  </Text>
+                ) : (
+                  zoneMachines.map((m, mIdx) => {
+                    const s = getMachineStatus(m?.status);
+                    const last = mIdx === zoneMachines.length - 1;
+                    const alerts = Number(m?.activeAlertsCount) || 0;
+                    const score =
+                      m?.healthScore == null || Number.isNaN(Number(m.healthScore))
+                        ? null
+                        : Math.round(Number(m.healthScore));
+                    const hColor = healthColorOf(m?.healthGrade, score);
+                    const subLabel =
+                      [
+                        m?.name && m?.name !== (m?.code || m?.name) ? m.name : null,
+                        m?.type,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || "Machine";
+
+                    return (
+                      <Pressable
+                        key={m?.id || m?.code || mIdx}
+                        onPress={() => m?.id && router.push(`/(app)/machines/${m.id}`)}
+                        className={`flex-row items-center gap-3 py-2.5 ${
+                          last ? "" : dark ? "border-b border-white/5" : "border-b border-border/70"
+                        }`}
+                      >
+                        {/* Machine glyph, tinted by status, with a status dot */}
+                        <View
+                          className="w-10 h-10 rounded-btn items-center justify-center shrink-0"
+                          style={{ backgroundColor: `${s.color}1A` }}
+                        >
+                          <Text className="text-base">⚙️</Text>
+                          <View
+                            className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2"
+                            style={{
+                              backgroundColor: s.dotColor,
+                              borderColor: dark ? "#0B1220" : "#FFFFFF",
+                            }}
+                          />
+                        </View>
+
+                        <View className="flex-1">
+                          <View className="flex-row items-center gap-1.5">
+                            <Text
+                              className={`text-sm font-bold font-inter flex-shrink ${
+                                dark ? "text-white" : "text-text"
+                              }`}
+                              numberOfLines={1}
+                            >
+                              {m?.code || m?.name || "—"}
+                            </Text>
+                            {alerts > 0 ? (
+                              <View className="px-1.5 py-px rounded-full bg-danger">
+                                <Text className="text-[9px] font-bold font-inter text-white">
+                                  {alerts}
+                                </Text>
+                              </View>
+                            ) : null}
+                          </View>
+                          <Text
+                            className={`text-[11px] font-inter ${dark ? "text-white/50" : "text-text-muted"}`}
+                            numberOfLines={1}
+                          >
+                            {subLabel}
+                          </Text>
+                          <View
+                            className="self-start mt-1 px-2 py-0.5 rounded-chip"
+                            style={{ backgroundColor: `${s.color}1F` }}
+                          >
+                            <Text
+                              className="text-[10px] font-bold font-inter"
+                              style={{ color: s.color }}
+                            >
+                              {s.label}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {/* Health-score ring — the glowing circle each machine
+                            carries in map&zones.png. "—" while the score is
+                            INSUFFICIENT_DATA, never a guessed value. */}
+                        <View
+                          className="w-10 h-10 rounded-full items-center justify-center shrink-0"
+                          style={{ borderWidth: 2, borderColor: hColor }}
+                        >
+                          <Text
+                            className="text-[13px] font-bold font-inter"
+                            style={{ color: hColor }}
+                          >
+                            {score == null ? "—" : score}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })
+                )}
+              </View>
+            ) : null}
+            </Fragment>
           );
         })}
       </Card>

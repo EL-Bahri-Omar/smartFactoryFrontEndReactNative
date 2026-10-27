@@ -19,12 +19,14 @@ export default function KpiCard({
   icon,
   iconBgClass = "bg-primary-soft",
   loading = false,
+  className = "",
 }) {
   const dark = useDark();
+  const shell = `flex-1 min-w-[150px] ${className}`;
 
   if (loading) {
     return (
-      <Card className="flex-1 min-w-[150px]">
+      <Card className={shell}>
         <Skeleton width="55%" height={12} className="mb-3" />
         <Skeleton width="45%" height={26} className="mb-3" />
         <Skeleton width={72} height={20} rounded />
@@ -35,7 +37,7 @@ export default function KpiCard({
   const hasValue = value != null && value !== "" && !Number.isNaN(Number(value));
 
   return (
-    <Card className="flex-1 min-w-[150px]">
+    <Card className={shell}>
       <View className="flex-row items-start justify-between">
         <View className="flex-1 mr-2">
           <Text

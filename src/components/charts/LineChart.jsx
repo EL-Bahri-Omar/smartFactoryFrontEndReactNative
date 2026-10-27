@@ -75,6 +75,9 @@ function yTicks(yMin, yMax, count = 5) {
  *   yMax?: number,
  *   pulseLast?: boolean,
  *   limits?: { value: number, color?: string, label?: string }[],
+ *   xTickValues?: number[],   // exact X positions to label (categorical charts)
+ *   xTickFormat?: (v: number) => string, // label renderer (default formatTime)
+ *   yTickCount?: number,      // gridlines incl. 0 and the max (5 → 0/25/…/100)
  * }} props — limits render as dashed horizontal threshold lines.
  */
 export default function LineChart({
@@ -84,6 +87,9 @@ export default function LineChart({
   yMax = 200,
   pulseLast = false,
   limits = [],
+  xTickValues = null,
+  xTickFormat = null,
+  yTickCount = 5,
 }) {
   const [width, setWidth] = useState(0);
   const dark = useDark();
@@ -148,11 +154,15 @@ export default function LineChart({
     };
   }, [series, yMax, limits]);
 
-  const xTickCount = 5;
-  const xTicks = [];
-  for (let i = 0; i < xTickCount; i += 1) {
-    xTicks.push(xMin + ((xMax - xMin) * i) / (xTickCount - 1));
-  }
+  // Categorical charts (OEE over time) pass their own X positions so every
+  // bucket gets a label; time series keep the evenly-spaced default.
+  const xTicks =
+    Array.isArray(xTickValues) && xTickValues.length
+      ? xTickValues
+      : Array.from(
+          { length: 5 },
+          (_, i) => xMin + ((xMax - xMin) * i) / 4
+        );
 
   return (
     <View
@@ -161,7 +171,7 @@ export default function LineChart({
     >
       {width > 0 && (
         <Svg width={width} height={height}>
-          {yTicks(yMin, domainYMax).map((tick) => {
+          {yTicks(yMin, domainYMax, yTickCount).map((tick) => {
             const y =
               PAD.top + (1 - (tick - yMin) / (domainYMax - yMin || 1)) * innerH;
             return (
@@ -198,7 +208,7 @@ export default function LineChart({
                 fill={dark ? "#94A3B8" : COLORS.textMuted}
                 textAnchor="middle"
               >
-                {formatTime(tick)}
+                {xTickFormat ? xTickFormat(tick) : formatTime(tick)}
               </SvgText>
             );
           })}

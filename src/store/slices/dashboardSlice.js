@@ -1,21 +1,24 @@
 ﻿// src/store/slices/dashboardSlice.js
 //
-// Sprint 7 preview — the real landing dashboard.
+// The real landing dashboard (Sprint 7).
 //
 // The dashboard is the FIRST screen after login, so it has to be fast: it
 // issues one small, parallel fan-out instead of re-using the heavy list
 // endpoints the Machines/Alerts/Maintenance screens load.
 //
-//   GET /api/machines?size=100          → totals + per-status split + map rows
-//   GET /api/alerts/summary             → exact ACTIVE counts (cheap, server-side)
-//   GET /api/alerts?status=ACTIVE&size=5→ the 5 newest active alerts
-//   GET /api/maintenance?size=100       → open queue (PENDING/ASSIGNED/IN_PROGRESS)
-//   GET /api/dashboard/kpis             → ASSUMED (Sprint 7) — OEE + deltas
+//   GET /api/machines?size=100            → map rows + fallback status counts
+//   GET /api/alerts/summary               → exact ACTIVE counts (cheap)
+//   GET /api/alerts?status=ACTIVE&size=5  → the 5 newest active alerts
+//   GET /api/maintenance?size=100         → open queue (PENDING/…/IN_PROGRESS)
+//   GET /api/dashboard/overview           → CONFIRMED Sprint 7: factory status,
+//                                           machinesByStatus, alerts, health score
+//   GET /api/dashboard/kpis?period=day    → CONFIRMED: availability %, MTBF, MTTR
+//   GET /api/dashboard/kpis/history       → CONFIRMED: 7-point availability series
 //
-// Every source is independent and permission-gated on the server, so a role
-// that cannot read one of them (e.g. no ALERT_READ) still gets a usable
-// dashboard: `Promise.allSettled` keeps the blocks that succeed and flags the
-// ones that failed instead of blanking the whole page.
+// `/api/dashboard/*` is ADMIN | RESPONSABLE | TECHNICIAN only
+// (SecurityConfig.java:119) — an OPERATOR caller rejects, and allSettled keeps
+// the rest of the dashboard alive. The screen reads `failed.kpis` / `failed.overview`
+// to decide whether that is a 403 or a genuinely empty factory.
 //
 // It keeps its own state bucket — importing the shared slices here would
 // overwrite the lists the other screens are rendering.
@@ -64,42 +67,50 @@ const toNum = (v) =>
   v == null || v === "" || Number.isNaN(Number(v)) ? null : Number(v);
 
 /**
- * Tolerant reader for the ASSUMED `GET /api/dashboard/kpis`.
- * Accepts either top-level keys or a `kpis: {}` wrapper; anything missing
- * stays null so the card renders an em dash instead of a made-up 0.
+ * Tolerant reader for the CONFIRMED `GET /api/dashboard/kpis` payload.
+ * Every field of that response is a small nested object
+ * (`availability.value`, `mtbf.valueHours`, `mttr.valueMinutes`, `oee.value`);
+ * anything missing stays null so the card renders an em dash instead of a
+ * made-up 0.
+ *
+ * `oee.value` is null BY DESIGN — DashboardService.getKpis answers
+ * `status: "UNAVAILABLE"` because good-parts/ideal-cycle-time are not
+ * instrumented. We surface the status + reason so the screen can say why.
  */
-function normalizeKpis(raw) {
+function normalizeKpis(raw, overview) {
   if (!raw || typeof raw !== "object") return null;
-  const src = raw.kpis && typeof raw.kpis === "object" ? raw.kpis : raw;
-  const pick = (...keys) => {
-    for (const k of keys) {
-      if (src[k] != null && src[k] !== "") return src[k];
-    }
-    return null;
+  const obj = (v) => (v && typeof v === "object" ? v : {});
+  const availability = obj(raw.availability);
+  const mtbf = obj(raw.mtbf);
+  const mttr = obj(raw.mttr);
+  const oee = obj(raw.oee);
+
+  return {
+    totalMachines: toNum(overview?.totalMachines),
+    availability: toNum(availability.value),
+    activeAlerts: toNum(overview?.activeAlertsCount),
+    oee: toNum(oee.value),
+    oeeStatus: oee.status || null,
+    oeeReason: oee.reason || null,
+    healthScore: toNum(overview?.overallHealthScore),
+    mtbf: toNum(mtbf.valueHours),
+    mtbfNote: mtbf.note || null,
+    mtbfFailures: toNum(mtbf.failureCount),
+    mttr: toNum(mttr.valueMinutes),
+    operatingMinutes: toNum(availability.operatingMinutes),
+    downtimeMinutes: toNum(availability.downtimeMinutes),
+    // The Sprint 7 payload carries no deltas — the trend chips stay hidden
+    // rather than being invented.
+    deltas: { totalMachines: null, availability: null, activeAlerts: null, oee: null },
   };
-  const d = src.deltas && typeof src.deltas === "object" ? src.deltas : {};
-  const kpis = {
-    totalMachines: toNum(pick("totalMachines", "machineCount", "machines")),
-    availability: toNum(pick("availability", "availabilityRate", "availabilityPct")),
-    activeAlerts: toNum(pick("activeAlerts", "alertsActive", "alerts")),
-    oee: toNum(pick("oee", "oeePercent", "oeePct")),
-    mtbf: toNum(pick("mtbf")),
-    mttr: toNum(pick("mttr")),
-    healthScore: toNum(pick("healthScore", "avgHealthScore")),
-    deltas: {
-      totalMachines: toNum(d.totalMachines ?? d.machines),
-      availability: toNum(d.availability),
-      activeAlerts: toNum(d.activeAlerts ?? d.alerts),
-      oee: toNum(d.oee),
-    },
-  };
-  return kpis;
 }
 
 /**
  * Fallback KPIs computed from CONFIRMED data (counts, not fabrications).
- * `availability` = RUNNING / total over the returned page; `oee` has no
- * source until the Sprint 7 endpoint exists, so it stays null → "—".
+ * Used when the Sprint 7 endpoints are unreachable for this role — the
+ * availability here is RUNNING/total over the returned page, which is a
+ * different (weaker) number than the backend's operating-minutes ratio, so
+ * the API value always wins when it arrives.
  */
 function deriveKpis(summary, alerts) {
   if (!summary && !alerts) return null;
@@ -111,11 +122,55 @@ function deriveKpis(summary, alerts) {
       summary && total > 0 ? Math.round((running / total) * 1000) / 10 : null,
     activeAlerts: alerts ? alerts.active : null,
     oee: null,
-    mtbf: null,
-    mttr: null,
+    oeeStatus: null,
+    oeeReason: null,
     healthScore: null,
+    mtbf: null,
+    mtbfNote: null,
+    mtbfFailures: null,
+    mttr: null,
+    operatingMinutes: null,
+    downtimeMinutes: null,
     deltas: { totalMachines: null, availability: null, activeAlerts: null, oee: null },
   };
+}
+
+/**
+ * Machines-by-status counts for the status card row.
+ * The backend's `overview.machinesByStatus` covers the whole fleet (not just
+ * the first page of GET /api/machines), so it is preferred when present.
+ */
+function statusCounts(overview, summary) {
+  const src = overview?.machinesByStatus;
+  if (src && typeof src === "object") {
+    return {
+      total: toNum(overview.totalMachines),
+      RUNNING: toNum(src.RUNNING) || 0,
+      IDLE: toNum(src.IDLE) || 0,
+      MAINTENANCE: toNum(src.MAINTENANCE) || 0,
+      FAILURE: toNum(src.FAILURE) || 0,
+      OFFLINE: toNum(src.OFFLINE) || 0,
+      UNKNOWN: toNum(src.UNKNOWN) || 0,
+    };
+  }
+  return summary;
+}
+
+/**
+ * `GET /api/dashboard/kpis/history` is a bare array of buckets. Keep only
+ * what we plot and drop malformed rows (a null availability would draw as 0).
+ */
+function normalizeHistory(raw) {
+  if (!Array.isArray(raw)) return null;
+  const points = raw
+    .filter((p) => p && typeof p === "object")
+    .map((p) => ({
+      timestamp: p.timestamp || null,
+      availability: toNum(p.availability),
+      failuresCount: toNum(p.failuresCount),
+      downtimeMinutes: toNum(p.downtimeMinutes),
+    }));
+  return points.length ? points : null;
 }
 
 function summarizeInterventions(result) {
@@ -147,29 +202,47 @@ const skipped = () => Promise.resolve(null);
 export const fetchDashboard = createAsyncThunk(
   "dashboard/fetch",
   /**
-   * @param {{ machines?: boolean, alerts?: boolean, interventions?: boolean, kpis?: boolean }} scope
+   * @param {{ machines?: boolean, alerts?: boolean, interventions?: boolean,
+   *           overview?: boolean, kpis?: boolean }} scope
    *   Only fan out for what this role may read — avoids a pointless 403 and
-   *   keeps the first paint fast (a technician without MAINTENANCE_READ does
-   *   not wait for a maintenance request to fail). `kpis` targets the ASSUMED
-   *   Sprint 7 endpoint: rejecting is harmless (allSettled) and only leaves
-   *   OEE/deltas empty.
+   *   keeps the first paint fast. `overview` / `kpis` target the CONFIRMED
+   *   Sprint 7 routes, which are ADMIN | RESPONSABLE | TECHNICIAN only
+   *   (SecurityConfig.java:119): an OPERATOR caller rejects and the other
+   *   blocks still render, with `failed.overview` / `failed.kpis` set.
    */
   async (
-    { machines = true, alerts = true, interventions = true, kpis = true } = {},
+    {
+      machines = true,
+      alerts = true,
+      interventions = true,
+      overview = true,
+      kpis = true,
+    } = {},
     { rejectWithValue }
   ) => {
-    const [machinesRes, summaryRes, alertsRes, interventionsRes, kpisRes] =
-      await Promise.allSettled([
-        machines ? machineService.getAll({ size: 100 }) : skipped(),
-        alerts ? alertService.getSummary() : skipped(),
-        alerts ? alertService.getAll({ status: "ACTIVE", size: 5, sort: "timestamp,desc" }) : skipped(),
-        interventions ? interventionService.getAll({ size: 100 }) : skipped(),
-        kpis ? dashboardService.getKpis() : skipped(),
-      ]);
+    const [
+      machinesRes,
+      summaryRes,
+      alertsRes,
+      interventionsRes,
+      overviewRes,
+      kpisRes,
+      historyRes,
+    ] = await Promise.allSettled([
+      machines ? machineService.getAll({ size: 100 }) : skipped(),
+      alerts ? alertService.getSummary() : skipped(),
+      alerts ? alertService.getAll({ status: "ACTIVE", size: 5, sort: "timestamp,desc" }) : skipped(),
+      interventions ? interventionService.getAll({ size: 100 }) : skipped(),
+      overview ? dashboardService.getOverview() : skipped(),
+      kpis ? dashboardService.getKpis({ period: "day" }) : skipped(),
+      kpis ? dashboardService.getKpisHistory({ period: "week", points: 7 }) : skipped(),
+    ]);
 
     // A skipped source resolves to `null` (not a failure); a failed one rejects.
     const ok = (r) => r.status === "fulfilled" && r.value !== null;
     const failed = (r) => r.status === "rejected";
+    const ov = ok(overviewRes) ? overviewRes.value : null;
+
     const payload = {
       machines: ok(machinesRes) ? summarizeMachines(machinesRes.value) : null,
       // Raw rows: the map groups them by zoneId and the status card picks 8.
@@ -177,14 +250,24 @@ export const fetchDashboard = createAsyncThunk(
       allMachines: ok(machinesRes) ? machineList(machinesRes.value) : [],
       alerts: null,
       interventions: ok(interventionsRes) ? summarizeInterventions(interventionsRes.value) : null,
-      // ASSUMED Sprint 7 endpoint — null until the backend ships it.
+      // ── Sprint 7 — CONFIRMED (DashboardController) ────────────────────────
+      overview: ov,
+      factoryStatus: ov?.factoryStatus || null,
+      // Whole-fleet status split; falls back to the counted machine page.
+      statusCounts: statusCounts(
+        ov,
+        ok(machinesRes) ? summarizeMachines(machinesRes.value) : null
+      ),
+      history: ok(historyRes) ? normalizeHistory(historyRes.value) : null,
       kpisFromApi: false,
       kpis: null,
       failed: {
         machines: failed(machinesRes),
         alerts: failed(summaryRes) && failed(alertsRes),
         interventions: failed(interventionsRes),
+        overview: failed(overviewRes),
         kpis: failed(kpisRes),
+        history: failed(historyRes),
       },
       fetchedAt: Date.now(),
     };
@@ -202,15 +285,30 @@ export const fetchDashboard = createAsyncThunk(
       };
     }
 
-    // KPIs: real Sprint 7 numbers when the endpoint exists, otherwise values
-    // derived from the CONFIRMED data above. Never fabricated.
-    const apiKpis = ok(kpisRes) ? normalizeKpis(kpisRes.value) : null;
-    payload.kpisFromApi = Boolean(apiKpis);
-    payload.kpis = apiKpis || deriveKpis(payload.machines, payload.alerts);
+    // KPIs: real Sprint 7 numbers when /kpis answers, overlaid on values
+    // derived from the CONFIRMED data above (so a blocked /kpis still leaves
+    // totals + alert counts on screen). Never fabricated — a null stays null.
+    const derived = deriveKpis(payload.machines, payload.alerts) || {};
+    const api = ok(kpisRes) ? normalizeKpis(kpisRes.value, ov) : null;
+    const merged = { ...derived };
+    if (api) {
+      Object.keys(api).forEach((k) => {
+        if (k === "deltas") return;
+        if (api[k] !== null && api[k] !== undefined) merged[k] = api[k];
+      });
+      merged.deltas = api.deltas;
+    }
+    if (ov) {
+      merged.totalMachines = toNum(ov.totalMachines) ?? merged.totalMachines;
+      merged.activeAlerts = toNum(ov.activeAlertsCount) ?? merged.activeAlerts;
+      merged.healthScore = toNum(ov.overallHealthScore);
+    }
+    payload.kpisFromApi = Boolean(api);
+    payload.kpis = Object.keys(merged).length ? merged : null;
 
     // A dashboard where every single block failed is a real error, not an
     // "empty factory" — let the screen show the retry state.
-    if (!payload.machines && !payload.alerts && !payload.interventions) {
+    if (!payload.machines && !payload.alerts && !payload.interventions && !ov) {
       return rejectWithValue({ message: "Could not load the dashboard." });
     }
     return payload;

@@ -3,15 +3,23 @@
 // Sprint 7 — Dashboard (US49 / US50 / US51 / US52) for web + mobile.
 // Built from docs/prompts/12-dashboard.md + docs/ui/ui-notes.md §2.
 //
-// Data: dashboardSlice.fetchDashboard fans out over CONFIRMED endpoints
-// (machines / alerts summary / newest active alerts / maintenance) and treats
-// GET /api/dashboard/kpis as an OPTIONAL source — that one does not exist on
-// the backend yet, so OEE and the delta chips stay empty (an em dash, never a
-// fabricated number) until Sprint 7 ships. A 404 there is expected behaviour.
+// Data: dashboardSlice.fetchDashboard fans out over CONFIRMED endpoints —
+// machines / alerts summary / newest active alerts / maintenance, plus the
+// Sprint 7 DashboardController routes (/overview, /kpis, /kpis/history).
+// Those three are ADMIN | RESPONSABLE | TECHNICIAN only, so a role that
+// cannot call them still gets a usable page from the derived counts.
+//
+// OEE itself is answered `status: "UNAVAILABLE", value: null` by the backend
+// (production data is not instrumented) — the header shows that honestly and
+// the three charts below plot the real series the backend does return:
+// downtime per bucket, machines per zone, availability per bucket.
 //
 // Map: reuses src/components/FactoryMap.jsx with variant="compact" — the
 // single source shared with Map & Zones. Zones are grouped client-side from
 // the machine rows we already fetched (no extra /zones/:id/machines calls).
+//
+// The greeting moved to TopBar (review: "move Good afternoon, Admin 👋 to the
+// top bar"), which is what freed this much vertical space.
 //
 // Live: `/topic/dashboard` is ASSUMED (recorded in docs/api-contract.md). The
 // KPI row shows a "Reconnecting…" chip whenever liveSlice.connected is false.
@@ -25,8 +33,12 @@ import Button from "../../src/components/Button";
 import EmptyState from "../../src/components/EmptyState";
 import Skeleton from "../../src/components/Skeleton";
 import KpiCard from "../../src/components/KpiCard";
+import StatusCountCard from "../../src/components/StatusCountCard";
 import FactoryMap from "../../src/components/FactoryMap";
 import Sparkline from "../../src/components/charts/Sparkline";
+import BarChart from "../../src/components/charts/BarChart";
+import LineChart from "../../src/components/charts/LineChart";
+import ChartLegend from "../../src/components/charts/ChartLegend";
 import { useBreakpoint } from "../../src/hooks/useBreakpoint";
 import { useDark } from "../../src/hooks/useDark";
 import { useRole, PERMISSIONS } from "../../src/hooks/useRole";
@@ -37,16 +49,27 @@ import { useDialog } from "../../src/components/dialog/DialogContext";
 import { fetchDashboard } from "../../src/store/slices/dashboardSlice";
 import { fetchZones } from "../../src/store/slices/zoneSlice";
 import { getMachineStatus } from "../../src/lib/status";
-import { relativeTime, formatDate, formatTime } from "../../src/lib/time";
+import { relativeTime } from "../../src/lib/time";
 
 // FactoryMap lays machines out in four fixed slots; real Mongo zones are
 // assigned to them by index (same rule as Map & Zones).
 const SLOTS = ["A", "B", "C", "D"];
 
-function greetingFor(hour) {
-  if (hour < 12) return "Good morning";
-  if (hour < 18) return "Good afternoon";
-  return "Good evening";
+/** Rounded-up axis maximum so bar charts get human tick labels (10, 25, 60…). */
+function niceMax(value) {
+  const v = Number(value);
+  if (!Number.isFinite(v) || v <= 0) return 100;
+  const pow = Math.pow(10, Math.floor(Math.log10(v)));
+  const steps = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+  return steps.map((s) => s * pow).find((c) => c >= v) || v;
+}
+
+/** Weekday label for the /kpis/history buckets (Mon, Tue, …). */
+function weekdayLabel(ts) {
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleDateString("en-US", { weekday: "short" });
 }
 
 export default function DashboardScreen() {
@@ -56,7 +79,7 @@ export default function DashboardScreen() {
   const dialog = useDialog();
   const breakpoint = useBreakpoint();
   const isMobile = breakpoint === "mobile";
-  const { canAccess, homeRoute, hasPermission, user } = useRole();
+  const { canAccess, homeRoute, hasPermission } = useRole();
 
   const canView = canAccess("dashboard");
   const canReadMachines = hasPermission(PERMISSIONS.MACHINE_READ);
@@ -71,12 +94,6 @@ export default function DashboardScreen() {
   // ASSUMED destination — documents itself in liveSlice.messagesByTopic, which
   // is where the "live" state of this screen comes from.
   useLiveTopic("/topic/dashboard", { enabled: canView });
-
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 30000);
-    return () => clearInterval(timer);
-  }, []);
 
   // Mobile "View Dashboard" CTA scrolls to the Factory Overview block.
   // Declared up here with the other hooks: the early returns below must never
@@ -125,25 +142,63 @@ export default function DashboardScreen() {
   const loading = (status === "loading" || status === "idle") && !data;
   const loadFailed = status === "error" && !data;
   const kpis = data?.kpis || null;
+  const kpisFromApi = Boolean(data?.kpisFromApi);
+  const history = data?.history || [];
   const machineRows = data?.machineRows || [];
   const allMachines = data?.allMachines || [];
-  const firstName = user?.firstName || "there";
 
-  // ── KPI row ───────────────────────────────────────────────────────────────
-  // Values come from the ASSUMED /api/dashboard/kpis when it exists, otherwise
-  // from counts derived in dashboardSlice. `null` renders "—".
+  // ── Machine status cards — ONE line (docs/ui/machines_count_cards.png) ────
+  // Real counts. `statusCounts` comes from GET /api/dashboard/overview (whole
+  // fleet) and falls back to the counted GET /api/machines page.
+  // "To be repaired" = FAILURE + OFFLINE (nothing is being worked on yet),
+  // "Under Repair" = MAINTENANCE (technician on it) — same split as the image.
+  const mc = data?.statusCounts || null;
+  const statusCardCls = isMobile ? "w-[152px]" : "flex-1 min-w-[116px]";
+  const statusDefs = [
+    { key: "total", label: "Total Machines", value: mc ? mc.total : null, icon: "🏭", color: "#0EA5A4" },
+    { key: "working", label: "Working", value: mc ? mc.RUNNING : null, icon: "✅", color: "#16A34A" },
+    { key: "idle", label: "Idle", value: mc ? mc.IDLE : null, icon: "⏸️", color: "#0EA5E9" },
+    { key: "repair", label: "Under Repair", value: mc ? mc.MAINTENANCE : null, icon: "🔧", color: "#F59E0B" },
+    {
+      key: "toberepaired",
+      label: "To be repaired",
+      value: mc ? mc.FAILURE + mc.OFFLINE : null,
+      icon: "📖",
+      color: "#DC2626",
+    },
+  ];
+
+  const statusCards = statusDefs.map((c) => (
+    <StatusCountCard
+      key={c.key}
+      className={statusCardCls}
+      label={c.label}
+      value={c.value}
+      icon={c.icon}
+      color={c.color}
+      loading={loading}
+    />
+  ));
+
+  // Always a single horizontal line — never a 1/2/1 grid. On narrow screens
+  // the line scrolls sideways instead of wrapping.
+  const statusRow = isMobile ? (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <View className="flex-row gap-3 pr-4">{statusCards}</View>
+    </ScrollView>
+  ) : (
+    <View className="flex-row gap-3">{statusCards}</View>
+  );
+
+  // ── KPI line — Machines Availability · Active Alerts · Factory Health
+  // Score, all in ONE line (review: "rename Availability to Machines
+  // Availability, and add factory health score card in the same line").
+  // Real numbers: availability from /kpis, alerts from /overview +
+  // /alerts/summary, health from /overview.overallHealthScore.
   const kpiDefs = [
     {
-      key: "machines",
-      label: "Total Machines",
-      value: kpis?.totalMachines,
-      delta: kpis?.deltas?.totalMachines,
-      icon: "🏭",
-      iconBgClass: "bg-primary/10",
-    },
-    {
       key: "availability",
-      label: "Availability",
+      label: "Machines Availability",
       value: kpis?.availability,
       unit: "%",
       delta: kpis?.deltas?.availability,
@@ -159,13 +214,12 @@ export default function DashboardScreen() {
       iconBgClass: "bg-warning/10",
     },
     {
-      key: "oee",
-      label: "OEE",
-      value: kpis?.oee,
-      unit: "%",
-      delta: kpis?.deltas?.oee,
-      icon: "📈",
-      iconBgClass: "bg-[#7C3AED]/10",
+      key: "health",
+      label: "Factory Health Score",
+      value: kpis?.healthScore,
+      unit: "/100",
+      icon: "🩺",
+      iconBgClass: "bg-[#22C55E]/10",
     },
   ];
 
@@ -179,6 +233,9 @@ export default function DashboardScreen() {
       icon={k.icon}
       iconBgClass={k.iconBgClass}
       loading={loading}
+      // Mobile renders the line inside a horizontal ScrollView, where flex-1
+      // has no bounded width to grow into — give it an explicit one.
+      className={isMobile ? "w-[176px]" : ""}
     />
   ));
 
@@ -193,22 +250,28 @@ export default function DashboardScreen() {
     </View>
   ) : null;
 
-  // Two rows of two on mobile, one row of four from tablet up.
-  const kpiRow = isMobile ? (
+  const kpiRow = (
     <View className="gap-3">
-      <View className="flex-row gap-3">{kpiCards.slice(0, 2)}</View>
-      <View className="flex-row gap-3">{kpiCards.slice(2, 4)}</View>
-      {reconnectChip}
-    </View>
-  ) : (
-    <View className="gap-4">
-      <View className="flex-row gap-4">{kpiCards}</View>
-      {reconnectChip}
+      {statusRow}
+      {isMobile ? (
+        <View className="gap-3">
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View className="flex-row gap-3 pr-4">{kpiCards}</View>
+          </ScrollView>
+          {reconnectChip}
+        </View>
+      ) : (
+        <View className="flex-row gap-4 items-start">
+          {kpiCards}
+          {reconnectChip}
+        </View>
+      )}
     </View>
   );
 
-  // ── Factory Overview ──────────────────────────────────────────────────────
-  // idle + a permitted fetch means "still to come" — don't flash an empty map.
+  // ── Zone grouping — shared by the "Machines by Zone" chart below and the
+  // Factory Overview map. Grouped CLIENT-SIDE from the machine rows we already
+  // fetched, so the chart costs no extra request.
   const zonesLoading = zoneStatus === "loading" || (zoneStatus === "idle" && canReadZones);
   const zonesFailed = zoneStatus === "error";
   const slotZones = SLOTS.map((slot, i) => (zones[i] ? { ...zones[i], slot } : null)).filter(Boolean);
@@ -219,6 +282,222 @@ export default function DashboardScreen() {
   });
   const mapZones = slotZones.map((z) => ({ ...z, id: z.slot, realId: z.id }));
 
+  // ── OEE block — docs/ui/OEE.png, now fed by Sprint 7 ─────────────────────
+  // `/kpis.oee` is answered `{ status: "UNAVAILABLE", value: null }` by
+  // backend business rule (good parts / cycle time / rejects are not
+  // instrumented by the sensors), so the header SAYS that instead of printing
+  // a number. The three cards plot the real series the backend does return —
+  // there are no demo figures left on this screen.
+  const oeeValue = kpis?.oee ?? null;
+  const oeeUnavailable = oeeValue == null;
+  const oeeBadge = oeeUnavailable
+    ? kpisFromApi
+      ? kpis?.oeeStatus || "UNAVAILABLE"
+      : "NO DATA"
+    : null;
+  const oeeSubtitle = !kpisFromApi
+    ? "KPIs are ADMIN · RESPONSABLE · TECHNICIAN only on this backend."
+    : oeeUnavailable
+      ? "Unavailable — good-parts count, rejects and cycle time aren't instrumented."
+      : "Overall Equipment Effectiveness";
+
+  const chartEmpty = (text) => (
+    <View className="items-center justify-center" style={{ height: 112 }}>
+      <Text className={`text-xs font-inter ${darkMuted}`}>{text}</Text>
+    </View>
+  );
+
+  // Real downtime series from GET /api/dashboard/kpis/history.
+  const downtime = history.map((p) => Number(p?.downtimeMinutes) || 0);
+  const maxDowntime = downtime.reduce((m, v) => Math.max(m, v), 0);
+
+  // Real per-zone status split, counted from the machine rows on screen.
+  // `id` doubles as the ChartLegend key and the status matcher.
+  const ZONE_SERIES = [
+    { id: "RUNNING", label: "Running", color: "#16A34A" },
+    { id: "IDLE", label: "Idle", color: "#0EA5E9" },
+    { id: "MAINTENANCE", label: "Maintenance", color: "#F59E0B" },
+    { id: "FAILURE", label: "Failure", color: "#DC2626" },
+    { id: "OFFLINE", label: "Offline", color: "#64748B" },
+  ];
+  const zoneChart = slotZones.map((z) => {
+    const rows = slotMachines[z.slot] || [];
+    return {
+      label: z?.name || `Zone ${z.slot}`,
+      values: ZONE_SERIES.map((s) =>
+        rows.filter((m) => String(m?.status || "").toUpperCase() === s.id).length
+      ),
+    };
+  });
+  const zoneTotal = zoneChart.reduce(
+    (m, r) => Math.max(m, r.values.reduce((a, b) => a + b, 0)),
+    0
+  );
+
+  // Real availability series — same buckets as the downtime bars, so cards 1
+  // and 3 share the Mon…Sun axis. Points with an unreadable timestamp are
+  // dropped: a NaN x would collapse the whole line chart.
+  const availabilityPoints = history.filter(
+    (p) =>
+      p?.availability != null &&
+      p?.timestamp &&
+      !Number.isNaN(new Date(p.timestamp).getTime())
+  );
+  const bucketLabels = history.map((p) => (p?.timestamp ? weekdayLabel(p.timestamp) : ""));
+
+  const oeeCards = [
+    {
+      key: "downtime",
+      title: "Downtime by Day",
+      icon: "📊",
+      legend: [{ id: "downtime", label: "Downtime (min)", color: "#F59E0B" }],
+      body:
+        history.length && maxDowntime > 0 ? (
+          <BarChart
+            data={history.map((p, i) => ({
+              label: bucketLabels[i] || `${i + 1}`,
+              values: [Number(p?.downtimeMinutes) || 0],
+            }))}
+            series={[{ label: "Downtime (min)", color: "#F59E0B" }]}
+            yMax={niceMax(maxDowntime)}
+            height={112}
+            groupWidth={30}
+          />
+        ) : (
+          chartEmpty(history.length ? "No downtime in this period." : "No KPI history yet.")
+        ),
+    },
+    {
+      key: "zones",
+      title: "Machines by Zone",
+      icon: "🏭",
+      legend: ZONE_SERIES,
+      body: zoneTotal > 0 ? (
+        <BarChart
+          data={zoneChart}
+          series={ZONE_SERIES}
+          yMax={Math.max(1, zoneTotal)}
+          height={112}
+          groupWidth={54}
+          stacked
+        />
+      ) : (
+        chartEmpty("No machines grouped by zone yet.")
+      ),
+    },
+    {
+      key: "availability",
+      title: "Availability Over Time",
+      icon: "📈",
+      legend: [{ id: "availability", label: "Availability %", color: "#22C55E" }],
+      body:
+        availabilityPoints.length > 1 ? (
+          <LineChart
+            series={[
+              {
+                id: "availability",
+                color: "#22C55E",
+                data: availabilityPoints.map((p) => ({
+                  x: new Date(p.timestamp).getTime(),
+                  y: p.availability,
+                })),
+              },
+            ]}
+            xTickValues={availabilityPoints.map((p) => new Date(p.timestamp).getTime())}
+            xTickFormat={weekdayLabel}
+            yMin={0}
+            yMax={100}
+            yTickCount={6}
+            height={118}
+          />
+        ) : (
+          chartEmpty("Not enough history yet.")
+        ),
+    },
+  ];
+
+  const oeeChips = [
+    kpis?.mtbf != null ? { key: "mtbf", label: "MTBF", value: `${kpis.mtbf} h` } : null,
+    kpis?.mttr != null ? { key: "mttr", label: "MTTR", value: `${kpis.mttr} min` } : null,
+    kpis?.downtimeMinutes != null
+      ? { key: "down", label: "Downtime", value: `${kpis.downtimeMinutes} min` }
+      : null,
+    kpis?.mtbfFailures != null
+      ? { key: "fail", label: "Failures", value: String(kpis.mtbfFailures) }
+      : null,
+  ].filter(Boolean);
+
+  const oeeBlock = (
+    <View className="mt-6">
+      {/* Section header: icon · title · big OEE value · real status badge */}
+      <View className="flex-row items-start gap-3 mb-3">
+        <View
+          className="w-9 h-9 rounded-md items-center justify-center"
+          style={{ backgroundColor: "#22C55E26" }}
+        >
+          <Text className="text-base">📈</Text>
+        </View>
+        <View className="flex-1">
+          <Text className={`text-base font-bold font-inter ${darkText}`}>OEE Overview</Text>
+          <Text className={`text-xs font-inter ${darkMuted}`} numberOfLines={2}>
+            {oeeSubtitle}
+          </Text>
+        </View>
+        <View className="items-end">
+          <Text className={`text-2xl font-bold font-inter ${darkText}`}>
+            {oeeUnavailable ? "—" : `${oeeValue}%`}
+          </Text>
+          {oeeBadge ? (
+            <View className="mt-0.5 px-2 py-0.5 rounded-chip bg-warning/15 border border-warning/40">
+              <Text className="text-[9px] font-bold font-inter text-warning">{oeeBadge}</Text>
+            </View>
+          ) : (
+            <View className="mt-0.5 px-2 py-0.5 rounded-chip bg-success/15 border border-success/40">
+              <Text className="text-[9px] font-bold font-inter text-success">LIVE</Text>
+            </View>
+          )}
+        </View>
+      </View>
+
+      {/* MTBF / MTTR / downtime / failures — real scalars from /kpis */}
+      {oeeChips.length ? (
+        <View className="flex-row flex-wrap gap-2 mb-3">
+          {oeeChips.map((c) => (
+            <View
+              key={c.key}
+              className={`flex-row items-baseline gap-1.5 px-2.5 py-1 rounded-chip border ${
+                dark ? "border-white/15 bg-white/5" : "border-border bg-bg"
+              }`}
+            >
+              <Text className={`text-[10px] font-inter font-semibold ${darkMuted}`}>{c.label}</Text>
+              <Text className={`text-xs font-bold font-inter ${darkText}`}>{c.value}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {/* All three cards on ONE line so the map below stays in view. */}
+      {isMobile ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View className="flex-row gap-3 pr-4">
+            {oeeCards.map((c) => (
+              <OeeCard key={c.key} card={c} dark={dark} className="w-[300px]" />
+            ))}
+          </View>
+        </ScrollView>
+      ) : (
+        <View className="flex-row gap-4">
+          {oeeCards.map((c) => (
+            <OeeCard key={c.key} card={c} dark={dark} className="flex-1 min-w-[240px]" />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+
+  // ── Factory Overview ──────────────────────────────────────────────────────
+  // idle + a permitted fetch means "still to come" — don't flash an empty map.
+  // Zones / slotMachines / mapZones are grouped above (shared with the chart).
   const factoryOverview = (
     <Card>
       <View className="flex-row items-center justify-between mb-3">
@@ -431,23 +710,10 @@ export default function DashboardScreen() {
     );
   }
 
-  // ── Header (shared by both layouts) ──────────────────────────────────────
-  const header = (
-    <View className={`mb-5 ${isMobile ? "" : "flex-row items-start justify-between"}`}>
-      <View className="flex-1">
-        <Text className={`font-bold font-inter text-[28px] leading-9 ${darkText}`}>
-          {greetingFor(now.getHours())}, {firstName} 👋
-        </Text>
-        <Text className={`text-sm font-inter mt-1 ${darkMuted}`}>
-          Here's what's happening in your factory today.
-        </Text>
-      </View>
-      <View className={isMobile ? "mt-2 flex-row items-center gap-3" : "items-end ml-4"}>
-        <Text className={`text-sm font-inter ${darkMuted}`}>{formatDate(now)}</Text>
-        <Text className={`text-sm font-bold font-inter ${darkText}`}>{formatTime(now)}</Text>
-      </View>
-    </View>
-  );
+  // ── Header note ───────────────────────────────────────────────────────────
+  // The greeting + date/time block used to live here; it moved to TopBar
+  // (review: "move Good afternoon, Admin 👋 to the top bar … so now we have
+  // more space in dashboard screen"), so this screen now starts at the cards.
 
   if (isMobile) {
     return (
@@ -458,8 +724,8 @@ export default function DashboardScreen() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
         >
-          {header}
           {kpiRow}
+          {oeeBlock}
 
           <View className="mt-6 gap-4">
             <View>
@@ -489,8 +755,8 @@ export default function DashboardScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ padding: 24, paddingBottom: 40 }}
       >
-        {header}
         {kpiRow}
+        {oeeBlock}
 
         {/* Row 2 — ~60 / 40 */}
         <View className="flex-row gap-4 mt-6" style={{ alignItems: "stretch" }}>
@@ -499,6 +765,37 @@ export default function DashboardScreen() {
         </View>
       </ScrollView>
     </AppShell>
+  );
+}
+
+/**
+ * OEE.png-style chart card — green square icon · bold title · ⓘ, legend,
+ * then the chart. Kept as a module-level component (not declared inside the
+ * screen) so React keeps the chart's layout state across re-renders.
+ */
+function OeeCard({ card, dark, className = "" }) {
+  const darkText = dark ? "text-white" : "text-text";
+  const darkMuted = dark ? "text-white/50" : "text-text-muted";
+  return (
+    <Card className={className}>
+      <View className="flex-row items-center gap-2 mb-2">
+        <View
+          className="w-6 h-6 rounded-md items-center justify-center"
+          style={{ backgroundColor: "#22C55E26" }}
+        >
+          <Text className="text-[11px]">{card.icon}</Text>
+        </View>
+        <Text
+          className={`text-[13px] font-bold font-inter flex-1 ${darkText}`}
+          numberOfLines={1}
+        >
+          {card.title}
+        </Text>
+        <Text className={`text-xs ${darkMuted}`}>ⓘ</Text>
+      </View>
+      <ChartLegend items={card.legend} className="mb-2" />
+      {card.body}
+    </Card>
   );
 }
 

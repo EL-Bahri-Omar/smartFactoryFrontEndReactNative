@@ -29,6 +29,7 @@ import { fetchGroups } from "../store/slices/groupSlice";
 import { fetchUsers } from "../store/slices/userSlice";
 import { fetchRoles } from "../store/slices/roleSlice";
 import Avatar from "./Avatar";
+import { formatDate, formatTime } from "../lib/time";
 
 // Door + arrow exit icon (logout), drawn in currentColor-style red.
 function LogoutIcon({ size = 22, color = "#DC2626" }) {
@@ -102,6 +103,15 @@ function IconButton({ onPress, label, children, disabled = false }) {
 }
 
 const ROOT_PATHS = ["/(app)", "/(app)/dashboard", "/dashboard"];
+
+// Same wording the dashboard header used — it moved up here (review: "move
+// Good afternoon, Admin 👋 to the top bar") to free vertical space on the
+// landing screen.
+function greetingFor(hour) {
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
 
 export default function TopBar({ user, onMenuPress, showMenu = false, isMobile = false }) {
   const router = useRouter();
@@ -198,6 +208,19 @@ export default function TopBar({ user, onMenuPress, showMenu = false, isMobile =
 
   const [refreshing, setRefreshing] = useState(false);
 
+  // ── Greeting (moved up from dashboard.jsx: "move Good afternoon, Admin 👋
+  // to the top bar"). Shown only to the roles that could see it on the
+  // dashboard (`canAccess("dashboard")` = supervisors); everyone else keeps
+  // the empty flex spacer. The clock ticks once a minute so the wording
+  // (morning / afternoon / evening) and the time stay honest.
+  const showGreeting = canAccess("dashboard");
+  const greetingName = user?.firstName || "there";
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
   /**
    * Global refresh: fresh session (role/permissions), dashboard KPIs,
    * machines, interventions, alerts, notifications (all pages) + badge,
@@ -292,7 +315,27 @@ export default function TopBar({ user, onMenuPress, showMenu = false, isMobile =
         </IconButton>
       )}
 
-      <View className="flex-1" />
+      {showGreeting ? (
+        <View className="flex-1 pr-2">
+          <Text
+            numberOfLines={1}
+            className={`font-bold font-inter text-[15px] leading-5 ${
+              dark ? "text-white" : "text-text"
+            }`}
+          >
+            {greetingFor(now.getHours())}, {greetingName} 👋
+          </Text>
+          <Text
+            className={`text-[11px] font-inter leading-4 ${
+              dark ? "text-white/60" : "text-text-muted"
+            }`}
+          >
+            {formatDate(now)} · {formatTime(now)}
+          </Text>
+        </View>
+      ) : (
+        <View className="flex-1" />
+      )}
 
       {/* Refresh — reloads the data behind EVERY screen (session,
           dashboard, machines, interventions, alerts, notifications). */}

@@ -118,9 +118,16 @@ export const ENDPOINTS = Object.freeze({
   // CONFIRMED sources and derives the KPIs it can. These two light up extra
   // numbers (OEE, deltas, MTBF/MTTR) the day the coworker ships them; a 404
   // is expected until then and degrades to the derived values / em dashes.
-  DASHBOARD_SUMMARY: "/api/dashboard/summary", // ASSUMED — confirm with backend
-  DASHBOARD_KPI: "/api/dashboard/kpi", // ASSUMED — legacy spelling, kept for safety
-  DASHBOARD_KPIS: "/api/dashboard/kpis", // ASSUMED — Sprint 7 (prompt 12): { totalMachines, availability, activeAlerts, oee, deltas: {...} }
+  // ── Sprint 7 — CONFIRMED (DashboardController / DashboardService) ──────────
+  // All under `/api/dashboard/**` → ADMIN | RESPONSABLE_INDUSTRIEL | TECHNICIAN
+  // (SecurityConfig.java:119). OPERATOR gets a 403, which is why the screen's
+  // `canAccess("dashboard")` gate matters.
+  DASHBOARD_OVERVIEW: "/api/dashboard/overview", // { factoryStatus, totalMachines, machinesByStatus, activeAlertsCount, activeAlertsBySeverity, activeAnomaliesCount, overallHealthScore, lastUpdated }
+  DASHBOARD_KPIS: "/api/dashboard/kpis", // ?period=day|week|month&machineId= → { availability:{value,unit,operatingMinutes,downtimeMinutes,totalObservedMinutes}, mtbf:{valueHours,failureCount,note}, mttr:{valueMinutes,valueHours}, oee:{status:"UNAVAILABLE",value:null,reason,components} }
+  DASHBOARD_KPIS_HISTORY: "/api/dashboard/kpis/history", // ?period=&points= → [{ timestamp, availability, failuresCount, downtimeMinutes }] — always an array
+  DASHBOARD_FACTORY_STATE: "/api/dashboard/factory-state", // { factoryStatus, totalZones, totalMachines, activeAlertsCount, zones:[{ zoneId, zoneName, totalMachines, machinesByStatus, activeAlertsCount, zoneStatus }] }
+  DASHBOARD_ZONE: "/api/dashboard/zones", // /{zoneId} → { zoneId, zoneName, machinesByStatus, machines:[{ id, code, name, type, status, healthScore, healthGrade, activeAlertsCount }] }
+  DASHBOARD_HEALTH_SCORES: "/api/dashboard/health-scores", // { totalMachines, averageScore, distribution:{excellent,good,warning,critical,insufficientData} }
 
   // --- Analytics ---
   ANALYTICS_TRENDS: "/api/analytics/trends", // ASSUMED — confirm with backend
