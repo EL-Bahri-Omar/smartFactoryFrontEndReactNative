@@ -138,9 +138,13 @@ export const ENDPOINTS = Object.freeze({
   // backend ships, not a bug.
   REPORTS: "/api/reports", // ASSUMED — confirm with backend
   REPORT_BY_ID: "/api/reports/:id", // ASSUMED — confirm with backend
-  REPORT_DOWNTIME: "/api/reports/downtime", // ASSUMED — GET ?from=&to=
-  REPORT_PERFORMANCE: "/api/reports/performance", // ASSUMED — GET ?range=this_week|this_month|last_month
-  REPORT_GENERATE: "/api/reports/generate", // ASSUMED — POST { tab, range, from, to, format }
+  // NOTE: there is NO Report* controller on the backend — these three were
+  // never implemented. Reports are composed client-side from /api/maintenance,
+  // /api/alerts, /api/machines and /api/dashboard/health-scores instead
+  // (see reportSlice.js). Kept here only as a record of what NOT to call.
+  REPORT_DOWNTIME: "/api/reports/downtime", // NEVER IMPLEMENTED (404)
+  REPORT_PERFORMANCE: "/api/reports/performance", // NEVER IMPLEMENTED (404)
+  REPORT_GENERATE: "/api/reports/generate", // NEVER IMPLEMENTED (404)
 
   // --- Users (CONFIRMED — UserController, permission-guarded) ---
   USERS: "/api/users", // CONFIRMED — GET paginated (?search=&role=&page=&size=&sort=, USER_READ); POST create (USER_WRITE)

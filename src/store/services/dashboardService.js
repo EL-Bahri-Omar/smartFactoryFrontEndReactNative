@@ -18,16 +18,40 @@
 import api from "../../lib/axios";
 import { ENDPOINTS } from "../../constants/api";
 
+// MEASURED on the running backend (2026-10-27, admin token, LAN):
+//   GET /api/dashboard/overview         156–271 s
+//   GET /api/dashboard/health-scores    151–196 s
+//   every other /api route               15–33 ms
+// Both loop computeMachineHealthScore() over every machine, and that helper
+// reads back the WHOLE sensor-reading history for each threshold just to look
+// at the newest row (DashboardService.java ~line 745). Full spec + fix in
+// docs/api-contract.md.
+//
+// Until the backend ships that fix, this ceiling keeps the routes from
+// holding a browser connection slot (6 per origin) open for minutes: the
+// screen has already painted by the time these are asked for (phase 2), and a
+// timeout renders the honest fallback instead of a spinner. 10 s is still 30×
+// the median for a healthy endpoint, so it never cuts off a fixed backend.
+const HEALTH_TIMEOUT_MS = 10000;
+
 /**
- * GET /api/dashboard/overview
- * `{ factoryStatus, totalMachines, machinesByStatus: {RUNNING, IDLE, …},
- *    activeAlertsCount, activeAlertsBySeverity, activeAnomaliesCount,
- *    overallHealthScore, lastUpdated }`
- * @returns {Promise<Object>} raw payload
+ * SINGLE-FLIGHT. The dashboard card, the TopBar refresh and the Reports screen
+ * all ask for the same slow route. Two concurrent callers used to mean two
+ * 150 s computations racing the backend (measured: several at once degrade
+ * every other route on this machine), so share one in-flight request.
  */
-export async function getOverview() {
-  const response = await api.get(ENDPOINTS.DASHBOARD_OVERVIEW);
-  return response.data;
+let healthInFlight = null;
+
+export function getHealthScores() {
+  if (!healthInFlight) {
+    healthInFlight = api
+      .get(ENDPOINTS.DASHBOARD_HEALTH_SCORES, { timeout: HEALTH_TIMEOUT_MS })
+      .then((r) => r.data)
+      .finally(() => {
+        healthInFlight = null;
+      });
+  }
+  return healthInFlight;
 }
 
 /**
@@ -72,17 +96,9 @@ export async function getFactoryState() {
  * @returns {Promise<Object>} raw payload
  */
 export async function getZoneDetails(zoneId) {
-  const response = await api.get(`${ENDPOINTS.DASHBOARD_ZONE}/${zoneId}`);
+  const response = await api.get(`${ENDPOINTS.DASHBOARD_ZONE}/${zoneId}`, {
+    timeout: HEALTH_TIMEOUT_MS,
+  });
   return response.data;
 }
-
-/**
- * GET /api/dashboard/health-scores
- * `{ totalMachines, averageScore, distribution: {excellent, good, warning,
- *    critical, insufficientData}, machines: [...] }`
- * @returns {Promise<Object>} raw payload
- */
-export async function getHealthScores() {
-  const response = await api.get(ENDPOINTS.DASHBOARD_HEALTH_SCORES);
-  return response.data;
-}
+// GET /api/dashboard/health-scores → getHealthScores() above (single-flight).

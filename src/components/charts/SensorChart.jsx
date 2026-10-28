@@ -71,6 +71,48 @@ function formatValue(val, decimals = 1) {
   return Number(val).toFixed(decimals);
 }
 
+/**
+ * Chart frame for a sensor that has thresholds but no readings yet: the same
+ * box as the chart, with the alert limits drawn as dashed orange/red rules at
+ * their real position on the 0…yMax scale. Pure views — no SVG layout needed,
+ * so it renders even while the chart is empty.
+ */
+function ThresholdFrame({ limits, yMax, height, dark }) {
+  const inner = Math.max(1, height - 34);
+  const scaleTop = 8;
+  return (
+    <View style={{ height, position: "relative", paddingTop: scaleTop, paddingHorizontal: 12 }}>
+      {limits.map((l, i) => {
+        const v = Number(l.value);
+        if (!Number.isFinite(v)) return null;
+        const ratio = Math.min(1, Math.max(0, v / (Number(yMax) || 1)));
+        const top = scaleTop + (1 - ratio) * inner;
+        return (
+          <View key={`${l.label}-${i}`} style={{ position: "absolute", left: 12, right: 12, top }}>
+            <View style={{ borderTopWidth: 2, borderStyle: "dashed", borderColor: l.color }} />
+            <Text style={{ fontSize: 9, color: l.color, textAlign: "right", marginTop: 2 }}>
+              {l.label}
+            </Text>
+          </View>
+        );
+      })}
+      <Text
+        style={{
+          position: "absolute",
+          bottom: 6,
+          left: 0,
+          right: 0,
+          textAlign: "center",
+          fontSize: 10,
+          color: dark ? "#64748B" : "#94A3B8",
+        }}
+      >
+        No readings yet — threshold lines only
+      </Text>
+    </View>
+  );
+}
+
 export default function SensorChart({
   sensorType,
   data = [],
@@ -84,37 +126,29 @@ export default function SensorChart({
   const dark = useDark();
   const meta = META[sensorType] || META.TEMPERATURE;
 
-  // Build limit lines from threshold
+  // Limit lines come from the machine's STORED thresholds, which the backend
+  // fills with its own defaults when a bound is left NULL
+  // (`MachineThresholdService.createDefaultThresholdForType`). No hardcoded
+  // fallback here any more: every machine now has real rows (152/152 carry a
+  // bound), and a hardcoded default would silently contradict a machine tuned
+  // to different limits — GEN-001 is 50/70 °C, not the default 60/80.
+  const critMax = threshold?.criticalMax ?? null;
+  const warnMax = threshold?.warningMax ?? null;
+  const warnMin = threshold?.warningMin ?? null;
+  const critMin = threshold?.criticalMin ?? null;
+
   const limits = [];
-  if (threshold) {
-    if (threshold.criticalMax != null) {
-      limits.push({
-        value: threshold.criticalMax,
-        color: COLORS.danger,
-        label: `Critical ${threshold.criticalMax}`,
-      });
-    }
-    if (threshold.warningMax != null) {
-      limits.push({
-        value: threshold.warningMax,
-        color: COLORS.warning,
-        label: `Warning ${threshold.warningMax}`,
-      });
-    }
-    if (threshold.warningMin != null && threshold.warningMin > 0) {
-      limits.push({
-        value: threshold.warningMin,
-        color: COLORS.warning,
-        label: `Warning ${threshold.warningMin}`,
-      });
-    }
-    if (threshold.criticalMin != null && threshold.criticalMin > 0) {
-      limits.push({
-        value: threshold.criticalMin,
-        color: COLORS.danger,
-        label: `Critical ${threshold.criticalMin}`,
-      });
-    }
+  if (critMax != null) {
+    limits.push({ value: critMax, color: COLORS.danger, label: `Critical ${critMax}` });
+  }
+  if (warnMax != null) {
+    limits.push({ value: warnMax, color: COLORS.warning, label: `Warning ${warnMax}` });
+  }
+  if (warnMin != null && warnMin > 0) {
+    limits.push({ value: warnMin, color: COLORS.warning, label: `Warning ${warnMin}` });
+  }
+  if (critMin != null && critMin > 0) {
+    limits.push({ value: critMin, color: COLORS.danger, label: `Critical ${critMin}` });
   }
 
   // Auto-scale yMax if data or thresholds exceed the default
@@ -175,7 +209,11 @@ export default function SensorChart({
         )}
       </View>
 
-      {/* Chart */}
+      {/* Chart — with points, the real line chart. Without points but WITH
+          configured thresholds, draw the limits as dashed rules anyway: the
+          orange/red limits are configuration, not telemetry, so a quiet
+          machine still shows where it would trip (review: "bring back
+          thresholds interrupted line to live sensors charts"). */}
       {data.length > 0 ? (
         <LineChart
           series={series}
@@ -185,6 +223,8 @@ export default function SensorChart({
           pulseLast={pulseLast}
           limits={limits}
         />
+      ) : limits.length > 0 ? (
+        <ThresholdFrame limits={limits} yMax={yMax} height={height} dark={dark} />
       ) : (
         <View className="items-center justify-center" style={{ height }}>
           <Text className={`text-sm ${dark ? "text-slate-400" : "text-text-muted"}`}>

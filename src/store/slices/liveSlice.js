@@ -6,12 +6,18 @@ const liveSlice = createSlice({
   name: "live",
   initialState: {
     connected: false,
+    // True once STOMP has reached CONNECTED at least once this session. The
+    // UI must NOT shout "Reconnecting…" during the very first connect (that
+    // is normal startup, not a failure) — only after a genuine drop.
+    everConnected: false,
     messagesByTopic: {}, // { [destination]: latestPayload }
     unreadCount: 0,
   },
   reducers: {
     setConnected(state, action) {
-      state.connected = action.payload;
+      const on = !!action.payload;
+      state.connected = on;
+      if (on) state.everConnected = true;
     },
     pushMessage(state, action) {
       const { topic, payload } = action.payload;
@@ -28,6 +34,7 @@ const liveSlice = createSlice({
     },
     reset(state) {
       state.connected = false;
+      state.everConnected = false;
       state.messagesByTopic = {};
       state.unreadCount = 0;
     },

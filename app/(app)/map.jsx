@@ -7,7 +7,7 @@
 // Dispatches fetchZones + fetchRecentEvents on mount.
 // Subscribes to /topic/zones for live updates via liveSlice.
 
-import { useEffect, Fragment, useState } from "react";
+import { useEffect, Fragment, useState, useMemo } from "react";
 import { View, Text, ScrollView, Pressable, TextInput } from "react-native";
 import { useRouter } from "expo-router";
 import AppShell from "../../src/components/AppShell";
@@ -24,10 +24,13 @@ import { useRole, PERMISSIONS } from "../../src/hooks/useRole";
 import { fetchZones, fetchZoneMachines, fetchZoneDetails } from "../../src/store/slices/zoneSlice";
 import { updateMachine } from "../../src/store/slices/machineSlice";
 import { fetchRecentEvents } from "../../src/store/slices/eventSlice";
+import { fetchAlerts } from "../../src/store/slices/alertSlice";
 import { useDialog } from "../../src/components/dialog/DialogContext";
 import { useLiveTopic } from "../../src/hooks/useLiveTopic";
 import { relativeTime } from "../../src/lib/time";
 import { getMachineStatus } from "../../src/lib/status";
+import { computeMachineHealth } from "../../src/lib/health";
+import { ScoreRing } from "../../src/components/KpiCard";
 
 // Zone color mapping
 const ZONE_COLORS = {
@@ -37,35 +40,18 @@ const ZONE_COLORS = {
   D: "#EA580C",
 };
 
-// Event type → dot color
+// Event → dot color. `severity` wins (backend CRITICAL/HIGH/WARNING/INFO),
+// then the feed `kind` (alert | maintenance).
 const EVENT_DOTS = {
   alert: "#DC2626",
+  critical: "#DC2626",
+  high: "#EA580C",
   warning: "#F59E0B",
   info: "#2563EB",
+  maintenance: "#0D9488",
   success: "#16A34A",
   default: "#94A3B8",
 };
-
-// Health-grade → ring colour for the machine health score
-// (GET /api/dashboard/zones/{zoneId}.machines[].healthGrade, US55). Falls back
-// to the score band when the backend could not grade the machine.
-const HEALTH_COLORS = {
-  EXCELLENT: "#16A34A",
-  GOOD: "#0EA5E9",
-  WARNING: "#F59E0B",
-  CRITICAL: "#DC2626",
-  INSUFFICIENT_DATA: "#94A3B8",
-};
-
-function healthColorOf(grade, score) {
-  const g = String(grade || "").toUpperCase();
-  if (HEALTH_COLORS[g]) return HEALTH_COLORS[g];
-  if (score == null) return "#94A3B8";
-  if (score >= 85) return "#16A34A";
-  if (score >= 70) return "#0EA5E9";
-  if (score >= 50) return "#F59E0B";
-  return "#DC2626";
-}
 
 export default function MapScreen() {
   const dispatch = useAppDispatch();
@@ -82,6 +68,12 @@ export default function MapScreen() {
   const { list: zones, machinesByZone, status: zoneStatus, error: zoneError, details: zoneDetails } =
     useAppSelector((s) => s.zone);
   const { list: events, status: eventStatus } = useAppSelector((s) => s.event);
+  // ACTIVE alert rows are the SENSOR signal for the health score. Machine rows
+  // carry no alert fields at all ({id,name,code,type,zoneId,zoneName,status,...})
+  // so the old `m.activeAlertsCount` was always undefined and the zone rings
+  // could only ever react to status. One ACTIVE alert per (machine, sensorType)
+  // IS that sensor's state — same source the dashboard and reports use.
+  const { list: activeAlerts } = useAppSelector((s) => s.alert);
 
   const [selectedZone, setSelectedZone] = useState(null);
   const [selectedMachine, setSelectedMachine] = useState(null); // { machine, fromSlot } | null
@@ -106,7 +98,21 @@ export default function MapScreen() {
     if (!canView) return;
     dispatch(fetchZones());
     dispatch(fetchRecentEvents({ limit: 10 }));
+    // ACTIVE alerts are the sensor signal for each machine's health score
+    // (25 pts per sensor). Machine rows carry no alert fields of their own.
+    dispatch(fetchAlerts({ status: "ACTIVE", page: 0, size: 500 }));
   }, [dispatch, canView]);
+
+  // ACTIVE alert rows grouped by machineId — feeds the zone-row health rings.
+  const alertsByMachine = useMemo(() => {
+    const map = new Map();
+    (activeAlerts || []).forEach((a) => {
+      if (!a?.machineId) return;
+      if (!map.has(a.machineId)) map.set(a.machineId, []);
+      map.get(a.machineId).push(a);
+    });
+    return map;
+  }, [activeAlerts]);
 
   // Fetch machines for each zone once zones load
   useEffect(() => {
@@ -116,6 +122,21 @@ export default function MapScreen() {
       if (zoneId) dispatch(fetchZoneMachines(zoneId));
     });
   }, [dispatch, zones, canView]);
+
+  // GET /api/dashboard/zones/{zoneId} is pulled once per zone up front rather
+  // than waiting for the details list to be expanded: it carries the status
+  // split chips AND `machines[].activeAlertsCount`. A 403 (OPERATOR,
+  // SecurityConfig.java:119) is cached by zoneSlice as
+  // `details[id].status === "error"`, so the route is asked exactly once.
+  // (Its `healthScore` is no longer rendered — the health ring was removed
+  // from this screen on review.)
+  useEffect(() => {
+    if (!canView || zones.length === 0) return;
+    zones.forEach((z) => {
+      const zoneId = z.id || z.zoneId;
+      if (zoneId && !zoneDetails[zoneId]) dispatch(fetchZoneDetails(zoneId));
+    });
+  }, [canView, zones, zoneDetails, dispatch]);
 
   const isLoading = zoneStatus === "loading";
   const isError = zoneStatus === "error";
@@ -233,10 +254,10 @@ export default function MapScreen() {
           const fallbackMachines = machinesByZone[z.id] || [];
           const detailEntry = zoneDetails[z.id] || null;
           const detail = detailEntry?.data || null;
-          // Prefer the Sprint 7 detail — it is the only source that carries
-          // healthScore / healthGrade / alerts per machine. While it loads (or
-          // when this role may not call /api/dashboard/**) fall back to the
-          // plain /api/zones/{id}/machines rows, whose health simply reads "—".
+          // Prefer the Sprint 7 detail — it carries the status split and the
+          // per-machine alert counts. While it loads (or when this role may
+          // not call /api/dashboard/**) fall back to the plain
+          // /api/zones/{id}/machines rows.
           const zoneMachines = detail?.machines?.length ? detail.machines : fallbackMachines;
           const machineCount = detail?.totalMachines ?? z.machineCount ?? zoneMachines.length;
           const statusSplit = detail?.machinesByStatus || null;
@@ -294,7 +315,7 @@ export default function MapScreen() {
             </Pressable>
 
             {/* Expanded: EVERY machine in this zone with its name, a coloured
-                status glyph and a health-score ring (docs/ui/map&zones.png).
+                status glyph and its status pill (docs/ui/map&zones.png).
                 Rendered only while the zone is selected. */}
             {isSelected ? (
               <View
@@ -350,12 +371,19 @@ export default function MapScreen() {
                   zoneMachines.map((m, mIdx) => {
                     const s = getMachineStatus(m?.status);
                     const last = mIdx === zoneMachines.length - 1;
-                    const alerts = Number(m?.activeAlertsCount) || 0;
-                    const score =
-                      m?.healthScore == null || Number.isNaN(Number(m.healthScore))
-                        ? null
-                        : Math.round(Number(m.healthScore));
-                    const hColor = healthColorOf(m?.healthGrade, score);
+                    // ACTIVE alert rows for THIS machine — machine rows carry no
+                    // alert fields, so they come from the alert slice instead.
+                    const rows = alertsByMachine.get(m?.id) || [];
+                    const alerts = rows.length;
+                    // FRONTEND health score (src/lib/health.js) — the backend
+                    // route for this measured 151–339 s. Model: 25 pts per
+                    // sensor, split 12.5 degraded (WARNING) + 12.5 anomaly
+                    // (HIGH/CRITICAL); FAILURE → 0, MAINTENANCE → 50,
+                    // OFFLINE → no score (excluded from the factory average).
+                    const score = computeMachineHealth({
+                      status: m?.status,
+                      sensors: rows,
+                    });
                     const subLabel =
                       [
                         m?.name && m?.name !== (m?.code || m?.name) ? m.name : null,
@@ -424,19 +452,10 @@ export default function MapScreen() {
                           </View>
                         </View>
 
-                        {/* Health-score ring — the glowing circle each machine
-                            carries in map&zones.png. "—" while the score is
-                            INSUFFICIENT_DATA, never a guessed value. */}
-                        <View
-                          className="w-10 h-10 rounded-full items-center justify-center shrink-0"
-                          style={{ borderWidth: 2, borderColor: hColor }}
-                        >
-                          <Text
-                            className="text-[13px] font-bold font-inter"
-                            style={{ color: hColor }}
-                          >
-                            {score == null ? "—" : score}
-                          </Text>
+                        {/* Health score as the SAME circle gauge as the
+                            dashboard, right-aligned — FRONTEND-computed. */}
+                        <View className="shrink-0 items-center justify-center">
+                          <ScoreRing value={score} size={38} stroke={4} />
                         </View>
                       </Pressable>
                     );
@@ -454,11 +473,35 @@ export default function MapScreen() {
   // ── RECENT ACTIVITY ─────────────────────────────────────────────────
 
   function RecentActivity() {
-    // No /api/events on the Sprint 1 backend — empty until events ship.
-    if (events.length === 0) {
+    // Composed from real alerts + interventions (eventSlice) — there is no
+    // /api/events on this backend, so the card used to stay permanently empty.
+    if (eventStatus === "loading" && events.length === 0) {
       return (
         <Card>
-          <EmptyState title="No recent activity" message="Machine events will appear here once the backend publishes them." />
+          <Text className={`text-base font-bold font-inter mb-3 ${dark ? "text-white" : "text-text"}`}>
+            Recent Activity
+          </Text>
+          <View className="gap-2">
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} height={30} className="rounded-btn" />
+            ))}
+          </View>
+        </Card>
+      );
+    }
+
+    if (events.length === 0) {
+      const blocked = eventStatus === "error";
+      return (
+        <Card>
+          <EmptyState
+            title={blocked ? "Activity unavailable" : "No recent activity"}
+            message={
+              blocked
+                ? "Alerts and maintenance could not be read for your role."
+                : "Alerts and maintenance interventions show up here as soon as they happen."
+            }
+          />
         </Card>
       );
     }
@@ -469,7 +512,9 @@ export default function MapScreen() {
           Recent Activity
         </Text>
         {events.map((event, idx) => {
-          const dotColor = EVENT_DOTS[event.type || event.severity] || EVENT_DOTS.default;
+          const dotColor =
+            EVENT_DOTS[String(event.severity || event.kind || event.type || "").toLowerCase()] ||
+            EVENT_DOTS.default;
           return (
             <View key={event.id || idx} className="flex-row items-start gap-3 mb-3">
               {/* Timeline dot + line */}
@@ -557,7 +602,7 @@ export default function MapScreen() {
               <View style={{ flex: 0.65 }}>
                 {isAdmin && slotZones.length > 1 && (
                   <Text className={`text-xs font-inter font-bold mb-2 ${dark ? "text-white/80" : "text-text-muted"}`}>
-                    {"Drag a machine dot and drop it on another zone to move it (ADMIN)."}
+                    {"Drag a machine card and drop it on another zone to move it (ADMIN)."}
                   </Text>
                 )}
                 <FactoryMap
@@ -613,7 +658,7 @@ export default function MapScreen() {
               <Text className={`text-xs font-inter mb-2 ${dark ? "text-white/60" : "text-text-muted"}`}>
                 {selectedMachine
                   ? `Moving ${selectedMachine.machine?.code || ""} — tap a zone to move it here.`
-                  : "Tap a machine dot, then tap another zone to move it (ADMIN)."}
+                  : "Tap a machine card, then tap another zone to move it (ADMIN)."}
               </Text>
             )}
             <FactoryMap

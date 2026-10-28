@@ -34,6 +34,7 @@ import { useDialog } from "../../../src/components/dialog/DialogContext";
 import { useAppDispatch } from "../../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../../src/hooks/useAppSelector";
 import { useLiveTopic } from "../../../src/hooks/useLiveTopic";
+import { useReconnecting } from "../../../src/hooks/useReconnecting";
 import { fetchMachineById, deleteMachine } from "../../../src/store/slices/machineSlice";
 import { fetchReadings } from "../../../src/store/slices/readingSlice";
 import { fetchMachineSensors } from "../../../src/store/slices/sensorSlice";
@@ -41,6 +42,8 @@ import { fetchThresholds, saveThreshold, deleteThreshold } from "../../../src/st
 import { fetchMachineAlerts, acknowledgeAlert } from "../../../src/store/slices/alertSlice";
 import { fetchInterventions } from "../../../src/store/slices/interventionSlice";
 import { getSensorStatus, getAlertSeverity, normalizeAlertSeverity, getAlertStatus } from "../../../src/lib/status";
+import { computeMachineHealth } from "../../../src/lib/health";
+import { ScoreRing } from "../../../src/components/KpiCard";
 import { relativeTime } from "../../../src/lib/time";
 import { formatAlertMessage } from "../../../src/lib/alertText";
 import { SENSOR_TYPE, SENSOR_UNIT } from "../../../src/constants/roles";
@@ -173,6 +176,9 @@ export default function MachineDetailScreen() {
     machineError: machineAlertError,
   } = useAppSelector((s) => s.alert);
   const liveConnected = useAppSelector((s) => s.live.connected);
+  // Only a genuine DROP shows "reconnecting…" — the first connect is startup,
+  // not a failure (review: "a lot of reconnecting badges showing").
+  const reconnecting = useReconnecting();
 
   const [tab, setTab] = useState("overview");
   const maintenanceList = useAppSelector((s) => s.maintenance?.list || []);
@@ -498,10 +504,102 @@ export default function MachineDetailScreen() {
       if (s?.type) sensorByType[s.type] = s;
     });
 
+    // Health score card — the SAME circular gauge as the dashboard's Factory
+    // Health Score (review: "show the health score in a circle like in the
+    // dashboard") and it sits BESIDE the full Sensors card, not inside its
+    // title. Value comes from src/lib/health.js (frontend), never from the
+    // /health-scores route — that one measured 151–339 s.
+    //
+    // Sensor states are taken from the LIVE reading of each sensor tested
+    // against its stored threshold — the same `evaluateThresholdStatus(lastPt.
+    // value, thold)` call that paints the CRITICAL/WARNING badges on the charts
+    // below, so the ring and the badges can never disagree.
+    //
+    // Model: each sensor owns 25 pts, split 12.5 degraded (WARNING) + 12.5
+    // anomaly (CRITICAL). NOT from `sensors[i].thresholdBreached` — those rows
+    // are only {id, machineId, type, unit, status, lastSeen, ...}; the flag lives
+    // on the READING, so reading it off the sensor row always yielded 0 and the
+    // ring sat at 100 with every sensor in CRITICAL.
+    const healthStates = SERIES_META.reduce(
+      (acc, meta) => {
+        const lastPt = (groups[meta.id] || []).at(-1);
+        if (!lastPt) return acc;
+        const thold = (thresholdList || []).find((t) => t.sensorType === meta.id);
+        const s = evaluateThresholdStatus(lastPt.value, thold);
+        if (s === "WARNING") acc.degraded += 1;
+        else if (s === "CRITICAL") acc.anomaly += 1;
+        return acc;
+      },
+      { degraded: 0, anomaly: 0 }
+    );
+    function HealthScoreCard() {
+      const score = computeMachineHealth({
+        status: machine?.status,
+        degraded: healthStates.degraded,
+        anomaly: healthStates.anomaly,
+      });
+      // Per-sensor split of the score: 25 pts each, halved into
+      // 12.5 degraded (WARNING) + 12.5 anomaly (CRITICAL).
+      const sensorRows = SERIES_META.map((meta) => {
+        const lastPt = (groups[meta.id] || []).at(-1);
+        const thold = (thresholdList || []).find((t) => t.sensorType === meta.id);
+        const state = !lastPt
+          ? "NO_DATA"
+          : evaluateThresholdStatus(lastPt.value, thold);
+        return { label: meta.label, state };
+      });
+      const stateText = (s) =>
+        s === "CRITICAL" ? "anomaly" : s === "WARNING" ? "degraded" : "ok";
+      return (
+        <Card className={isDesktop ? "w-[190px] items-center" : "items-center"}>
+          <Text
+            className={`text-base font-bold font-inter text-center ${
+              dark ? "text-white" : "text-text"
+            }`}
+          >
+            Health score
+          </Text>
+          <View className="mt-3 mb-1">
+            <ScoreRing value={score} size={96} stroke={9} />
+          </View>
+          {/* Live sensor split — shows WHICH sensors cost which points. */}
+          <View className="w-full mt-2">
+            {sensorRows.map((r) => (
+              <View
+                key={r.label}
+                className="flex-row items-center justify-between py-0.5"
+              >
+                <Text
+                  className={`text-[11px] font-inter ${
+                    dark ? "text-white/60" : "text-text-muted"
+                  }`}
+                >
+                  {r.label}
+                </Text>
+                <Text
+                  className={`text-[11px] font-inter ${
+                    r.state === "CRITICAL"
+                      ? "text-danger"
+                      : r.state === "WARNING"
+                      ? "text-warning"
+                      : dark
+                      ? "text-white/60"
+                      : "text-text-muted"
+                  }`}
+                >
+                  {stateText(r.state)}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </Card>
+      );
+    }
+
     function SensorChips() {
       if (sensorStatus === "loading" && sensors.length === 0) {
         return (
-          <Card className="mb-4">
+          <Card className="flex-1">
             <Skeleton width="40%" height={16} className="mb-3" />
             <Skeleton width="100%" height={44} />
           </Card>
@@ -509,7 +607,7 @@ export default function MachineDetailScreen() {
       }
       if (sensors.length === 0) {
         return (
-          <Card className="mb-4">
+          <Card className="flex-1">
             <EmptyState
               title="No sensors yet"
               message="Sensors provision automatically once this machine publishes its first reading."
@@ -518,11 +616,15 @@ export default function MachineDetailScreen() {
         );
       }
       return (
-        <Card className="mb-4">
-          <Text className={`text-base font-bold font-inter mb-1 ${dark ? "text-white" : "text-text"}`}>Sensors</Text>
-          <Text className={`text-xs font-inter mb-3 ${dark ? "text-white/60" : "text-text-muted"}`}>
-            Live ONLINE / OFFLINE state reported by the backend.
-          </Text>
+        <Card className="flex-1">
+          <View className="mb-3">
+            <Text className={`text-base font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
+              Sensors
+            </Text>
+            <Text className={`text-xs font-inter mt-1 ${dark ? "text-white/60" : "text-text-muted"}`}>
+              Live ONLINE / OFFLINE state reported by the backend.
+            </Text>
+          </View>
           <View className={`${isDesktop ? "flex-row gap-2" : "gap-2"}`}>
             {SERIES_META.map((meta) => {
               const s = sensorByType[meta.id];
@@ -594,7 +696,12 @@ export default function MachineDetailScreen() {
           )}
         </View>
 
-        {SensorChips()}
+        {/* Health score card BESIDE the full Sensors card (review) — same ring
+            gauge as the dashboard, stacked under it on narrow screens. */}
+        <View className={isDesktop ? "flex-row gap-3 items-stretch mb-4" : "gap-3 mb-4"}>
+          {SensorChips()}
+          {HealthScoreCard()}
+        </View>
 
         {!canReadTelemetry ? (
           <Card>
@@ -611,7 +718,7 @@ export default function MachineDetailScreen() {
               <Text className={`text-base font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
                 Live Sensors
               </Text>
-              {!liveConnected && (
+              {reconnecting && (
                 <View className="px-2 py-0.5 rounded-chip bg-warning/15">
                   <Text className="text-[11px] font-medium text-warning font-inter">
                     reconnecting…
@@ -680,7 +787,11 @@ export default function MachineDetailScreen() {
             </Card>
           )}
 
-          {(!readingsLoading && !readingsFailed && !readingsEmpty) || readingsRefreshing ? (
+          {/* Draw the chart grid anyway when thresholds are configured — that
+              is what puts the orange/red dashed limit lines back on a quiet
+              machine (review: "bring back thresholds interrupted line"). */}
+          {(!readingsLoading && !readingsFailed && (!readingsEmpty || thresholdList.length > 0)) ||
+          readingsRefreshing ? (
             <View
               className={isDesktop ? "flex-row flex-wrap gap-3" : "gap-3"}
               style={readingsRefreshing ? { opacity: 0.5 } : undefined}
@@ -749,7 +860,7 @@ export default function MachineDetailScreen() {
             <Text className={`text-base font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
               Live Sensors
             </Text>
-            {!liveConnected && (
+            {reconnecting && (
               <View className="px-2 py-0.5 rounded-chip bg-warning/15">
                 <Text className="text-[11px] font-medium text-warning font-inter">reconnecting…</Text>
               </View>
@@ -800,7 +911,7 @@ export default function MachineDetailScreen() {
           </Card>
         )}
 
-        {(!readingsLoading && !readingsFailed && !readingsEmpty) ? (
+        {(!readingsLoading && !readingsFailed && (!readingsEmpty || thresholdList.length > 0)) ? (
           <View
             className={isDesktop ? "flex-row flex-wrap gap-3" : "gap-3"}
             style={readingsRefreshing ? { opacity: 0.5 } : undefined}
@@ -891,7 +1002,7 @@ export default function MachineDetailScreen() {
           </View>
         )}
 
-        {(!readingsLoading && !readingsEmpty && !readingsFailed) ? (
+        {(!readingsLoading && (!readingsEmpty || thresholdList.length > 0) && !readingsFailed) ? (
           <View
             className={`mb-4 ${isDesktop ? "flex-row flex-wrap gap-3" : "gap-3"}`}
             style={readingsRefreshing ? { opacity: 0.5 } : undefined}

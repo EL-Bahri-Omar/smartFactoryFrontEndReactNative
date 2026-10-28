@@ -51,6 +51,7 @@ import { useRole, PERMISSIONS } from "../../src/hooks/useRole";
 import { useAppDispatch } from "../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../src/hooks/useAppSelector";
 import { useLiveTopic } from "../../src/hooks/useLiveTopic";
+import { useReconnecting } from "../../src/hooks/useReconnecting";
 import {
   fetchNotifications,
   fetchMoreNotifications,
@@ -236,7 +237,8 @@ export default function NotificationsScreen() {
   const { list, type, status, moreStatus, error, pagination } = useAppSelector((s) => s.notification);
   const { list: alertList } = useAppSelector((s) => s.alert);
   const interventions = useAppSelector((s) => s.maintenance?.list || []);
-  const liveConnected = useAppSelector((s) => s.live.connected);
+  // "Live feed offline" only after a genuine drop, never during first connect.
+  const reconnecting = useReconnecting();
 
   // Live rows arrive through NotificationBridge (app/(app)/_layout.jsx) —
   // mounted once for the whole app, no per-screen subscription needed here.
@@ -760,9 +762,9 @@ function extractAssignedTitle(n) {
 
         <View className="flex-row items-center justify-between mt-3">
           <Text className={`text-xs font-inter ${darkMuted}`}>
-            {liveConnected
-              ? "Live updates for your account — assignments arrive in real time"
-              : "Live feed offline — notifications refresh when you open this screen"}
+            {reconnecting
+              ? "Live feed offline — notifications refresh when you open this screen"
+              : "Live updates for your account — assignments arrive in real time"}
           </Text>
         </View>
       </ScrollView>

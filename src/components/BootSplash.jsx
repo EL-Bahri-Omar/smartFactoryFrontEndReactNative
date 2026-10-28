@@ -7,7 +7,7 @@
 // branded splash with the product name makes the same wait feel intentional,
 // and gives us one place to change the boot experience.
 
-import { View, Text, ActivityIndicator } from "react-native";
+import { View, Text, ActivityIndicator, Image } from "react-native";
 
 export default function BootSplash({ label = "Loading your workspace…" }) {
   return (
@@ -20,24 +20,23 @@ export default function BootSplash({ label = "Loading your workspace…" }) {
       }}
     >
       <View style={{ alignItems: "center" }}>
-        {/* Logo mark — same identity as the login screen */}
-        <View
+        {/* App logo (app.json → ./assets/icon.png) — the agreed SmartFactory
+            mark, same image as the sidebar header. */}
+        <Image
+          source={require("../../assets/icon.png")}
+          resizeMode="contain"
           style={{
             width: 68,
             height: 68,
-            borderRadius: 20,
-            backgroundColor: "#2563EB",
-            alignItems: "center",
-            justifyContent: "center",
             marginBottom: 18,
+            borderRadius: 18,
             shadowColor: "#2563EB",
             shadowOpacity: 0.25,
             shadowRadius: 18,
             shadowOffset: { width: 0, height: 8 },
           }}
-        >
-          <Text style={{ fontSize: 32, color: "#FFFFFF", lineHeight: 38 }}>⚙</Text>
-        </View>
+          accessibilityLabel="SmartFactory logo"
+        />
 
         <Text
           style={{

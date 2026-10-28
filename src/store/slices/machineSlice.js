@@ -9,6 +9,26 @@ export const fetchMachines = createAsyncThunk(
   "machine/fetchAll",
   async (params, { rejectWithValue }) => {
     try {
+      // The dashboard's "To be repaired" tile spans FAILURE + OFFLINE, so it
+      // deep-links with `status: "FAILURE,OFFLINE"`. GET /api/machines accepts
+      // ONE status — fetch the fleet and narrow it here so the list shows
+      // exactly what the tile counted.
+      const wanted = String(params?.status || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (wanted.length > 1) {
+        const all = await machineService.getAll({ ...params, status: undefined, size: 500 });
+        const content = Array.isArray(all) ? all : all?.content || [];
+        const filtered = content.filter((m) => wanted.includes(m?.status));
+        return {
+          content: filtered,
+          page: 0,
+          size: filtered.length,
+          totalElements: filtered.length,
+          totalPages: 1,
+        };
+      }
       return await machineService.getAll(params);
     } catch (error) {
       return rejectWithValue(error);

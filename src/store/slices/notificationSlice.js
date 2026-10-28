@@ -117,12 +117,27 @@ export const markAllNotificationsRead = createAsyncThunk(
   }
 );
 
-/** GET /api/notifications/unread-count → { unreadCount } (CONFIRMED). */
+/**
+ * GET /api/notifications/unread-count → { unreadCount } (CONFIRMED).
+ *
+ * SINGLE-FLIGHT: at boot three mounts ask for it in the same tick (app layout,
+ * TopBar, notification bridge). Three identical GETs cost three CORS
+ * preflights plus three of the browser's 6-per-origin connection slots — the
+ * cheapest real win in the whole startup budget. Share one in-flight request
+ * and let every caller await the same result.
+ */
+let unreadInFlight = null;
+
 export const refreshUnreadCount = createAsyncThunk(
   "notification/refreshUnread",
   async (_, { rejectWithValue }) => {
+    if (!unreadInFlight) {
+      unreadInFlight = notificationService.getUnreadCount().finally(() => {
+        unreadInFlight = null;
+      });
+    }
     try {
-      return await notificationService.getUnreadCount();
+      return await unreadInFlight;
     } catch (error) {
       return rejectWithValue(error);
     }

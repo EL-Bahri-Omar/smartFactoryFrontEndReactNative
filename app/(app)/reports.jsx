@@ -3,20 +3,24 @@
 // Sprint 7 — Reports (docs/prompts/13-reports.md + docs/ui/ui-notes.md §9),
 // web + mobile.
 //
-// Data: reportSlice → reportService → ASSUMED endpoints
-//   GET  /api/reports/downtime?from=&to=
-//   GET  /api/reports/performance?range=
-//   POST /api/reports/generate
-// None of them exist on the backend yet (verified: no Report* controller), so
-// a 404 is EXPECTED and renders the empty state ("No data for this range"),
-// not a bug. Real errors (5xx / network) show a retry banner.
+// Rewritten: the screen used to call ASSUMED `/api/reports/*` routes that do
+// not exist on the backend (no Report* controller), so every request 404'd
+// and the page sat on "No data for this range" forever. It is now fed by
+// reportSlice.fetchReport, which fans out over CONFIRMED endpoints in
+// parallel:
 //
-// Charts: src/components/charts/DonutChart.jsx + BarChart.jsx (react-native-svg,
-// built for this screen) and HealthGauge.jsx (reused from prompt 08).
+//   GET /api/maintenance                  → downtime hours, counts, by type
+//   GET /api/alerts                       → alerts by severity in the window
+//   GET /api/machines                     → fleet donut (machines by status)
+//   GET /api/dashboard/health-scores      → avg health + per-machine scores
 //
-// Export: builds a CSV of whatever is on screen — client-side, no endpoint.
+// The range selector is a CLIENT-SIDE window over createdAt/timestamp, and the
+// previous equal-length window supplies the delta chips.
+//
+// Charts: src/components/charts/DonutChart.jsx + BarChart.jsx (react-native-svg)
+// and HealthGauge.jsx. Export builds a CSV client-side — no endpoint.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { View, Text, ScrollView, Platform, Share, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import AppShell from "../../src/components/AppShell";
@@ -35,21 +39,24 @@ import { useBreakpoint } from "../../src/hooks/useBreakpoint";
 import { useRole } from "../../src/hooks/useRole";
 import { useAppDispatch } from "../../src/hooks/useAppDispatch";
 import { useAppSelector } from "../../src/hooks/useAppSelector";
+import { INTERVENTION_TYPE_LABELS } from "../../src/lib/status";
 import {
-  fetchDowntime,
-  fetchPerformance,
-  generateReport,
+  fetchReport,
   setTab,
   setRange,
+  setCustom,
   RANGES,
 } from "../../src/store/slices/reportSlice";
 
 const TABS = [
   { key: "maintenance", label: "Maintenance" },
   { key: "performance", label: "Performance" },
-  { key: "production", label: "Production" },
+  { key: "fleet", label: "Fleet" },
   { key: "custom", label: "Custom" },
 ];
+
+const TYPE_SERIES = [{ key: "count", label: "Interventions", color: "#3B82F6" }];
+const SEVERITY_SERIES = [{ key: "count", label: "Alerts", color: "#F59E0B" }];
 
 const csvCell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 const csvRow = (cells) => cells.map(csvCell).join(",");
@@ -62,55 +69,54 @@ export default function ReportsScreen() {
   const isMobile = breakpoint === "mobile";
   const { canAccess, homeRoute } = useRole();
 
-  const {
-    downtime,
-    performance: perf,
-    range,
-    tab,
-    status,
-    perfStatus,
-    error,
-    perfError,
-    downtimeAvailable,
-    performanceAvailable,
-    generating,
-    generateError,
-    generated,
-  } = useAppSelector((s) => s.report);
+  const { report, range, tab, customFrom, customTo, status, error } =
+    useAppSelector((s) => s.report);
 
-  const [customFrom, setCustomFrom] = useState("");
-  const [customTo, setCustomTo] = useState("");
+  // Single phase: maintenance + alerts + machines (15–33 ms) with the health
+  // score computed inside the thunk from those same rows (src/lib/health.js).
+  // GET /api/dashboard/health-scores measured 151–339 s and is never called.
+  const run = useCallback((args) => dispatch(fetchReport(args)), [dispatch]);
 
   // All hooks live above every early return (Rules of Hooks).
+  // Key the effect on the BOOLEAN, not the function: `canAccess` is memoised
+  // on `user`, so the session refresh that lands right after mount swaps the
+  // function identity and used to fire this fetch a SECOND time.
+  const canView = canAccess("reports");
   useEffect(() => {
-    if (canAccess("reports")) dispatch(fetchDowntime({}));
-  }, [dispatch, canAccess]);
-
-  useEffect(() => {
-    if (canAccess("reports")) dispatch(fetchPerformance({ range }));
-  }, [dispatch, range, canAccess]);
+    if (canView) run({ range });
+  }, [run, range, canView]);
 
   const darkText = dark ? "text-white" : "text-text";
   const darkMuted = dark ? "text-white/60" : "text-text-muted";
 
-  const loadingMetrics = (status === "loading" || status === "idle") && !downtime;
-  const loadingPerf = (perfStatus === "loading" || perfStatus === "idle") && !perf;
+  const loading = (status === "loading" || status === "idle") && !report;
+  const m = report?.metrics || {};
+  const partial = report?.partial || {};
+
+  const retry = () => run({ range });
 
   /** CSV export of what is currently on screen (no backend needed). */
   async function handleExport() {
     const rows = [];
+    rows.push(csvRow(["Report", `SmartFactory — ${tab}`]));
+    rows.push(csvRow(["Range", report?.start ? `${report.start} .. ${report.end}` : range]));
+    rows.push("");
     rows.push(csvRow(["Metric", "Value", "Delta %"]));
-    rows.push(csvRow(["Total Downtime (h)", downtime?.totalHours, downtime?.deltaPercent]));
-    rows.push(csvRow(["Maintenance Count", downtime?.maintenanceCount, downtime?.maintenanceDeltaPercent]));
-    rows.push(csvRow(["Avg Health Score", downtime?.avgHealthScore, downtime?.healthDeltaPercent]));
+    rows.push(csvRow(["Total Downtime (h)", m.downtimeHours, m.downtimeDelta]));
+    rows.push(csvRow(["Maintenance Count", m.maintenanceCount, m.maintenanceDelta]));
+    rows.push(csvRow(["Avg Health Score", m.avgHealthScore, m.healthDelta]));
     rows.push("");
     rows.push(csvRow(["Machine", "Downtime (h)"]));
-    (downtime?.byMachine || []).forEach((d) => rows.push(csvRow([d.label, d.value])));
+    (report?.byMachine || []).forEach((d) => rows.push(csvRow([d.label, d.value])));
     rows.push("");
-    rows.push(csvRow(["Machine", ...(perf?.series || []).map((s) => s.label)]));
-    (perf?.data || []).forEach((r) =>
-      rows.push(csvRow([r.label, ...(r.values || []).map((v) => (v == null ? "" : v))]))
-    );
+    rows.push(csvRow(["Machine", "Health score"]));
+    (report?.performance?.data || []).forEach((r) => rows.push(csvRow([r.label, r.values?.[0]])));
+    rows.push("");
+    rows.push(csvRow(["Machine status", "Machines"]));
+    (report?.byStatus || []).forEach((d) => rows.push(csvRow([d.label, d.value])));
+    rows.push("");
+    rows.push(csvRow(["Alert severity", "Alerts"]));
+    (report?.bySeverity || []).forEach((d) => rows.push(csvRow([d.label, d.value])));
 
     const csv = rows.join("\n");
 
@@ -125,22 +131,24 @@ export default function ReportsScreen() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+        return "Report downloaded as CSV.";
       } catch {
         // falls through — the share sheet below is the mobile path
       }
-      return;
     }
 
     try {
       await Share.share({ title: "SmartFactory report", message: csv });
+      return "Report ready to share.";
     } catch {
-      // user dismissed the sheet — nothing to do
+      return null; // user dismissed the sheet
     }
   }
 
-  async function handleGenerate() {
-    await dispatch(generateReport({ tab, range, from: customFrom || undefined, to: customTo || undefined, format: "CSV" }));
-  }
+  // One export only (review: "Export and Generate do the same job, keep only
+  // the Export on the top"). POST /api/reports/generate was never implemented
+  // and the client-side CSV is the same file either way — handleExport above
+  // is the single path.
 
   if (!canAccess("reports")) {
     return (
@@ -166,44 +174,48 @@ export default function ReportsScreen() {
   const metricDefs = [
     {
       label: "Total Downtime",
-      value: downtime?.totalHours,
+      value: m.downtimeHours ?? null,
       unit: "h",
-      delta: downtime?.deltaPercent,
+      delta: m.downtimeDelta ?? null,
       icon: "⏱️",
       iconBgClass: "bg-primary/10",
     },
     {
       label: "Maintenance Count",
-      value: downtime?.maintenanceCount,
-      delta: downtime?.maintenanceDeltaPercent,
+      value: m.maintenanceCount ?? null,
+      delta: m.maintenanceDelta ?? null,
       icon: "🔧",
       iconBgClass: "bg-warning/10",
     },
     {
+      // "/100" is the score SCALE (review: the gauge never says the
+      // denominator). MetricCard renders `unit` as light muted text beside the
+      // big number — same slot that gives Total Downtime its "h".
       label: "Avg. Health Score",
-      value: downtime?.avgHealthScore,
-      delta: downtime?.healthDeltaPercent,
+      value: m.avgHealthScore ?? null,
+      unit: "/100",
+      delta: m.healthDelta ?? null,
       icon: "❤️",
       iconBgClass: "bg-success/10",
     },
   ];
 
-  const metricCard = (m) => (
+  const metricCard = (def) => (
     <MetricCard
-      key={m.label}
-      label={m.label}
-      value={m.value ?? "—"}
-      unit={m.value != null ? m.unit : null}
-      delta={m.delta}
-      icon={m.icon}
-      iconBgClass={m.iconBgClass}
+      key={def.label}
+      label={def.label}
+      value={def.value ?? "—"}
+      unit={def.value != null ? def.unit : null}
+      delta={def.delta}
+      icon={def.icon}
+      iconBgClass={def.iconBgClass}
     />
   );
 
-  const metricsRow = loadingMetrics ? (
+  const metricsRow = loading ? (
     <View className={`gap-4 ${isMobile ? "" : "flex-row"}`}>
-      {metricDefs.map((m) => (
-        <View key={m.label} className={isMobile ? "" : "flex-1"}>
+      {metricDefs.map((def) => (
+        <View key={def.label} className={isMobile ? "" : "flex-1"}>
           <Card>
             <Skeleton width="60%" height={12} className="mb-3" />
             <Skeleton width="45%" height={26} className="mb-3" />
@@ -214,9 +226,9 @@ export default function ReportsScreen() {
     </View>
   ) : isMobile ? (
     <View className="gap-3">
-      {metricDefs.map((m) => (
-        <View key={m.label} className="flex-row">
-          {metricCard(m)}
+      {metricDefs.map((def) => (
+        <View key={def.label} className="flex-row">
+          {metricCard(def)}
         </View>
       ))}
     </View>
@@ -224,65 +236,40 @@ export default function ReportsScreen() {
     <View className="flex-row gap-4">{metricDefs.map(metricCard)}</View>
   );
 
-  // ── Row 2: donut + grouped bar ────────────────────────────────────────────
+  // ── Tab bodies, all fed by the same real report object ────────────────────
   const downtimeCard = (
     <Card>
       <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>Downtime by Machine</Text>
       <DonutChart
-        data={downtime?.byMachine || []}
+        data={report?.byMachine || []}
         size={168}
         thickness={24}
-        centerValue={downtime?.totalHours != null ? `${downtime.totalHours} h` : null}
-        centerLabel={downtime?.totalHours != null ? "total downtime" : null}
+        centerValue={m.downtimeHours != null ? `${m.downtimeHours} h` : null}
+        centerLabel={m.downtimeHours != null ? "total downtime" : null}
         emptyMessage={
           status === "error"
             ? "Could not load downtime"
-            : downtimeAvailable
-              ? "No downtime recorded for this range"
-              : "No data for this range"
+            : "No corrective downtime recorded for this range"
         }
       />
-      {status === "error" ? (
-        <View className="items-center mt-3">
-          <Button
-            title="Retry"
-            variant="outline"
-            size="sm"
-            onPress={() => dispatch(fetchDowntime({ from: customFrom || undefined, to: customTo || undefined }))}
-          />
-        </View>
-      ) : null}
     </Card>
   );
 
-  const performanceCard = (
+  const typeCard = (
     <Card>
-      <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>Machine Performance</Text>
-      <Tabs tabs={RANGES} active={range} onChange={(k) => dispatch(setRange(k))} scrollable={isMobile} />
-      <View className="mt-3">
-        {loadingPerf ? (
-          <Skeleton height={200} className="rounded-card" />
-        ) : (
-          <BarChart
-            data={perf?.data || []}
-            series={perf?.series || []}
-            yMax={100}
-            height={200}
-            emptyMessage={
-              perfStatus === "error"
-                ? "Could not load performance"
-                : performanceAvailable
-                  ? "No data for this range"
-                  : "No data for this range"
-            }
-          />
-        )}
-      </View>
-      {perfStatus === "error" ? (
-        <View className="items-center mt-3">
-          <Button title="Retry" variant="outline" size="sm" onPress={() => dispatch(fetchPerformance({ range }))} />
-        </View>
-      ) : null}
+      <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>
+        Interventions by Type
+      </Text>
+      <BarChart
+        data={(report?.byType || []).map((d) => ({
+          label: INTERVENTION_TYPE_LABELS[d.label] || d.label,
+          values: [d.value],
+        }))}
+        series={TYPE_SERIES}
+        yMax={0}
+        height={200}
+        emptyMessage="No interventions in this range"
+      />
     </Card>
   );
 
@@ -290,44 +277,98 @@ export default function ReportsScreen() {
     <Card>
       <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>Health Score</Text>
       <View className="items-center">
-        <HealthGauge value={downtime?.avgHealthScore ?? null} size={140} />
-        <Text className={`text-sm font-inter mt-2 ${darkMuted}`}>
-          {healthLabel(downtime?.avgHealthScore ?? null)}
+        <HealthGauge value={m.avgHealthScore ?? null} size={140} />
+        {/* Explicit scale indicator (review: "let health score in reports page
+            have an indicator that the score scale is on 100") — the gauge alone
+            never says what the denominator is. */}
+        <View className="flex-row items-baseline gap-1 mt-2">
+          <Text className={`text-2xl font-bold font-inter ${darkText}`}>
+            {m.avgHealthScore == null ? "—" : Math.round(m.avgHealthScore)}
+          </Text>
+          <Text className={`text-sm font-inter ${darkMuted}`}>/ 100</Text>
+        </View>
+        <Text className={`text-sm font-inter mt-1 ${darkMuted}`}>
+          {healthLabel(m.avgHealthScore ?? null)}
+        </Text>
+        <Text className={`text-xs font-inter mt-1 ${darkMuted}`}>
+          {report?.totalMachines != null ? `${report.totalMachines} machines in the average` : ""}
         </Text>
       </View>
     </Card>
   );
 
-  const customCard = tab === "custom" ? (
+  const performanceCard = (
     <Card>
-      <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>Custom range</Text>
-      <View className={`gap-3 ${isMobile ? "" : "flex-row"}`}>
-        <View className={isMobile ? "" : "flex-1"}>
-          <DateTimeInput value={customFrom} onChange={setCustomFrom} placeholder="Select start date..." />
-        </View>
-        <View className={isMobile ? "" : "flex-1"}>
-          <DateTimeInput value={customTo} onChange={setCustomTo} placeholder="Select end date..." />
-        </View>
-        <Button
-          title="Apply"
-          size="sm"
-          onPress={() => dispatch(fetchDowntime({ from: customFrom || undefined, to: customTo || undefined }))}
-        />
-      </View>
-    </Card>
-  ) : null;
-
-  const productionCard = tab === "production" ? (
-    <Card>
-      <EmptyState
-        icon={<Text className="text-3xl">📦</Text>}
-        title="No data for this range"
-        message="Production figures need a /api/reports/production endpoint — it isn't on the backend yet."
+      <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>
+        Machine Health Score
+      </Text>
+      <BarChart
+        data={report?.performance?.data || []}
+        series={report?.performance?.series || []}
+        yMax={100}
+        height={200}
+        emptyMessage="No machine health scores yet"
       />
     </Card>
-  ) : null;
+  );
 
-  const showCharts = tab !== "production";
+  const statusCard = (
+    <Card>
+      <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>Machines by Status</Text>
+      <DonutChart
+        data={report?.byStatus || []}
+        size={168}
+        thickness={24}
+        centerValue={report?.totalMachines != null ? String(report.totalMachines) : null}
+        centerLabel="machines"
+        emptyMessage="No machines yet"
+      />
+    </Card>
+  );
+
+  const severityCard = (
+    <Card>
+      <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>
+        Alerts by Severity
+      </Text>
+      <BarChart
+        data={(report?.bySeverity || []).map((d) => ({ label: d.label, values: [d.value] }))}
+        series={SEVERITY_SERIES}
+        yMax={0}
+        height={200}
+        emptyMessage="No alerts in this range"
+      />
+    </Card>
+  );
+
+  const customCard =
+    tab === "custom" ? (
+      <Card>
+        <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>Custom range</Text>
+        <View className={`gap-3 ${isMobile ? "" : "flex-row"}`}>
+          <View className={isMobile ? "" : "flex-1"}>
+            <DateTimeInput
+              value={customFrom}
+              onChange={(v) => dispatch(setCustom({ from: v }))}
+              placeholder="Select start date..."
+            />
+          </View>
+          <View className={isMobile ? "" : "flex-1"}>
+            <DateTimeInput
+              value={customTo}
+              onChange={(v) => dispatch(setCustom({ to: v }))}
+              placeholder="Select end date..."
+            />
+          </View>
+          <Button
+            title="Apply"
+            size="sm"
+            loading={status === "loading"}
+            onPress={() => run({ from: customFrom || undefined, to: customTo || undefined })}
+          />
+        </View>
+      </Card>
+    ) : null;
 
   const errorBanner =
     status === "error" && error ? (
@@ -335,35 +376,22 @@ export default function ReportsScreen() {
         <Text className={`text-sm font-bold font-inter ${darkText}`}>Reports unavailable</Text>
         <Text className={`text-sm font-inter mt-1 ${darkMuted}`}>{error.message}</Text>
         <View className="mt-3">
-          <Button
-            title="Retry"
-            variant="outline"
-            size="sm"
-            onPress={() => dispatch(fetchDowntime({ from: customFrom || undefined, to: customTo || undefined }))}
-          />
+          <Button title="Retry" variant="outline" size="sm" onPress={retry} />
         </View>
       </Card>
     ) : null;
 
-  const generateNote = generateError ? (
-    <Text className={`text-xs font-inter text-center mt-2 ${dark ? "text-white/60" : "text-text-muted"}`}>
-      {generateError.message}
-    </Text>
-  ) : generated ? (
-    <Text className="text-xs font-inter text-center mt-2 text-success">
-      {generated?.message || "Report generated."}
-    </Text>
-  ) : null;
-
-  const generateBlock = (
-    <View className={isMobile ? "" : "items-center"}>
-      <Button title="Generate Report" onPress={handleGenerate} loading={generating} className={isMobile ? "w-full" : ""} />
-      {generateNote}
-    </View>
-  );
+  const partialNote =
+    status === "succeeded" && Object.values(partial).some(Boolean) ? (
+      <Text className={`text-xs font-inter ${darkMuted}`}>
+        Some sources are unavailable, so the sections below are incomplete.
+      </Text>
+    ) : null;
 
   const header = (
-    <View className={`mb-4 ${isMobile ? "flex-row items-center gap-2" : "flex-row items-center justify-between"}`}>
+    <View
+      className={`mb-4 ${isMobile ? "flex-row items-center gap-2" : "flex-row items-center justify-between"}`}
+    >
       {isMobile ? (
         <Pressable onPress={() => router.back()} className="pr-2 py-1">
           <Text className={`text-xl font-bold ${darkText}`}>←</Text>
@@ -373,13 +401,12 @@ export default function ReportsScreen() {
         <Text className={`text-2xl font-bold font-inter ${darkText}`}>Reports</Text>
         {!isMobile ? (
           <Text className={`text-sm font-inter mt-1 ${darkMuted}`}>
-            Downtime, performance and exportable summaries.
+            Downtime, health and fleet summaries, built from live backend data.
           </Text>
         ) : null}
       </View>
       <Button
         title={isMobile ? "⤓" : "Export"}
-        variant="outline"
         size="sm"
         onPress={handleExport}
         className={isMobile ? "px-3" : ""}
@@ -387,30 +414,40 @@ export default function ReportsScreen() {
     </View>
   );
 
-  const tabsRow = (
-    <Tabs tabs={TABS} active={tab} onChange={(k) => dispatch(setTab(k))} scrollable={isMobile} />
-  );
+  const tabsRow = <Tabs tabs={TABS} active={tab} onChange={(k) => dispatch(setTab(k))} scrollable={isMobile} />;
+
+  const rangeRow =
+    tab === "custom" ? null : (
+      <View className="mt-4">
+        <Tabs tabs={RANGES} active={range} onChange={(k) => dispatch(setRange(k))} scrollable={isMobile} />
+      </View>
+    );
+
+  const charts =
+    tab === "performance" ? (
+      <View className={`gap-4 mt-4 ${isMobile ? "" : "flex-row"}`}>
+        <View className={isMobile ? "" : "flex-[0.4]"}>{healthCard}</View>
+        <View className={isMobile ? "" : "flex-[0.6]"}>{performanceCard}</View>
+      </View>
+    ) : tab === "fleet" ? (
+      <View className={`gap-4 mt-4 ${isMobile ? "" : "flex-row"}`}>
+        <View className={isMobile ? "" : "flex-1"}>{statusCard}</View>
+        <View className={isMobile ? "" : "flex-1"}>{severityCard}</View>
+      </View>
+    ) : (
+      <View className={`gap-4 mt-4 ${isMobile ? "" : "flex-row"}`}>
+        <View className={isMobile ? "" : "flex-1"}>{downtimeCard}</View>
+        <View className={isMobile ? "" : "flex-1"}>{typeCard}</View>
+      </View>
+    );
 
   const body = (
     <>
       {errorBanner}
+      {partialNote}
       {customCard}
-      {showCharts ? metricsRow : null}
-      {productionCard}
-
-      {showCharts ? (
-        tab === "performance" ? (
-          <View className={`gap-4 mt-4 ${isMobile ? "" : "flex-row"}`}>
-            <View className={isMobile ? "" : "flex-[0.4]"}>{healthCard}</View>
-            <View className={isMobile ? "" : "flex-[0.6]"}>{performanceCard}</View>
-          </View>
-        ) : (
-          <View className={`gap-4 mt-4 ${isMobile ? "" : "flex-row"}`}>
-            <View className={isMobile ? "" : "flex-1"}>{downtimeCard}</View>
-            <View className={isMobile ? "" : "flex-1"}>{performanceCard}</View>
-          </View>
-        )
-      ) : null}
+      <View className="mt-4">{metricsRow}</View>
+      {loading ? <Skeleton height={240} className="rounded-card mt-4" /> : charts}
     </>
   );
 
@@ -426,20 +463,15 @@ export default function ReportsScreen() {
           >
             {header}
             {tabsRow}
+            {rangeRow}
             <View className="mt-4 gap-4">{body}</View>
           </ScrollView>
-
-          <View
-            className={`border-t px-4 py-3 ${dark ? "border-white/10 bg-[#0B1D3A]" : "border-border bg-surface"}`}
-          >
-            {generateBlock}
-          </View>
         </View>
       </AppShell>
     );
   }
 
-  // ── Web: title + Export, tabs, rows, Generate Report at the bottom ───────
+  // ── Web: title + Export, tabs, rows — one export, top right ───────────────
   return (
     <AppShell>
       <ScrollView
@@ -449,8 +481,8 @@ export default function ReportsScreen() {
       >
         {header}
         {tabsRow}
+        {rangeRow}
         <View className="mt-5 gap-4">{body}</View>
-        <View className="mt-6">{generateBlock}</View>
       </ScrollView>
     </AppShell>
   );

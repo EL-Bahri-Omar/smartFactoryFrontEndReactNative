@@ -1,10 +1,11 @@
 // src/components/FactoryMap.jsx
 //
 // Reusable factory map component.
-// variant="compact" — used by Dashboard (smaller, no machine labels)
-// variant="full"    — used by Map & Zones screen (large, machine labels visible)
+// variant="compact" — used by Dashboard (smaller cards: dot + code)
+// variant="full"    — used by Map & Zones screen (dot + code + glyph)
 //
-// Renders zones A/B/C/D as colored rounded rects with machine markers.
+// Renders zones A/B/C/D as colored rounded rects; every machine is a small
+// card (docs/ui/map&zones.png) instead of a bare dot.
 // Zone D turns red when it has an active alert.
 // This file is the SINGLE source — Dashboard and Map both import it.
 //
@@ -21,6 +22,7 @@ import { useRef, useState } from "react";
 import { View, Text, Pressable, Platform } from "react-native";
 import { getMachineStatus } from "../lib/status";
 import { MACHINE_STATUS } from "../constants/roles";
+import { useBreakpoint } from "../hooks/useBreakpoint";
 import { useDark } from "../hooks/useDark";
 
 // Status → dot color, from the single source of truth (lib/status.js).
@@ -37,7 +39,22 @@ const ZONE_CONFIG = [
 ];
 
 const VISIBLE_LIMIT_FULL = 12;
-const VISIBLE_LIMIT_COMPACT = 3;
+const VISIBLE_LIMIT_COMPACT = 4;
+
+// ── Machine card (docs/ui/map&zones.png) ───────────────────────────────────
+// Each machine is a small raised card, NOT a bare dot: status dot + code on
+// line one and a machine glyph below (wide variant). The card is a neutral
+// surface so the status colour reads as an accent — the same treatment as the
+// tiles in the reference image. The health-score ring was removed from the
+// Map & Zones overview on review (it duplicated the Zone Details list and
+// never had data while the backend health routes fail).
+// `glyph: false` on narrow screens: a phone-sized zone only has room for two
+// columns, so the glyph is what gets dropped first.
+const TILE = {
+  compact: { w: 58, r: 8, glyph: false },
+  narrow: { w: 62, r: 8, glyph: false },
+  full: { w: 66, r: 9, glyph: true },
+};
 
 export default function FactoryMap({
   variant = "full",
@@ -51,7 +68,13 @@ export default function FactoryMap({
   onMoveMachine,
 }) {
   const isCompact = variant === "compact";
-  const mapHeight = isCompact ? 220 : 380;
+  const breakpoint = useBreakpoint();
+  const narrow = breakpoint !== "desktop";
+  // The 4-quadrant layout gives each zone 44% of this height; the values below
+  // are sized so 12 machine cards (3 rows wide / 6 rows narrow) always fit
+  // inside a quadrant instead of being clipped by `overflow: hidden`.
+  const mapHeight = isCompact ? (narrow ? 300 : 250) : 540;
+  const tile = isCompact ? TILE.compact : narrow ? TILE.narrow : TILE.full;
   const isWeb = Platform.OS === "web";
   const dark = useDark();
   const [dragOverZone, setDragOverZone] = useState(null);
@@ -93,8 +116,41 @@ export default function FactoryMap({
     setCursor({ x: e.clientX, y: e.clientY, code });
   }
 
+  // ── Status legend — moved ABOVE the map and enlarged (review: "let the
+  // color indicating status below the zones be bigger and move them to the
+  // top"). Full variant only; the compact dashboard map keeps its space.
+  const legend = !isCompact ? (
+    <View
+      className={`flex-row flex-wrap items-center gap-x-4 gap-y-1.5 px-3 pt-2.5 pb-2.5 border-b ${
+        dark ? "border-white/10" : "border-border"
+      }`}
+    >
+      {[
+        { label: "Running", color: statusDot(MACHINE_STATUS.RUNNING) },
+        { label: "Idle", color: statusDot(MACHINE_STATUS.IDLE) },
+        { label: "Maintenance", color: statusDot(MACHINE_STATUS.MAINTENANCE) },
+        { label: "Failure", color: statusDot(MACHINE_STATUS.FAILURE) },
+        { label: "Offline", color: statusDot(MACHINE_STATUS.OFFLINE) },
+      ].map((item) => (
+        <View key={item.label} className="flex-row items-center gap-1.5">
+          <View
+            className="w-3.5 h-3.5 rounded-full"
+            style={{ backgroundColor: item.color }}
+          />
+          <Text
+            className={`font-semibold font-inter ${dark ? "text-white/75" : "text-text"}`}
+            style={{ fontSize: 12 }}
+          >
+            {item.label}
+          </Text>
+        </View>
+      ))}
+    </View>
+  ) : null;
+
   return (
     <View className={`rounded-card border overflow-hidden ${dark ? "bg-darkcard border-white/10" : "bg-bg border-border"}`}>
+    {legend}
     <View
       style={{ height: mapHeight, position: "relative" }}
       // Web: clear a tap-selection when clicking empty map space.
@@ -202,6 +258,7 @@ export default function FactoryMap({
                   const mid = m.id || m.code || idx;
                   const isPicked = movable && selectedMachine?.machine?.id === m.id;
                   const isDragging = draggingId === (m.id || m.code);
+                  const label = m.code || m.machineCode || m.name || "";
                   return (
                     <div
                       key={mid}
@@ -222,36 +279,53 @@ export default function FactoryMap({
                       onClick={(e) => {
                         e.stopPropagation();
                       }}
-                      title={movable && !isCompact ? `Drag ${m.code || ""} to another zone` : m.code || ""}
+                      title={movable && !isCompact ? `Drag ${label} to another zone` : label}
                       style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "center",
+                        boxSizing: "border-box",
+                        flexShrink: 0,
+                        width: tile.w,
+                        borderRadius: tile.r,
+                        padding: isCompact ? "3px 5px" : "4px 5px",
+                        backgroundColor: dark ? "#0D1729" : "#FFFFFF",
+                        border: `${isPicked ? 2 : 1}px solid ${dotColor}${isPicked ? "" : "59"}`,
+                        boxShadow: isPicked ? `0 0 0 2px ${dotColor}59` : "none",
                         cursor: movable && !isCompact ? "grab" : "default",
                         opacity: isDragging ? 0.35 : 1,
                       }}
                     >
-                      <div
-                        style={{
-                          width: isCompact ? 20 : 28,
-                          height: isCompact ? 20 : 28,
-                          borderRadius: 9999,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          backgroundColor: dotColor + "20",
-                          borderWidth: isPicked ? 2.5 : 1.5,
-                          borderStyle: "solid",
-                          borderColor: isPicked ? "#0B1D3A" : dotColor,
-                        }}
-                      >
-                        <div style={{ width: isCompact ? 6 : 8, height: isCompact ? 6 : 8, borderRadius: 9999, backgroundColor: dotColor }} />
-                      </div>
-                      {!isCompact && (
-                        <span style={{ fontSize: 7, color: "#64748B", marginTop: 2, maxWidth: 52, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {m.code || m.machineCode || m.name || ""}
+                      {/* line 1 — status dot · code */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span
+                          style={{
+                            width: 5,
+                            height: 5,
+                            borderRadius: 9999,
+                            backgroundColor: dotColor,
+                            flexShrink: 0,
+                          }}
+                        />
+                        <span
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            fontSize: 7.5,
+                            fontWeight: 700,
+                            letterSpacing: 0.2,
+                            color: dark ? "#E8EDF7" : "#0F172A",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {label}
                         </span>
-                      )}
+                      </div>
+                      {/* line 2 — machine glyph (only where there is room) */}
+                      {tile.glyph ? (
+                        <div style={{ fontSize: 13, lineHeight: "16px", textAlign: "center", marginTop: 2 }}>
+                          ⚙️
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })}
@@ -274,6 +348,7 @@ export default function FactoryMap({
                 const dotColor = statusDot(m.status);
                 const mid = m.id || m.code || idx;
                 const isPicked = movable && selectedMachine?.machine?.id === m.id;
+                const label = m.code || m.machineCode || m.name || "";
                 return (
                   <Pressable
                     key={mid}
@@ -282,25 +357,47 @@ export default function FactoryMap({
                       if (isPicked) onSelectMachine?.(null);
                       else onSelectMachine?.({ machine: m, fromSlot: zone.id });
                     }}
-                    className="items-center"
+                    style={{
+                      flexShrink: 0,
+                      width: tile.w,
+                      borderRadius: tile.r,
+                      paddingVertical: isCompact ? 3 : 4,
+                      paddingHorizontal: 5,
+                      backgroundColor: dark ? "#0D1729" : "#FFFFFF",
+                      borderWidth: isPicked ? 2 : 1,
+                      borderColor: dotColor + (isPicked ? "" : "59"),
+                    }}
                   >
-                    <View
-                      className="rounded-full items-center justify-center"
-                      style={{
-                        width: isCompact ? 20 : 28,
-                        height: isCompact ? 20 : 28,
-                        backgroundColor: dotColor + "20",
-                        borderWidth: isPicked ? 2.5 : 1.5,
-                        borderColor: isPicked ? "#0B1D3A" : dotColor,
-                      }}
-                    >
-                      <View className="rounded-full" style={{ width: isCompact ? 6 : 8, height: isCompact ? 6 : 8, backgroundColor: dotColor }} />
-                    </View>
-                    {!isCompact && (
-                      <Text className={`font-inter mt-0.5 ${dark ? "text-white/60" : "text-text-muted"}`} style={{ fontSize: 7 }} numberOfLines={1}>
-                        {m.code || m.machineCode || m.name || ""}
+                    {/* line 1 — status dot · code */}
+                    <View className="flex-row items-center" style={{ gap: 4 }}>
+                      <View
+                        style={{
+                          width: 5,
+                          height: 5,
+                          borderRadius: 3,
+                          backgroundColor: dotColor,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        style={{
+                          flex: 1,
+                          fontSize: 7.5,
+                          fontWeight: "700",
+                          letterSpacing: 0.2,
+                          color: dark ? "#E8EDF7" : "#0F172A",
+                        }}
+                      >
+                        {label}
                       </Text>
-                    )}
+                    </View>
+                    {/* line 2 — machine glyph (only where there is room) */}
+                    {tile.glyph ? (
+                      <Text style={{ fontSize: 13, lineHeight: 17, textAlign: "center", marginTop: 2 }}>
+                        ⚙️
+                      </Text>
+                    ) : null}
                   </Pressable>
                 );
               })}
@@ -338,26 +435,6 @@ export default function FactoryMap({
         </div>
       )}
     </View>
-
-      {/* Legend (full only) — own row below the map so it never overlaps zones */}
-      {!isCompact && (
-        <View className="flex-row flex-wrap gap-x-3 gap-y-1 px-3 pt-2 pb-2.5">
-          {[
-            { label: "Running", color: statusDot(MACHINE_STATUS.RUNNING) },
-            { label: "Idle", color: statusDot(MACHINE_STATUS.IDLE) },
-            { label: "Maintenance", color: statusDot(MACHINE_STATUS.MAINTENANCE) },
-            { label: "Failure", color: statusDot(MACHINE_STATUS.FAILURE) },
-            { label: "Offline", color: statusDot(MACHINE_STATUS.OFFLINE) },
-          ].map((item) => (
-            <View key={item.label} className="flex-row items-center gap-1">
-              <View className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
-              <Text className={`font-inter ${dark ? "text-white/60" : "text-text-muted"}`} style={{ fontSize: 9 }}>
-                {item.label}
-              </Text>
-            </View>
-          ))}
-        </View>
-      )}
     </View>
   );
 }

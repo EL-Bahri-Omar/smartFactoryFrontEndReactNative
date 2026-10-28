@@ -29,7 +29,7 @@ import { fetchGroups } from "../store/slices/groupSlice";
 import { fetchUsers } from "../store/slices/userSlice";
 import { fetchRoles } from "../store/slices/roleSlice";
 import Avatar from "./Avatar";
-import { formatDate, formatTime } from "../lib/time";
+import { formatDate } from "../lib/time";
 
 // Door + arrow exit icon (logout), drawn in currentColor-style red.
 function LogoutIcon({ size = 22, color = "#DC2626" }) {
@@ -111,6 +111,54 @@ function greetingFor(hour) {
   if (hour < 12) return "Good morning";
   if (hour < 18) return "Good afternoon";
   return "Good evening";
+}
+
+/**
+ * The greeting + date line, isolated in its own component so the 1-second
+ * clock (review: "add present day and seconds in time") only re-renders these
+ * two texts instead of the whole TopBar. Layout: `pl-4` widens the gap
+ * between the back button and the greeting (review: "make the gap bigger").
+ *
+ *   Oct 27, 2026 · Tuesday · 13:38:45
+ */
+function GreetingBlock({ name, dark }) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const weekday = now.toLocaleDateString("en-US", { weekday: "long" });
+  // hourCycle h23 (not hour12:false) so midnight renders 00:00:00, not 24:00:00.
+  const clock = now.toLocaleTimeString("en-US", {
+    hourCycle: "h23",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+
+  return (
+    <View className="flex-1 pl-4 pr-2">
+      <Text
+        numberOfLines={1}
+        className={`font-bold font-inter text-[15px] leading-5 ${
+          dark ? "text-white" : "text-text"
+        }`}
+      >
+        {greetingFor(now.getHours())}, {name} 👋
+      </Text>
+      {/* Date/time line — deliberately readable (review: "let the date/time be
+          more appearing"): bigger than the muted caption it used to be, and a
+          strong colour in BOTH themes so it reads at a glance. */}
+      <Text
+        className={`text-[12.5px] font-semibold font-inter leading-5 ${
+          dark ? "text-white/90" : "text-text"
+        }`}
+      >
+        {weekday} · {formatDate(now)} · {clock}
+      </Text>
+    </View>
+  );
 }
 
 export default function TopBar({ user, onMenuPress, showMenu = false, isMobile = false }) {
@@ -211,15 +259,9 @@ export default function TopBar({ user, onMenuPress, showMenu = false, isMobile =
   // ── Greeting (moved up from dashboard.jsx: "move Good afternoon, Admin 👋
   // to the top bar"). Shown only to the roles that could see it on the
   // dashboard (`canAccess("dashboard")` = supervisors); everyone else keeps
-  // the empty flex spacer. The clock ticks once a minute so the wording
-  // (morning / afternoon / evening) and the time stay honest.
+  // the empty flex spacer. The live clock lives in GreetingBlock above.
   const showGreeting = canAccess("dashboard");
   const greetingName = user?.firstName || "there";
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 60000);
-    return () => clearInterval(timer);
-  }, []);
 
   /**
    * Global refresh: fresh session (role/permissions), dashboard KPIs,
@@ -316,23 +358,7 @@ export default function TopBar({ user, onMenuPress, showMenu = false, isMobile =
       )}
 
       {showGreeting ? (
-        <View className="flex-1 pr-2">
-          <Text
-            numberOfLines={1}
-            className={`font-bold font-inter text-[15px] leading-5 ${
-              dark ? "text-white" : "text-text"
-            }`}
-          >
-            {greetingFor(now.getHours())}, {greetingName} 👋
-          </Text>
-          <Text
-            className={`text-[11px] font-inter leading-4 ${
-              dark ? "text-white/60" : "text-text-muted"
-            }`}
-          >
-            {formatDate(now)} · {formatTime(now)}
-          </Text>
-        </View>
+        <GreetingBlock name={greetingName} dark={dark} />
       ) : (
         <View className="flex-1" />
       )}

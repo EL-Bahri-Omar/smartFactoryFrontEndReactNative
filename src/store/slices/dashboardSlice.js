@@ -10,20 +10,31 @@
 //   GET /api/alerts/summary               → exact ACTIVE counts (cheap)
 //   GET /api/alerts?status=ACTIVE&size=5  → the 5 newest active alerts
 //   GET /api/maintenance?size=100         → open queue (PENDING/…/IN_PROGRESS)
-//   GET /api/dashboard/overview           → CONFIRMED Sprint 7: factory status,
-//                                           machinesByStatus, alerts, health score
-//   GET /api/dashboard/kpis?period=day    → CONFIRMED: availability %, MTBF, MTTR
+//   GET /api/dashboard/kpis?period=day    → CONFIRMED: MTBF, MTTR, downtime
 //   GET /api/dashboard/kpis/history       → CONFIRMED: 7-point availability series
+//
+//   GET /api/dashboard/overview           → NOT in this fan-out, and NO LONGER
+//                                           dispatched at all. Measured on the
+//                                           running backend: 156–271 s (every
+//                                           other route answers in 15–33 ms).
+//                                           It runs computeMachineHealthScore()
+//                                           for EVERY machine, and every value
+//                                           it patched (status counts, alert
+//                                           totals, availability) is already
+//                                           derived from the fast calls above.
+//                                           See docs/api-contract.md for the
+//                                           backend fix spec.
 //
 // `/api/dashboard/*` is ADMIN | RESPONSABLE | TECHNICIAN only
 // (SecurityConfig.java:119) — an OPERATOR caller rejects, and allSettled keeps
-// the rest of the dashboard alive. The screen reads `failed.kpis` / `failed.overview`
-// to decide whether that is a 403 or a genuinely empty factory.
+// the rest of the dashboard alive. The screen reads `failed.kpis` to decide
+// whether that is a 403 or a genuinely empty factory.
 //
 // It keeps its own state bucket — importing the shared slices here would
 // overwrite the lists the other screens are rendering.
 
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
+import { computeMachineHealth, computeFactoryHealth } from "../../lib/health";
 import * as machineService from "../services/machineService";
 import * as alertService from "../services/alertService";
 import * as interventionService from "../services/interventionService";
@@ -67,6 +78,25 @@ const toNum = (v) =>
   v == null || v === "" || Number.isNaN(Number(v)) ? null : Number(v);
 
 /**
+ * Machines Availability, computed on the CLIENT from the real status split:
+ * a machine is available while it is RUNNING or IDLE — i.e. it is not in
+ * maintenance, not failed and not offline.
+ *
+ * The backend's `availability` from GET /api/dashboard/kpis is an
+ * operating-minutes ratio whose `downtimeMinutes` only counts CORRECTIVE
+ * interventions. Preventive work does not move it, so a factory with 5
+ * machines in MAINTENANCE still answers 100 % — exactly what the review
+ * flagged ("fix machine availability calc"). The backend stays untouched, so
+ * the card uses this value instead; the deviation is recorded in
+ * docs/api-contract.md. Real counts, honest arithmetic, nothing invented.
+ */
+function computeAvailability(counts) {
+  if (!counts || !counts.total || counts.total <= 0) return null;
+  const available = (counts.RUNNING || 0) + (counts.IDLE || 0);
+  return Math.round((available / counts.total) * 1000) / 10;
+}
+
+/**
  * Tolerant reader for the CONFIRMED `GET /api/dashboard/kpis` payload.
  * Every field of that response is a small nested object
  * (`availability.value`, `mtbf.valueHours`, `mttr.valueMinutes`, `oee.value`);
@@ -77,7 +107,7 @@ const toNum = (v) =>
  * `status: "UNAVAILABLE"` because good-parts/ideal-cycle-time are not
  * instrumented. We surface the status + reason so the screen can say why.
  */
-function normalizeKpis(raw, overview) {
+function normalizeKpis(raw) {
   if (!raw || typeof raw !== "object") return null;
   const obj = (v) => (v && typeof v === "object" ? v : {});
   const availability = obj(raw.availability);
@@ -86,13 +116,14 @@ function normalizeKpis(raw, overview) {
   const oee = obj(raw.oee);
 
   return {
-    totalMachines: toNum(overview?.totalMachines),
+    // NOTE: `availability.value` is read but then replaced by
+    // computeAvailability() below — see that function for why.
     availability: toNum(availability.value),
-    activeAlerts: toNum(overview?.activeAlertsCount),
     oee: toNum(oee.value),
     oeeStatus: oee.status || null,
     oeeReason: oee.reason || null,
-    healthScore: toNum(overview?.overallHealthScore),
+    // healthScore / totalMachines / activeAlerts come from their own fast
+    // sources (health-scores thunk, /machines total, /alerts/summary).
     mtbf: toNum(mtbf.valueHours),
     mtbfNote: mtbf.note || null,
     mtbfFailures: toNum(mtbf.failureCount),
@@ -108,18 +139,16 @@ function normalizeKpis(raw, overview) {
 /**
  * Fallback KPIs computed from CONFIRMED data (counts, not fabrications).
  * Used when the Sprint 7 endpoints are unreachable for this role — the
- * availability here is RUNNING/total over the returned page, which is a
- * different (weaker) number than the backend's operating-minutes ratio, so
- * the API value always wins when it arrives.
+ * availability here is the client-side RUNNING+IDLE/total split (the same
+ * definition the KPI card always shows), so the number does not jump around
+ * depending on which source answered.
  */
 function deriveKpis(summary, alerts) {
   if (!summary && !alerts) return null;
   const total = summary ? summary.total : null;
-  const running = summary ? summary.RUNNING : null;
   return {
     totalMachines: total,
-    availability:
-      summary && total > 0 ? Math.round((running / total) * 1000) / 10 : null,
+    availability: computeAvailability(summary),
     activeAlerts: alerts ? alerts.active : null,
     oee: null,
     oeeStatus: null,
@@ -133,27 +162,6 @@ function deriveKpis(summary, alerts) {
     downtimeMinutes: null,
     deltas: { totalMachines: null, availability: null, activeAlerts: null, oee: null },
   };
-}
-
-/**
- * Machines-by-status counts for the status card row.
- * The backend's `overview.machinesByStatus` covers the whole fleet (not just
- * the first page of GET /api/machines), so it is preferred when present.
- */
-function statusCounts(overview, summary) {
-  const src = overview?.machinesByStatus;
-  if (src && typeof src === "object") {
-    return {
-      total: toNum(overview.totalMachines),
-      RUNNING: toNum(src.RUNNING) || 0,
-      IDLE: toNum(src.IDLE) || 0,
-      MAINTENANCE: toNum(src.MAINTENANCE) || 0,
-      FAILURE: toNum(src.FAILURE) || 0,
-      OFFLINE: toNum(src.OFFLINE) || 0,
-      UNKNOWN: toNum(src.UNKNOWN) || 0,
-    };
-  }
-  return summary;
 }
 
 /**
@@ -203,19 +211,18 @@ export const fetchDashboard = createAsyncThunk(
   "dashboard/fetch",
   /**
    * @param {{ machines?: boolean, alerts?: boolean, interventions?: boolean,
-   *           overview?: boolean, kpis?: boolean }} scope
+   *           kpis?: boolean }} scope
    *   Only fan out for what this role may read — avoids a pointless 403 and
-   *   keeps the first paint fast. `overview` / `kpis` target the CONFIRMED
-   *   Sprint 7 routes, which are ADMIN | RESPONSABLE | TECHNICIAN only
+   *   keeps the first paint fast. `kpis` targets the CONFIRMED Sprint 7
+   *   routes, which are ADMIN | RESPONSABLE | TECHNICIAN only
    *   (SecurityConfig.java:119): an OPERATOR caller rejects and the other
-   *   blocks still render, with `failed.overview` / `failed.kpis` set.
+   *   blocks still render, with `failed.kpis` set.
    */
   async (
     {
       machines = true,
       alerts = true,
       interventions = true,
-      overview = true,
       kpis = true,
     } = {},
     { rejectWithValue }
@@ -225,15 +232,19 @@ export const fetchDashboard = createAsyncThunk(
       summaryRes,
       alertsRes,
       interventionsRes,
-      overviewRes,
       kpisRes,
       historyRes,
     ] = await Promise.allSettled([
-      machines ? machineService.getAll({ size: 100 }) : skipped(),
+      // size=500 (not 100): the whole-fleet status split below is counted from
+      // THIS page, so it must cover every machine — there is no /overview
+      // fallback any more (that route measured 156–271 s).
+      machines ? machineService.getAll({ size: 500 }) : skipped(),
       alerts ? alertService.getSummary() : skipped(),
-      alerts ? alertService.getAll({ status: "ACTIVE", size: 5, sort: "timestamp,desc" }) : skipped(),
+      // 500, not 5: the Fan-out needs EVERY active alert to score the fleet
+      // machine-by-machine (see computeMachineHealth). The "Recent Activity"
+      // block keeps the newest 5 from the same response — one request, not two.
+      alerts ? alertService.getAll({ status: "ACTIVE", size: 500, sort: "timestamp,desc" }) : skipped(),
       interventions ? interventionService.getAll({ size: 100 }) : skipped(),
-      overview ? dashboardService.getOverview() : skipped(),
       kpis ? dashboardService.getKpis({ period: "day" }) : skipped(),
       kpis ? dashboardService.getKpisHistory({ period: "week", points: 7 }) : skipped(),
     ]);
@@ -241,7 +252,6 @@ export const fetchDashboard = createAsyncThunk(
     // A skipped source resolves to `null` (not a failure); a failed one rejects.
     const ok = (r) => r.status === "fulfilled" && r.value !== null;
     const failed = (r) => r.status === "rejected";
-    const ov = ok(overviewRes) ? overviewRes.value : null;
 
     const payload = {
       machines: ok(machinesRes) ? summarizeMachines(machinesRes.value) : null,
@@ -251,13 +261,8 @@ export const fetchDashboard = createAsyncThunk(
       alerts: null,
       interventions: ok(interventionsRes) ? summarizeInterventions(interventionsRes.value) : null,
       // ── Sprint 7 — CONFIRMED (DashboardController) ────────────────────────
-      overview: ov,
-      factoryStatus: ov?.factoryStatus || null,
       // Whole-fleet status split; falls back to the counted machine page.
-      statusCounts: statusCounts(
-        ov,
-        ok(machinesRes) ? summarizeMachines(machinesRes.value) : null
-      ),
+      statusCounts: ok(machinesRes) ? summarizeMachines(machinesRes.value) : null,
       history: ok(historyRes) ? normalizeHistory(historyRes.value) : null,
       kpisFromApi: false,
       kpis: null,
@@ -265,7 +270,6 @@ export const fetchDashboard = createAsyncThunk(
         machines: failed(machinesRes),
         alerts: failed(summaryRes) && failed(alertsRes),
         interventions: failed(interventionsRes),
-        overview: failed(overviewRes),
         kpis: failed(kpisRes),
         history: failed(historyRes),
       },
@@ -274,22 +278,62 @@ export const fetchDashboard = createAsyncThunk(
 
     if (ok(summaryRes) || ok(alertsRes)) {
       const summary = ok(summaryRes) ? summaryRes.value || {} : {};
-      const recent = ok(alertsRes) ? alertsRes.value?.list || [] : [];
+      const rows = ok(alertsRes) ? alertsRes.value?.list || [] : [];
       payload.alerts = {
-        active: Number(summary.activeCount ?? alertsRes.value?.totalElements ?? recent.length) || 0,
+        active: Number(summary.activeCount ?? alertsRes.value?.totalElements ?? rows.length) || 0,
         critical: Number(summary.criticalActiveCount ?? 0) || 0,
         high: Number(summary.highActiveCount ?? 0) || 0,
         warning: Number(summary.warningActiveCount ?? 0) || 0,
         acknowledged: Number(summary.acknowledgedCount ?? 0) || 0,
-        recent,
+        // Newest 5 — what "Recent Activity" renders.
+        recent: rows.slice(0, 5),
+        // Every ACTIVE alert, grouped by machine — feeds the health score.
+        allActive: rows,
       };
+    }
+
+    // ── Factory Health Score, computed FRONTEND-side (src/lib/health.js) ────
+    // The backend route that does this measured 151–339 s, so the score is
+    // built here from the fleet + alert rows this thunk already fetched:
+    // each sensor owns 25 pts, split 12.5 degraded (WARNING) + 12.5 anomaly
+    // (HIGH/CRITICAL) — one ACTIVE alert per sensor IS that state. FAILURE → 0,
+    // MAINTENANCE → 50, OFFLINE → no score (null, dropped from the average).
+    // The factory score is the mean of the non-OFFLINE machines. Never
+    // fabricated — a machine with no status contributes no score.
+    const fleet = payload.allMachines || [];
+    if (fleet.length) {
+      const alertsByMachine = new Map();
+      (payload.alerts?.allActive || []).forEach((a) => {
+        const id = a?.machineId;
+        if (!id) return;
+        if (!alertsByMachine.has(id)) alertsByMachine.set(id, []);
+        alertsByMachine.get(id).push(a);
+      });
+      const scores = fleet.map((m) =>
+        // An ACTIVE alert row IS one sensor out of range (one per machine +
+        // sensorType), so its severity maps straight onto the model's two
+        // halves: WARNING → degraded (12.5), HIGH/CRITICAL → anomaly (25).
+        // `sensors:` is the ONLY input — passing both alerts and breaches used
+        // to charge the same sensor twice.
+        computeMachineHealth({
+          status: m?.status,
+          sensors: alertsByMachine.get(m?.id) || [],
+        })
+      );
+      payload.machineHealth = fleet.map((m, i) => ({
+        machineId: m?.id ?? null,
+        machineCode: m?.code || m?.name || "—",
+        score: scores[i],
+      }));
+      const factoryScore = computeFactoryHealth(scores);
+      if (factoryScore != null) payload.factoryHealthScore = factoryScore;
     }
 
     // KPIs: real Sprint 7 numbers when /kpis answers, overlaid on values
     // derived from the CONFIRMED data above (so a blocked /kpis still leaves
     // totals + alert counts on screen). Never fabricated — a null stays null.
     const derived = deriveKpis(payload.machines, payload.alerts) || {};
-    const api = ok(kpisRes) ? normalizeKpis(kpisRes.value, ov) : null;
+    const api = ok(kpisRes) ? normalizeKpis(kpisRes.value) : null;
     const merged = { ...derived };
     if (api) {
       Object.keys(api).forEach((k) => {
@@ -298,22 +342,29 @@ export const fetchDashboard = createAsyncThunk(
       });
       merged.deltas = api.deltas;
     }
-    if (ov) {
-      merged.totalMachines = toNum(ov.totalMachines) ?? merged.totalMachines;
-      merged.activeAlerts = toNum(ov.activeAlertsCount) ?? merged.activeAlerts;
-      merged.healthScore = toNum(ov.overallHealthScore);
-    }
+    // The backend's operating-minutes ratio does not count preventive work —
+    // replace it with the status-split definition (see computeAvailability).
+    const clientAvailability = computeAvailability(payload.statusCounts);
+    if (clientAvailability != null) merged.availability = clientAvailability;
+    // Frontend-computed score (src/lib/health.js) always wins over anything
+    // derived: it is instant, complete and is the average of every machine.
+    if (payload.factoryHealthScore != null) merged.healthScore = payload.factoryHealthScore;
     payload.kpisFromApi = Boolean(api);
     payload.kpis = Object.keys(merged).length ? merged : null;
 
     // A dashboard where every single block failed is a real error, not an
     // "empty factory" — let the screen show the retry state.
-    if (!payload.machines && !payload.alerts && !payload.interventions && !ov) {
+    if (!payload.machines && !payload.alerts && !payload.interventions) {
       return rejectWithValue({ message: "Could not load the dashboard." });
     }
     return payload;
   }
 );
+
+// GET /api/dashboard/health-scores is intentionally NOT called any more — it
+// measured 151–339 s (docs/api-contract.md). The Factory Health Score is
+// computed inside fetchDashboard instead, from the fleet + alert rows it
+// already has: see src/lib/health.js.
 
 const dashboardSlice = createSlice({
   name: "dashboard",
@@ -321,6 +372,8 @@ const dashboardSlice = createSlice({
     data: null,
     status: "idle", // 'idle' | 'loading' | 'succeeded' | 'error'
     error: null,
+    // Factory Health Score lives in data.kpis.healthScore (computed in the
+    // thunk) and data.factoryHealthScore (raw mean) — no extra request.
   },
   reducers: {
     clearDashboard(state) {
@@ -343,6 +396,8 @@ const dashboardSlice = createSlice({
         state.status = "error";
         state.error = action.payload || { message: "Could not load the dashboard." };
       });
+      // Factory Health Score: computed in the thunk (src/lib/health.js) —
+      // GET /api/dashboard/health-scores (151–339 s) is never dispatched.
   },
 });
 

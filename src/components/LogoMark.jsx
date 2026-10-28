@@ -1,18 +1,26 @@
 // src/components/LogoMark.jsx
 // Gear logo mark + "SmartFactory" wordmark used on login and sidebar.
 
-import { View, Text } from "react-native";
+import { View, Text, Image } from "react-native";
 
 export default function LogoMark({ size = "md", showText = true }) {
-  const gearSize = size === "lg" ? "w-12 h-12" : size === "sm" ? "w-6 h-6" : "w-8 h-8";
+  // Numeric sizes in an inline STYLE — react-native-web's <Image> ignores
+  // className, so `w-8 h-8` never reached the tag and the raw 1024×1024 icon
+  // overflowed the layout (review: "logo is toooooooooo big").
+  const px = size === "lg" ? 48 : size === "sm" ? 24 : 32;
   const textSize = size === "lg" ? "text-2xl" : size === "sm" ? "text-sm" : "text-lg";
   const subSize = size === "lg" ? "text-sm" : "text-xs";
 
   return (
     <View className="flex-row items-center gap-2">
-      <View className={`${gearSize} rounded-lg bg-primary items-center justify-center`}>
-        <Text className="text-white font-bold" style={{ fontSize: size === "lg" ? 20 : size === "sm" ? 10 : 14 }}>⚙</Text>
-      </View>
+      {/* The agreed app logo (app.json → ./assets/icon.png) replaces the old
+          ⚙ glyph so the mark is identical everywhere it appears. */}
+      <Image
+        source={require("../../assets/icon.png")}
+        resizeMode="contain"
+        style={{ width: px, height: px, borderRadius: size === "sm" ? 6 : 8 }}
+        accessibilityLabel="SmartFactory logo"
+      />
       {showText && (
         <View>
           <Text className={`${textSize} font-bold text-text font-inter`}>

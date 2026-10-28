@@ -266,7 +266,7 @@ export default function MachinesListScreen() {
           <View className="flex-row items-center justify-between mb-4 gap-3">
             <View className="flex-row gap-1 flex-1 flex-wrap">
               {STATUS_TABS.map((tab) => {
-                const active = filters.status === tab.key;
+                const active = tab.key == null ? !filters.status : String(filters.status || "").split(",").includes(tab.key);
                 const count = getCount(tab.key);
                 return (
                   <Pressable
@@ -488,7 +488,10 @@ export default function MachinesListScreen() {
         {/* All status filters, wrapped in rows */}
         <View className="flex-row flex-wrap gap-2 mb-3">
           {STATUS_TABS.map((tab) => {
-            const active = filters.status === tab.key;
+            const active =
+              tab.key == null
+                ? !filters.status
+                : String(filters.status || "").split(",").includes(tab.key);
             const count = getCount(tab.key);
             return (
               <Pressable

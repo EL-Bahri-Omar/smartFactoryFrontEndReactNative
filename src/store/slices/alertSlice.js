@@ -15,7 +15,10 @@ import * as alertService from "../services/alertService";
 
 // Alerts keep accumulating live; the list is capped so a long-running
 // session cannot grow forever.
-const MAX_LIST_SIZE = 200;
+// Cap for the GLOBAL alert list. Health scores count ACTIVE alerts per
+// machine+sensorType, so truncating here would silently drop sensors from the
+// score — the dashboard and map ask for 500 rows to cover the whole fleet.
+const MAX_LIST_SIZE = 500;
 
 export const fetchAlerts = createAsyncThunk(
   "alert/fetch",

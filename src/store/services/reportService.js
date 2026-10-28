@@ -1,48 +1,70 @@
 // src/store/services/reportService.js
 //
-// Sprint 7 (docs/prompts/13-reports.md). ALL THREE endpoints are ASSUMED —
-// there is no Report*/Dashboard* controller in the backend yet. A 404/500 is
-// expected until the coworker ships Sprint 7 and must surface as the chart's
-// empty/error state, never as fabricated data.
+// Reports — rewritten (review: "the reports screen does not show any data,
+// fix everything about it, you have everything you need in the backend").
+//
+// The old version called GET /api/reports/{downtime,performance,generate}.
+// Those routes were never implemented (there is no Report* controller in
+// smartFactoryBackEndSpringBoot), so every request 404'd and the screen sat
+// on "No data for this range" forever.
+//
+// The report is now COMPOSED from CONFIRMED endpoints that really exist:
+//
+//   GET /api/maintenance?page=0&size=1000&sort=createdAt,desc
+//   GET /api/alerts?page=0&size=1000&sort=timestamp,desc
+//   GET /api/machines?page=0&size=1000
+//   GET /api/dashboard/health-scores        (slow — 90 s budget, per machine)
+//
+// Date windows are applied CLIENT-SIDE from `createdAt` / `timestamp`, which
+// sidesteps the backend's strict ISO-8601 `from`/`to` parsing and lets the
+// previous window be compared for real deltas. The page size is 1000 rows; a
+// factory past that would need a server-side aggregate (documented in
+// docs/api-contract.md).
 
 import api from "../../lib/axios";
 import { ENDPOINTS } from "../../constants/api";
+import { getHealthScores as _getHealthScores } from "./dashboardService";
 
-/**
- * GET /api/reports/downtime?from=&to= — ASSUMED.
- * Expected shape (tolerant reader lives in reportSlice):
- *   { totalHours, deltaPercent, maintenanceCount, maintenanceDeltaPercent,
- *     avgHealthScore, healthDeltaPercent,
- *     byMachine: [{ machineCode, hours, percent }] }
- * @param {{ from?: string, to?: string }} [params] ISO dates
- */
-export async function getDowntime({ from, to } = {}) {
-  const params = {};
-  if (from) params.from = from;
-  if (to) params.to = to;
-  const response = await api.get(ENDPOINTS.REPORT_DOWNTIME, { params });
-  return response.data;
+const PAGE_SIZE = 1000;
+
+/** Spring `Page<T>` → `content`, tolerating a bare array too. */
+function rowsOf(res) {
+  const data = res?.data;
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.content)) return data.content;
+  if (Array.isArray(data?.list)) return data.list;
+  return [];
+}
+
+/** All interventions in one page (raw rows — we need `durationMinutes`). */
+export async function getMaintenance() {
+  const res = await api.get(ENDPOINTS.INTERVENTIONS, {
+    params: { page: 0, size: PAGE_SIZE, sort: "createdAt,desc" },
+  });
+  return rowsOf(res);
+}
+
+/** All alerts in one page. */
+export async function getAlerts() {
+  const res = await api.get(ENDPOINTS.ALERTS, {
+    params: { page: 0, size: PAGE_SIZE, sort: "timestamp,desc" },
+  });
+  return rowsOf(res);
+}
+
+/** All machines in one page. */
+export async function getMachines() {
+  const res = await api.get(ENDPOINTS.MACHINES, {
+    params: { page: 0, size: PAGE_SIZE, sort: "code,asc" },
+  });
+  return rowsOf(res);
 }
 
 /**
- * GET /api/reports/performance?range= — ASSUMED.
- * range: "this_week" | "this_month" | "last_month"
- * Expected shape:
- *   { machines: ["CNC", ...],
- *     series: [{ key, label, color, values: [{ machineCode, value }] }] }
- * (an array of series, or a `values` object map, is also accepted)
- * @param {{ range?: string }} [params]
+ * GET /api/dashboard/health-scores → `{ totalMachines, averageScore,
+ * distribution, machines: [{ machineCode, score, grade }] }`.
+ * Shared with the dashboard (same 90 s timeout, same route).
  */
-export async function getPerformance({ range = "this_month" } = {}) {
-  const response = await api.get(ENDPOINTS.REPORT_PERFORMANCE, { params: { range } });
-  return response.data;
-}
-
-/**
- * POST /api/reports/generate — ASSUMED.
- * @param {{ tab?: string, range?: string, from?: string, to?: string, format?: string }} body
- */
-export async function generateReport(body = {}) {
-  const response = await api.post(ENDPOINTS.REPORT_GENERATE, body);
-  return response.data;
+export async function getHealthScores() {
+  return _getHealthScores();
 }

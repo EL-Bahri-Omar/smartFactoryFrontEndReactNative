@@ -3,8 +3,9 @@
 // Menus are organized in collapsible groups, each with its own submenu list.
 // Per ui-notes: bg #0B1D3A, text #C7D2E1, active pill #1E3A8A.
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { View, Text, Pressable, ScrollView } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { View, Text, Pressable, ScrollView, Image } from "react-native";
+import Svg, { Polyline } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { usePathname, useRouter } from "expo-router";
 import { useRole } from "../hooks/useRole";
@@ -60,28 +61,72 @@ const NAV_GROUPS = [
   },
 ];
 
+/**
+ * Sidebar UI memory, in MODULE scope on purpose.
+ *
+ * Every screen renders its own <AppShell>, so this component unmounts and
+ * remounts on EVERY navigation. React state died with it, which is exactly the
+ * review complaint: "when i select a menu … the sidebar scrolls to the top and
+ * the drop downs reopen themselves automatically". Parking the collapse map and
+ * the scroll offset here makes a remount indistinguishable from a re-render.
+ */
+const SIDEBAR_UI = { collapsed: {}, scrollY: 0 };
+
+/**
+ * Dropdown arrow, drawn immediately after the group label (no `flex-1` pushing
+ * it to the far edge) so it reads as belonging to that row — review: "make each
+ * arrow looks belonging to the menu in front of it".
+ */
+function Chevron({ open, color }) {
+  return (
+    <Svg width={11} height={11} viewBox="0 0 11 11">
+      <Polyline
+        points={open ? "2,3.75 5.5,7.25 9,3.75" : "3.75,1.75 7.25,5.5 3.75,9.25"}
+        fill="none"
+        stroke={color}
+        strokeWidth={1.7}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
 export default function Sidebar({ user, onNavigate }) {
   const pathname = usePathname();
   const router = useRouter();
   const { canAccess, role, isAdmin, hasAnyPermission } = useRole();
-  const [collapsed, setCollapsed] = useState({});
+  const [collapsed, setCollapsed] = useState(() => ({ ...SIDEBAR_UI.collapsed }));
+  const [userPressed, setUserPressed] = useState(false);
   const scrollRef = useRef(null);
-  const scrollY = useRef(0);
   // In the mobile/tablet drawer the sidebar starts at the very top of the
   // screen — pad below the status bar (0 on desktop web).
   const insets = useSafeAreaInsets();
 
-  // Restore scroll position after route change re-renders
+  // Mirror the live state back into module scope so the NEXT mount restores it.
   useEffect(() => {
-    if (scrollRef.current && scrollY.current > 0) {
-      // On web, directly set the DOM scrollTop for instant restore
+    SIDEBAR_UI.collapsed = collapsed;
+  }, [collapsed]);
+
+  // Restore scroll position after mount AND after each route change. On web
+  // the ScrollView's DOM node is only attached a frame later, so the position
+  // is applied three times (sync, rAF, timeout) — whichever lands last wins.
+  useEffect(() => {
+    const y = SIDEBAR_UI.scrollY;
+    if (!y) return undefined;
+    const apply = () => {
       const node = scrollRef.current;
-      if (node?.scrollTo) {
-        requestAnimationFrame(() => {
-          node.scrollTo({ y: scrollY.current, animated: false });
-        });
-      }
-    }
+      if (!node) return;
+      if (node.scrollTo) node.scrollTo({ y, animated: false });
+      else if (typeof node.scrollTop === "number") node.scrollTop = y;
+    };
+    apply();
+    const raf = requestAnimationFrame(apply);
+    const timer = setTimeout(apply, 80);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
   }, [pathname]);
 
   function go(path) {
@@ -118,15 +163,22 @@ export default function Sidebar({ user, onNavigate }) {
 
   return (
     <View
-      className="w-60 bg-sidebar h-full"
+      className="w-[268px] bg-sidebar h-full"
       style={{ minHeight: "100vh", paddingTop: insets.top }}
     >
-      {/* Logo */}
+      {/* Logo — the agreed app icon (app.json → ./assets/icon.png), not the
+          old gear glyph */}
       <View className="px-5 pt-6 pb-4">
         <View className="flex-row items-center gap-2">
-          <View className="w-8 h-8 rounded-lg bg-primary items-center justify-center">
-            <Text className="text-white font-bold" style={{ fontSize: 14 }}>⚙</Text>
-          </View>
+          {/* Inline style, NOT className: react-native-web's <Image> drops the
+              className prop, so w-8/h-8 never applied and the 1024×1024 icon
+              bled across the page. */}
+          <Image
+            source={require("../../assets/icon.png")}
+            resizeMode="contain"
+            style={{ width: 32, height: 32, borderRadius: 8 }}
+            accessibilityLabel="SmartFactory logo"
+          />
           <View>
             <Text className="text-lg font-bold text-white font-inter">SmartFactory</Text>
             <Text className="text-xs text-sidebar-text font-inter">Industrial Intelligence</Text>
@@ -141,26 +193,42 @@ export default function Sidebar({ user, onNavigate }) {
         ref={scrollRef}
         style={{ flex: 1, paddingHorizontal: 12, paddingTop: 12 }}
         showsVerticalScrollIndicator={false}
-        onScroll={(e) => { scrollY.current = e.nativeEvent.contentOffset.y; }}
+        onScroll={(e) => {
+          SIDEBAR_UI.scrollY = e.nativeEvent.contentOffset.y;
+        }}
         scrollEventThrottle={16}
       >
         {groups.map((group, gi) => {
           const isCollapsed = !!collapsed[group.key];
           const hasActiveChild = group.items.some((item) => isActive(item.path));
+          // The group stays EXACTLY as the user left it — `hasActiveChild`
+          // only colours the header, it no longer forces the group open (that
+          // was the "drop downs reopen themselves" bug).
+          const open = !isCollapsed;
+          const chevronColor = open
+            ? hasActiveChild
+              ? "#FFFFFF"
+              : "rgba(199,210,225,0.85)"
+            : "rgba(199,210,225,0.55)";
           return (
             <View key={group.key} className={gi > 0 ? "mt-1" : ""}>
               <Pressable
                 onPress={() => toggleGroup(group.key)}
-                className="flex-row items-center px-3 pt-2.5 pb-1.5"
+                className="flex-row items-center gap-1.5 px-3 pt-2.5 pb-1.5"
+                style={({ pressed }) => (pressed ? { opacity: 0.65 } : {})}
               >
-                <Text className={`text-[11px] font-bold font-inter uppercase flex-1 ${hasActiveChild ? "text-white" : "text-sidebar-text/70"}`} style={{ letterSpacing: 1 }}>
+                <Text
+                  className={`text-[11px] font-bold font-inter uppercase ${
+                    hasActiveChild ? "text-white" : "text-sidebar-text/70"
+                  }`}
+                  style={{ letterSpacing: 1 }}
+                >
                   {group.label}
                 </Text>
-                <Text className="text-[10px] text-sidebar-text/70">
-                  {isCollapsed && !hasActiveChild ? "›" : "⌄"}
-                </Text>
+                {/* Sits right beside the label instead of at the far edge. */}
+                <Chevron open={open} color={chevronColor} />
               </Pressable>
-              {(!isCollapsed || hasActiveChild) && (
+              {open && (
                 <View
                   className="ml-3 pl-2 mb-1"
                   style={{ borderLeftWidth: 1, borderLeftColor: "rgba(199,210,225,0.15)" }}
@@ -192,18 +260,36 @@ export default function Sidebar({ user, onNavigate }) {
         })}
       </ScrollView>
 
-      {/* User footer -> profile */}
+      {/* User footer -> profile. Its own surface (light blue-tinted background
+          + blue border) so it reads as a button, not as plain sidebar text.
+          The colours are a PLAIN style object driven by press state: the
+          previous `style={({pressed}) => …}` function form never applied, so
+          the card fell back to the sidebar fill with RN's default black
+          border — exactly what the review reported. */}
       <View className="h-px bg-white/10 mx-4" />
-      <Pressable onPress={() => go("/(app)/profile")} className="px-4 py-4 flex-row items-center gap-3">
+      {/* `mx-1.5 px-2.5 gap-2` (was mx-3 px-3 gap-3) — widening the rail alone
+          is not enough for the name: every horizontal px of margin, padding and
+          gap was stolen from it, so long names ellipsised. Review: "let the
+          sidebar user card be wider and reduce the padding inside the card, the
+          goal is that the full name appears". */}
+      <Pressable
+        onPress={() => go("/(app)/profile")}
+        onPressIn={() => setUserPressed(true)}
+        onPressOut={() => setUserPressed(false)}
+        className="mx-1.5 my-3 px-2.5 py-3 flex-row items-center gap-2 rounded-2xl border border-[rgba(59,130,246,0.85)]"
+        style={{
+          backgroundColor: userPressed ? "rgba(147,197,253,0.55)" : "rgba(96,165,250,0.35)",
+          borderColor: "rgba(59,130,246,0.85)",
+        }}
+      >
         <Avatar name={user?.firstName ? `${user.firstName} ${user.lastName || ""}` : "User"} size="sm" />
         <View className="flex-1">
           <Text className="text-sm text-white font-medium font-inter" numberOfLines={1}>
             {user?.firstName ? `${user.firstName} ${user.lastName || ""}` : "User"}
           </Text>
-          <Text className="text-xs text-sidebar-text font-inter">
-            {user?.role || "—"}
-          </Text>
+          <Text className="text-xs text-sidebar-text font-inter">{user?.role || "—"}</Text>
         </View>
+        <Text className="text-base font-extrabold text-white leading-4">❯</Text>
       </Pressable>
     </View>
   );

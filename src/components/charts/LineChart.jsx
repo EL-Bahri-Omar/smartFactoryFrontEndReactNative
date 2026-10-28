@@ -94,6 +94,29 @@ export default function LineChart({
   const [width, setWidth] = useState(0);
   const dark = useDark();
   const pulse = useRef(new Animated.Value(0.35)).current;
+  const hostRef = useRef(null);
+
+  // react-native-web does NOT deliver `onLayout` for a chart mounted inside a
+  // tab panel: on the machine-details "Live Sensors" tab the host measured
+  // fine (966 px) while `width` stayed 0, so `{width > 0 && <Svg>}` hid the
+  // ENTIRE chart — grid, series and the dashed orange/red threshold lines.
+  // Measure the host node ourselves and keep it fresh with a ResizeObserver;
+  // `onLayout` below stays as the native path.
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el || typeof el.getBoundingClientRect !== "function") return undefined;
+    const apply = () => {
+      const w = Math.round(el.getBoundingClientRect().width);
+      if (w > 0) setWidth((prev) => (prev === w ? prev : w));
+    };
+    apply();
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(apply);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+    return undefined;
+  }, []);
 
   useEffect(() => {
     if (!pulseLast) return undefined;
@@ -166,6 +189,7 @@ export default function LineChart({
 
   return (
     <View
+      ref={hostRef}
       style={{ width: "100%", height }}
       onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
     >

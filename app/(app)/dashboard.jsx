@@ -9,10 +9,11 @@
 // Those three are ADMIN | RESPONSABLE | TECHNICIAN only, so a role that
 // cannot call them still gets a usable page from the derived counts.
 //
-// OEE itself is answered `status: "UNAVAILABLE", value: null` by the backend
-// (production data is not instrumented) — the header shows that honestly and
-// the three charts below plot the real series the backend does return:
-// downtime per bucket, machines per zone, availability per bucket.
+// OEE was REMOVED from this screen (review: "remove the oee and its
+// unavailable status") — the backend declares it UNAVAILABLE by business rule
+// and a badge saying so is still noise. In its place: the three real charts
+// (Availability Over Time first) with a slim MTBF / MTTR / Downtime / Failures
+// card row underneath.
 //
 // Map: reuses src/components/FactoryMap.jsx with variant="compact" — the
 // single source shared with Map & Zones. Zones are grouped client-side from
@@ -47,7 +48,9 @@ import { useAppSelector } from "../../src/hooks/useAppSelector";
 import { useLiveTopic } from "../../src/hooks/useLiveTopic";
 import { useDialog } from "../../src/components/dialog/DialogContext";
 import { fetchDashboard } from "../../src/store/slices/dashboardSlice";
+import { useReconnecting } from "../../src/hooks/useReconnecting";
 import { fetchZones } from "../../src/store/slices/zoneSlice";
+import { setFilters } from "../../src/store/slices/machineSlice";
 import { getMachineStatus } from "../../src/lib/status";
 import { relativeTime } from "../../src/lib/time";
 
@@ -89,7 +92,9 @@ export default function DashboardScreen() {
 
   const { data, status, error } = useAppSelector((s) => s.dashboard);
   const { list: zones, status: zoneStatus } = useAppSelector((s) => s.zone);
-  const liveConnected = useAppSelector((s) => s.live.connected);
+  // Only a genuine DROP (connected → dropped) shows a badge; the first
+  // connect is startup and must not flash "Reconnecting…".
+  const reconnecting = useReconnecting();
 
   // ASSUMED destination — documents itself in liveSlice.messagesByTopic, which
   // is where the "live" state of this screen comes from.
@@ -102,6 +107,9 @@ export default function DashboardScreen() {
   const [overviewY, setOverviewY] = useState(0);
 
   const load = useCallback(() => {
+    // One parallel fan-out. The Factory Health Score is computed INSIDE this
+    // thunk from the fleet + alert rows it already fetches (src/lib/health.js)
+    // — the backend health route measured 151–339 s and is never called.
     dispatch(
       fetchDashboard({
         machines: canReadMachines,
@@ -142,7 +150,6 @@ export default function DashboardScreen() {
   const loading = (status === "loading" || status === "idle") && !data;
   const loadFailed = status === "error" && !data;
   const kpis = data?.kpis || null;
-  const kpisFromApi = Boolean(data?.kpisFromApi);
   const history = data?.history || [];
   const machineRows = data?.machineRows || [];
   const allMachines = data?.allMachines || [];
@@ -150,21 +157,31 @@ export default function DashboardScreen() {
   // ── Machine status cards — ONE line (docs/ui/machines_count_cards.png) ────
   // Real counts. `statusCounts` comes from GET /api/dashboard/overview (whole
   // fleet) and falls back to the counted GET /api/machines page.
-  // "To be repaired" = FAILURE + OFFLINE (nothing is being worked on yet),
-  // "Under Repair" = MAINTENANCE (technician on it) — same split as the image.
+  // "To be repaired" = FAILURE (broken, nobody on it yet), "Under Repair" =
+  // MAINTENANCE (technician on it) — same split as the image. OFFLINE is a
+  // connectivity state, NOT a repair job, so it stays out of this tile.
   const mc = data?.statusCounts || null;
   const statusCardCls = isMobile ? "w-[152px]" : "flex-1 min-w-[116px]";
+  // Each tile jumps to the Machines screen with its status pre-selected
+  // (review: "total machines -> machines page, working -> filter=running").
+  // "To be repaired" spans two statuses, so the machines fetch filters those
+  // client-side — see fetchMachines in machineSlice.js.
+  const goMachines = (status) => () => {
+    dispatch(setFilters({ status, search: "", zoneId: null }));
+    router.push("/(app)/machines");
+  };
   const statusDefs = [
-    { key: "total", label: "Total Machines", value: mc ? mc.total : null, icon: "🏭", color: "#0EA5A4" },
-    { key: "working", label: "Working", value: mc ? mc.RUNNING : null, icon: "✅", color: "#16A34A" },
-    { key: "idle", label: "Idle", value: mc ? mc.IDLE : null, icon: "⏸️", color: "#0EA5E9" },
-    { key: "repair", label: "Under Repair", value: mc ? mc.MAINTENANCE : null, icon: "🔧", color: "#F59E0B" },
+    { key: "total", label: "Total Machines", value: mc ? mc.total : null, icon: "🏭", color: "#0EA5A4", status: null },
+    { key: "working", label: "Working", value: mc ? mc.RUNNING : null, icon: "✅", color: "#16A34A", status: "RUNNING" },
+    { key: "idle", label: "Idle", value: mc ? mc.IDLE : null, icon: "⏸️", color: "#0EA5E9", status: "IDLE" },
+    { key: "repair", label: "Under Repair", value: mc ? mc.MAINTENANCE : null, icon: "🔧", color: "#F59E0B", status: "MAINTENANCE" },
     {
       key: "toberepaired",
       label: "To be repaired",
-      value: mc ? mc.FAILURE + mc.OFFLINE : null,
+      value: mc ? mc.FAILURE : null,
       icon: "📖",
       color: "#DC2626",
+      status: "FAILURE",
     },
   ];
 
@@ -177,6 +194,7 @@ export default function DashboardScreen() {
       icon={c.icon}
       color={c.color}
       loading={loading}
+      onPress={goMachines(c.status)}
     />
   ));
 
@@ -193,8 +211,9 @@ export default function DashboardScreen() {
   // ── KPI line — Machines Availability · Active Alerts · Factory Health
   // Score, all in ONE line (review: "rename Availability to Machines
   // Availability, and add factory health score card in the same line").
-  // Real numbers: availability from /kpis, alerts from /overview +
-  // /alerts/summary, health from /overview.overallHealthScore.
+  // Real numbers: availability from /kpis, alerts from /alerts/summary,
+  // health computed client-side (src/lib/health.js) — the backend route that
+  // did it measured 151–339 s and is no longer called.
   const kpiDefs = [
     {
       key: "availability",
@@ -216,13 +235,19 @@ export default function DashboardScreen() {
     {
       key: "health",
       label: "Factory Health Score",
+      // FRONTEND calculation (src/lib/health.js): mean of every machine's
+      // score. The backend route for this measured 151–339 s and is not used.
       value: kpis?.healthScore,
       unit: "/100",
-      icon: "🩺",
-      iconBgClass: "bg-[#22C55E]/10",
+      // Circular gauge, red / orange / green by score band (review).
+      ring: true,
     },
   ];
 
+  // Every card is a door (review: "let the dashboards cards be clickable and
+  // take to the right destination"). The status tiles land on the Machines
+  // screen with that status already selected; the KPI line lands on the map
+  // (availability), the alerts list and the reports.
   const kpiCards = kpiDefs.map((k) => (
     <KpiCard
       key={k.key}
@@ -232,14 +257,24 @@ export default function DashboardScreen() {
       delta={k.delta}
       icon={k.icon}
       iconBgClass={k.iconBgClass}
+      ring={Boolean(k.ring)}
       loading={loading}
+      onPress={
+        k.key === "availability"
+          ? () => router.push("/(app)/map")
+          : k.key === "alerts"
+            ? () => router.push("/(app)/alerts")
+            : k.key === "health"
+              ? () => router.push("/(app)/reports")
+              : undefined
+      }
       // Mobile renders the line inside a horizontal ScrollView, where flex-1
       // has no bounded width to grow into — give it an explicit one.
       className={isMobile ? "w-[176px]" : ""}
     />
   ));
 
-  const reconnectChip = !liveConnected ? (
+  const reconnectChip = reconnecting ? (
     <View
       className={`self-start flex-row items-center gap-1.5 px-2.5 py-1 rounded-chip border ${
         dark ? "border-white/15 bg-white/5" : "border-border bg-bg"
@@ -282,25 +317,9 @@ export default function DashboardScreen() {
   });
   const mapZones = slotZones.map((z) => ({ ...z, id: z.slot, realId: z.id }));
 
-  // ── OEE block — docs/ui/OEE.png, now fed by Sprint 7 ─────────────────────
-  // `/kpis.oee` is answered `{ status: "UNAVAILABLE", value: null }` by
-  // backend business rule (good parts / cycle time / rejects are not
-  // instrumented by the sensors), so the header SAYS that instead of printing
-  // a number. The three cards plot the real series the backend does return —
-  // there are no demo figures left on this screen.
-  const oeeValue = kpis?.oee ?? null;
-  const oeeUnavailable = oeeValue == null;
-  const oeeBadge = oeeUnavailable
-    ? kpisFromApi
-      ? kpis?.oeeStatus || "UNAVAILABLE"
-      : "NO DATA"
-    : null;
-  const oeeSubtitle = !kpisFromApi
-    ? "KPIs are ADMIN · RESPONSABLE · TECHNICIAN only on this backend."
-    : oeeUnavailable
-      ? "Unavailable — good-parts count, rejects and cycle time aren't instrumented."
-      : "Overall Equipment Effectiveness";
-
+  // ── Charts — Availability Over Time is first (review), then the downtime
+  // bars, then the per-zone split. Real series from /kpis/history + the
+  // machine rows already on screen; no demo figures exist here.
   const chartEmpty = (text) => (
     <View className="items-center justify-center" style={{ height: 112 }}>
       <Text className={`text-xs font-inter ${darkMuted}`}>{text}</Text>
@@ -347,6 +366,36 @@ export default function DashboardScreen() {
 
   const oeeCards = [
     {
+      // FIRST card, per review: "let the Availability Over Time be first".
+      key: "availability",
+      title: "Availability Over Time",
+      icon: "📈",
+      legend: [{ id: "availability", label: "Availability %", color: "#22C55E" }],
+      body:
+        availabilityPoints.length > 1 ? (
+          <LineChart
+            series={[
+              {
+                id: "availability",
+                color: "#22C55E",
+                data: availabilityPoints.map((p) => ({
+                  x: new Date(p.timestamp).getTime(),
+                  y: p.availability,
+                })),
+              },
+            ]}
+            xTickValues={availabilityPoints.map((p) => new Date(p.timestamp).getTime())}
+            xTickFormat={weekdayLabel}
+            yMin={0}
+            yMax={100}
+            yTickCount={6}
+            height={118}
+          />
+        ) : (
+          chartEmpty("Not enough history yet.")
+        ),
+    },
+    {
       key: "downtime",
       title: "Downtime by Day",
       icon: "📊",
@@ -385,98 +434,43 @@ export default function DashboardScreen() {
         chartEmpty("No machines grouped by zone yet.")
       ),
     },
+  ];
+
+  // MTBF · MTTR · Downtime · Failures — slim cards, all on ONE line, sitting
+  // UNDER the charts (review: "keep the chart over them").
+  const slimStats = [
+    { key: "mtbf", label: "MTBF", value: kpis?.mtbf != null ? `${kpis.mtbf} h` : "—" },
+    { key: "mttr", label: "MTTR", value: kpis?.mttr != null ? `${kpis.mttr} min` : "—" },
     {
-      key: "availability",
-      title: "Availability Over Time",
-      icon: "📈",
-      legend: [{ id: "availability", label: "Availability %", color: "#22C55E" }],
-      body:
-        availabilityPoints.length > 1 ? (
-          <LineChart
-            series={[
-              {
-                id: "availability",
-                color: "#22C55E",
-                data: availabilityPoints.map((p) => ({
-                  x: new Date(p.timestamp).getTime(),
-                  y: p.availability,
-                })),
-              },
-            ]}
-            xTickValues={availabilityPoints.map((p) => new Date(p.timestamp).getTime())}
-            xTickFormat={weekdayLabel}
-            yMin={0}
-            yMax={100}
-            yTickCount={6}
-            height={118}
-          />
-        ) : (
-          chartEmpty("Not enough history yet.")
-        ),
+      key: "down",
+      label: "Downtime",
+      value: kpis?.downtimeMinutes != null ? `${kpis.downtimeMinutes} min` : "—",
+    },
+    {
+      key: "fail",
+      label: "Failures",
+      value: kpis?.mtbfFailures != null ? String(kpis.mtbfFailures) : "—",
     },
   ];
 
-  const oeeChips = [
-    kpis?.mtbf != null ? { key: "mtbf", label: "MTBF", value: `${kpis.mtbf} h` } : null,
-    kpis?.mttr != null ? { key: "mttr", label: "MTTR", value: `${kpis.mttr} min` } : null,
-    kpis?.downtimeMinutes != null
-      ? { key: "down", label: "Downtime", value: `${kpis.downtimeMinutes} min` }
-      : null,
-    kpis?.mtbfFailures != null
-      ? { key: "fail", label: "Failures", value: String(kpis.mtbfFailures) }
-      : null,
-  ].filter(Boolean);
-
-  const oeeBlock = (
-    <View className="mt-6">
-      {/* Section header: icon · title · big OEE value · real status badge */}
-      <View className="flex-row items-start gap-3 mb-3">
-        <View
-          className="w-9 h-9 rounded-md items-center justify-center"
-          style={{ backgroundColor: "#22C55E26" }}
-        >
-          <Text className="text-base">📈</Text>
-        </View>
-        <View className="flex-1">
-          <Text className={`text-base font-bold font-inter ${darkText}`}>OEE Overview</Text>
-          <Text className={`text-xs font-inter ${darkMuted}`} numberOfLines={2}>
-            {oeeSubtitle}
-          </Text>
-        </View>
-        <View className="items-end">
-          <Text className={`text-2xl font-bold font-inter ${darkText}`}>
-            {oeeUnavailable ? "—" : `${oeeValue}%`}
-          </Text>
-          {oeeBadge ? (
-            <View className="mt-0.5 px-2 py-0.5 rounded-chip bg-warning/15 border border-warning/40">
-              <Text className="text-[9px] font-bold font-inter text-warning">{oeeBadge}</Text>
-            </View>
-          ) : (
-            <View className="mt-0.5 px-2 py-0.5 rounded-chip bg-success/15 border border-success/40">
-              <Text className="text-[9px] font-bold font-inter text-success">LIVE</Text>
-            </View>
-          )}
-        </View>
+  const slimRow = isMobile ? (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <View className="flex-row gap-3 pr-4">
+        {slimStats.map((s) => (
+          <SlimStat key={s.key} label={s.label} value={s.value} dark={dark} />
+        ))}
       </View>
+    </ScrollView>
+  ) : (
+    <View className="flex-row gap-3">
+      {slimStats.map((s) => (
+        <SlimStat key={s.key} label={s.label} value={s.value} dark={dark} />
+      ))}
+    </View>
+  );
 
-      {/* MTBF / MTTR / downtime / failures — real scalars from /kpis */}
-      {oeeChips.length ? (
-        <View className="flex-row flex-wrap gap-2 mb-3">
-          {oeeChips.map((c) => (
-            <View
-              key={c.key}
-              className={`flex-row items-baseline gap-1.5 px-2.5 py-1 rounded-chip border ${
-                dark ? "border-white/15 bg-white/5" : "border-border bg-bg"
-              }`}
-            >
-              <Text className={`text-[10px] font-inter font-semibold ${darkMuted}`}>{c.label}</Text>
-              <Text className={`text-xs font-bold font-inter ${darkText}`}>{c.value}</Text>
-            </View>
-          ))}
-        </View>
-      ) : null}
-
-      {/* All three cards on ONE line so the map below stays in view. */}
+  const chartsBlock = (
+    <View className="mt-6">
       {isMobile ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <View className="flex-row gap-3 pr-4">
@@ -492,6 +486,7 @@ export default function DashboardScreen() {
           ))}
         </View>
       )}
+      <View className="mt-3">{slimRow}</View>
     </View>
   );
 
@@ -725,7 +720,7 @@ export default function DashboardScreen() {
           contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
         >
           {kpiRow}
-          {oeeBlock}
+          {chartsBlock}
 
           <View className="mt-6 gap-4">
             <View>
@@ -756,15 +751,43 @@ export default function DashboardScreen() {
         contentContainerStyle={{ padding: 24, paddingBottom: 40 }}
       >
         {kpiRow}
-        {oeeBlock}
+        {chartsBlock}
 
-        {/* Row 2 — ~60 / 40 */}
+        {/* Factory Overview + Machine Status side by side again (review:
+            "i want Machine Status back beside the map overview"). */}
         <View className="flex-row gap-4 mt-6" style={{ alignItems: "stretch" }}>
           <View style={{ flex: 0.6 }}>{factoryOverview}</View>
           <View style={{ flex: 0.4 }}>{machineStatus}</View>
         </View>
       </ScrollView>
     </AppShell>
+  );
+}
+
+/**
+ * Slim MTBF / MTTR / Downtime / Failures card — one line UNDER the charts
+ * (review: "let these have slim cards all over the line … keep the chart over
+ * them"). Label and value sit on ONE line, side by side, so the row reads
+ * like a strip of figures instead of two stacked lines per card.
+ */
+function SlimStat({ label, value, dark }) {
+  return (
+    <Card className="flex-1 min-w-[140px]">
+      <View className="flex-row items-center justify-between gap-2">
+        <Text
+          className={`text-[11px] font-inter shrink ${dark ? "text-white/55" : "text-text-muted"}`}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+        <Text
+          className={`text-sm font-bold font-inter shrink-0 ${dark ? "text-white" : "text-text"}`}
+          numberOfLines={1}
+        >
+          {value ?? "—"}
+        </Text>
+      </View>
+    </Card>
   );
 }
 

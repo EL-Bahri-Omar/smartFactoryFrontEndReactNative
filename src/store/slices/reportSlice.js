@@ -1,18 +1,27 @@
 ﻿// src/store/slices/reportSlice.js
 //
-// Sprint 7 — Reports (docs/prompts/13-reports.md).
+// Reports — rebuilt on CONFIRMED data (see reportService.js).
 //
-// State shape required by the prompt:
-//   { downtime, performance, range, status, error }
-// plus `generating` for the "Generate Report" button spinner.
+// The old slice called the ASSUMED /api/reports/{downtime,performance} routes,
+// which do not exist on the backend, so `downtimeAvailable` stayed false and
+// the screen permanently rendered its empty state. Everything below is now
+// derived from real backend rows:
 //
-// All three endpoints are ASSUMED (no Report* controller in the backend yet).
-// A 404 resolves to a *successful* fetch with `available: false` so the screen
-// renders its empty state ("No data for this range") instead of an alarming
-// red error; a 500/network failure is a real error and carries `retry`.
+//   Total Downtime (h)   ← corrective interventions in the window
+//   Maintenance Count     ← every intervention in the window
+//   Avg. Health Score     ← /api/dashboard/health-scores.averageScore
+//   Downtime by Machine   ← same corrective rows, grouped by machineCode
+//   Machine health bars   ← health-scores.machines[].score
+//   Fleet donut           ← /api/machines grouped by status
+//   Alerts bar            ← /api/alerts in the window, grouped by severity
+//
+// The selected range is a CLIENT-SIDE window over `createdAt` / `timestamp`,
+// and the previous window of equal length is used for the delta chips.
 
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import * as reportService from "../services/reportService";
+import { getMachineStatus } from "../../lib/status";
+import { computeMachineHealth, computeFactoryHealth } from "../../lib/health";
 
 export const RANGES = [
   { key: "this_week", label: "This Week" },
@@ -20,201 +29,224 @@ export const RANGES = [
   { key: "last_month", label: "Last Month" },
 ];
 
+const DAY = 86400000;
+
 const toNum = (v) =>
   v == null || v === "" || Number.isNaN(Number(v)) ? null : Number(v);
-
-const isMissing = (err) => {
-  const status = err?.status ?? err?.response?.status;
-  return status === 404 || status === 405;
-};
 
 function errorPayload(err, fallback) {
   return {
     message: err?.message || fallback,
     status: err?.status ?? err?.response?.status ?? null,
-    notFound: isMissing(err),
   };
 }
 
-/**
- * Tolerant reader for `GET /api/reports/downtime`.
- * Returns `{ totalHours, deltaPercent, maintenanceCount,
- * maintenanceDeltaPercent, avgHealthScore, healthDeltaPercent, byMachine }`.
- * Accepts a bare array (= byMachine), a `downtime` wrapper, or the flat shape
- * documented in reportService. Missing numbers stay null → card shows "—".
- */
-function normalizeDowntime(raw) {
-  if (raw == null) return null;
-  const src = Array.isArray(raw)
-    ? { byMachine: raw }
-    : raw.downtime && typeof raw.downtime === "object"
-      ? raw.downtime
-      : raw;
+/** Range key → `{ start, end, prevStart, prevEnd }` (equal-length previous). */
+function windowFor(range) {
+  const now = new Date();
+  let start;
+  let end;
+  if (range === "last_month") {
+    start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    end = new Date(now.getFullYear(), now.getMonth(), 1);
+  } else if (range === "this_week") {
+    start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    // Monday-first so "This Week" matches the dashboard's Mon…Sun buckets.
+    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+    end = now;
+  } else {
+    start = new Date(now.getFullYear(), now.getMonth(), 1);
+    end = now;
+  }
+  const span = Math.max(end - start, DAY);
+  return { start, end, prevStart: new Date(start.getTime() - span), prevEnd: start };
+}
 
-  const byRaw = src.byMachine || src.machines || src.breakdown || src.byMachineCode || [];
-  const byMachine = (Array.isArray(byRaw) ? byRaw : [])
-    .map((d, i) => ({
-      key: d.machineCode || d.code || d.id || d.machineId || `m${i}`,
-      label: d.machineCode || d.code || d.machineName || d.name || "—",
-      value:
-        toNum(d.hours) ??
-        toNum(d.downtimeHours) ??
-        toNum(d.totalHours) ??
-        toNum(d.value) ??
-        toNum(d.durationHours) ??
-        0,
-      color: d.color,
-    }))
-    .filter((d) => d.value > 0);
+/** Custom ISO/date inputs → the same shape; null when neither is readable. */
+function customWindow(from, to) {
+  const s = from ? new Date(from) : null;
+  const e = to ? new Date(to) : null;
+  const start = s && !Number.isNaN(s.getTime()) ? s : new Date(0);
+  const end = e && !Number.isNaN(e.getTime()) ? e : new Date();
+  if (!s && !e) return null;
+  const span = Math.max(end - start, DAY);
+  return { start, end, prevStart: new Date(start.getTime() - span), prevEnd: start };
+}
 
+const inWin = (iso, a, b) => {
+  const t = new Date(iso).getTime();
+  return Number.isFinite(t) && t >= a.getTime() && t <= b.getTime();
+};
+
+/** Backend rule: only CORRECTIVE interventions consume availability. */
+function downtimeOf(rows, a, b) {
+  const win = rows.filter((r) => inWin(r?.createdAt, a, b));
+  const corrective = win.filter((r) => (r.type || "CORRECTIVE") === "CORRECTIVE");
+  let minutes = 0;
+  const byMachine = new Map();
+  corrective.forEach((r) => {
+    // Same fallback the backend uses (DashboardService.getKpis): an
+    // intervention without a recorded duration counts as one hour.
+    const m = Number(r?.durationMinutes) > 0 ? Number(r.durationMinutes) : 60;
+    minutes += m;
+    const key = r?.machineCode || r?.machineId || "Unknown";
+    byMachine.set(key, (byMachine.get(key) || 0) + m);
+  });
   return {
-    totalHours:
-      toNum(src.totalHours) ?? toNum(src.hours) ?? toNum(src.totalDowntime) ?? null,
-    deltaPercent: toNum(src.deltaPercent ?? src.totalDeltaPercent ?? src.downtimeDeltaPercent),
-    maintenanceCount:
-      toNum(src.maintenanceCount) ?? toNum(src.interventionCount) ?? toNum(src.count) ?? null,
-    maintenanceDeltaPercent: toNum(src.maintenanceDeltaPercent ?? src.interventionDeltaPercent),
-    avgHealthScore:
-      toNum(src.avgHealthScore) ?? toNum(src.healthScore) ?? toNum(src.averageHealthScore) ?? null,
-    healthDeltaPercent: toNum(src.healthDeltaPercent ?? src.healthScoreDeltaPercent),
+    hours: Math.round((minutes / 60) * 10) / 10,
+    interventions: win.length,
     byMachine,
   };
 }
 
-/**
- * Tolerant reader for `GET /api/reports/performance`.
- * Normalises into `{ series: [{ key, label, color }], data: [{ label, values: [] }] }`
- * for BarChart. Accepts:
- *   - { machines: [...], series: [{ label, values: [{ machineCode, value }] }] }
- *   - { series: [{ label, values: { CNC: 92 } }] }
- *   - a bare array of series
- * Returns null when nothing parseable is there (screen → empty state).
- */
-function normalizePerformance(raw) {
-  if (raw == null) return null;
-
-  let seriesRaw = null;
-  let machinesRaw = null;
-  if (Array.isArray(raw)) {
-    seriesRaw = raw;
-  } else if (typeof raw === "object") {
-    seriesRaw = raw.series || raw.datasets || raw.values || null;
-    machinesRaw = raw.machines || raw.labels || raw.codes || null;
-  }
-  if (!Array.isArray(seriesRaw) || !seriesRaw.length) return null;
-
-  const series = seriesRaw
-    .map((s, i) => {
-      if (!s || typeof s !== "object") return null;
-      const rawValues = s.values ?? s.data ?? s.points ?? {};
-      const map = {};
-      if (Array.isArray(rawValues)) {
-        rawValues.forEach((p) => {
-          if (p == null) return;
-          if (typeof p === "number") return; // no axis key — unusable
-          const key = p.machineCode || p.code || p.machine || p.label || p.name;
-          const val = toNum(p.value ?? p.score ?? p.percent ?? p.y);
-          if (key != null && val != null) map[key] = val;
-        });
-      } else if (typeof rawValues === "object") {
-        Object.entries(rawValues).forEach(([k, v]) => {
-          const val = toNum(v);
-          if (val != null) map[k] = val;
-        });
-      }
-      if (!Object.keys(map).length) return null;
-      return {
-        key: String(s.key ?? s.id ?? s.label ?? s.name ?? i),
-        label: String(s.label ?? s.name ?? s.key ?? `Series ${i + 1}`),
-        color: s.color,
-        map,
-      };
-    })
-    .filter(Boolean);
-
-  if (!series.length) return null;
-
-  const union = [];
-  series.forEach((s) =>
-    Object.keys(s.map).forEach((k) => {
-      if (!union.includes(k)) union.push(k);
-    })
-  );
-  const axis = (Array.isArray(machinesRaw) && machinesRaw.length ? machinesRaw : union).slice(0, 12);
-
-  return {
-    series: series.map(({ key, label, color }) => ({ key, label, color })),
-    data: axis.map((machine) => ({
-      label: machine,
-      values: series.map((s) => (s.map[machine] != null ? s.map[machine] : null)),
-    })),
-  };
+/** percent change vs the previous window — null when there is no baseline. */
+function deltaOf(cur, prev) {
+  if (prev == null || prev <= 0 || cur == null) return null;
+  return Math.round(((cur - prev) / prev) * 1000) / 10;
 }
 
-/** fetchDowntime({ from, to }) → metrics + donut slice */
-export const fetchDowntime = createAsyncThunk(
-  "report/fetchDowntime",
-  async ({ from, to } = {}, { rejectWithValue }) => {
-    try {
-      const raw = await reportService.getDowntime({ from, to });
-      return { data: normalizeDowntime(raw), available: raw != null };
-    } catch (err) {
-      if (isMissing(err)) return { data: null, available: false, notFound: true };
-      return rejectWithValue(errorPayload(err, "Could not load downtime."));
-    }
-  }
-);
+const mapToDonut = (m, colorFn) =>
+  [...m.entries()]
+    .map(([label, value]) => ({ key: label, label, value, color: colorFn ? colorFn(label) : undefined }))
+    .filter((d) => d.value > 0)
+    .sort((a, b) => b.value - a.value);
 
-/** fetchPerformance({ range }) → grouped bar chart */
-export const fetchPerformance = createAsyncThunk(
-  "report/fetchPerformance",
-  async ({ range = "this_month" } = {}, { rejectWithValue }) => {
-    try {
-      const raw = await reportService.getPerformance({ range });
-      const data = normalizePerformance(raw);
-      return { data, available: Boolean(data) };
-    } catch (err) {
-      if (isMissing(err)) return { data: null, available: false, notFound: true };
-      return rejectWithValue(errorPayload(err, "Could not load performance."));
-    }
-  }
-);
+const SEVERITY_COLOR = {
+  CRITICAL: "#DC2626",
+  HIGH: "#EA580C",
+  WARNING: "#F59E0B",
+  INFO: "#2563EB",
+};
 
-/** generateReport(body) → POST /api/reports/generate (ASSUMED) */
-export const generateReport = createAsyncThunk(
-  "report/generate",
-  async (body = {}, { rejectWithValue }) => {
-    try {
-      const result = await reportService.generateReport(body);
-      return result ?? { message: "Report generated" };
-    } catch (err) {
-      if (isMissing(err)) {
-        return rejectWithValue({
-          message: "Report generation isn't available yet (Sprint 7 backend).",
-          notFound: true,
-        });
-      }
-      return rejectWithValue(errorPayload(err, "Could not generate the report."));
+const HEALTH_SERIES = [{ key: "score", label: "Health score", color: "#22C55E" }];
+
+/**
+ * fetchReport({ range, from, to }) — the one and only phase. Three CONFIRMED
+ * calls that all answer in under 50 ms (measured 15–33 ms), plus the health
+ * score computed right here in the client from the machine + alert rows they
+ * return (src/lib/health.js) — GET /api/dashboard/health-scores measured
+ * 151–339 s and is never called. A single failing call degrades that one
+ * section instead of blanking the whole screen; three failures surface a
+ * retryable error.
+ */
+export const fetchReport = createAsyncThunk(
+  "report/fetchReport",
+  async ({ range = "this_month", from, to } = {}, { rejectWithValue }) => {
+    const winDef = from || to ? customWindow(from, to) : windowFor(range);
+    const settled = await Promise.allSettled([
+      reportService.getMaintenance(),
+      reportService.getAlerts(),
+      reportService.getMachines(),
+    ]);
+    const [maint, alerts, machines] = settled;
+    const answered = settled.filter((s) => s.status === "fulfilled").length;
+    if (!answered) {
+      const first = settled.find((s) => s.status === "rejected");
+      return rejectWithValue(errorPayload(first?.reason, "Could not load the report."));
     }
+
+    const w = winDef || windowFor(range);
+    const rows = maint.status === "fulfilled" ? maint.value : [];
+    const alertRows = alerts.status === "fulfilled" ? alerts.value : [];
+    const machineRows = machines.status === "fulfilled" ? machines.value : [];
+
+    const cur = downtimeOf(rows, w.start, w.end);
+    const prev = downtimeOf(rows, w.prevStart, w.prevEnd);
+
+    const byStatus = new Map();
+    machineRows.forEach((m) => {
+      const key = String(m?.status || "OFFLINE").toUpperCase();
+      byStatus.set(key, (byStatus.get(key) || 0) + 1);
+    });
+
+    const winRows = rows.filter((r) => inWin(r?.createdAt, w.start, w.end));
+
+    const byType = new Map();
+    winRows.forEach((r) => {
+      const key = String(r?.type || "CORRECTIVE").toUpperCase();
+      byType.set(key, (byType.get(key) || 0) + 1);
+    });
+
+    const bySeverity = new Map();
+    alertRows
+      .filter((a) => inWin(a?.timestamp ?? a?.createdAt, w.start, w.end))
+      .forEach((a) => {
+        const key = String(a?.severity || "INFO").toUpperCase();
+        bySeverity.set(key, (bySeverity.get(key) || 0) + 1);
+      });
+
+    // ── Health score, computed FRONTEND-side (src/lib/health.js) ───────────
+    // GET /api/dashboard/health-scores measured 151–339 s on this backend and
+    // is never called. The fleet + the alert rows this thunk already fetched
+    // are exactly the two signals it needed, so the score is ready the moment
+    // the rest of the report is: base 100 − status penalty − open-alert
+    // penalty per machine, then the mean of those (review: "average of all
+    // the machines health score").
+    const alertsByMachine = new Map();
+    alertRows.forEach((a) => {
+      const id = a?.machineId;
+      if (!id) return;
+      if (!alertsByMachine.has(id)) alertsByMachine.set(id, []);
+      alertsByMachine.get(id).push(a);
+    });
+    const machineHealth = machineRows
+      .map((m) => ({
+        label: m?.code || m?.name || "—",
+        score: computeMachineHealth({
+          status: m?.status,
+          // Same model as the dashboard: an ACTIVE alert row is one sensor out
+          // of range, WARNING → degraded (12.5), HIGH/CRITICAL → anomaly (25).
+          sensors: alertsByMachine.get(m?.id) || [],
+        }),
+      }))
+      .filter((m) => m.score != null)
+      .sort((a, b) => a.score - b.score); // worst first — the ones to fix
+    const factoryScore = computeFactoryHealth(machineHealth.map((m) => m.score));
+
+    return {
+      rangeKey: from || to ? "custom" : range,
+      start: w.start.toISOString(),
+      end: w.end.toISOString(),
+      metrics: {
+        downtimeHours: cur.hours,
+        downtimeDelta: deltaOf(cur.hours, prev.hours),
+        maintenanceCount: cur.interventions,
+        maintenanceDelta: deltaOf(cur.interventions, prev.interventions),
+        avgHealthScore: factoryScore,
+        healthDelta: null,
+      },
+      totalMachines: machineRows.length,
+      byMachine: mapToDonut(cur.byMachine),
+      byType: mapToDonut(byType),
+      byStatus: mapToDonut(byStatus, (label) => getMachineStatus(label).color),
+      bySeverity: mapToDonut(bySeverity, (label) => SEVERITY_COLOR[label] || "#64748B"),
+      performance: {
+        series: HEALTH_SERIES,
+        data: machineHealth.slice(0, 12).map((m) => ({ label: m.label, values: [m.score] })),
+      },
+      partial: {
+        maintenance: maint.status !== "fulfilled",
+        alerts: alerts.status !== "fulfilled",
+        machines: machines.status !== "fulfilled",
+        // Health needs no extra request — it is computed right here.
+        health: false,
+      },
+    };
   }
 );
 
 const reportSlice = createSlice({
   name: "report",
   initialState: {
-    downtime: null, // { totalHours, maintenanceCount, avgHealthScore, byMachine, ... }
-    performance: null, // { series, data }
+    report: null,
     range: "this_month",
     tab: "maintenance",
-    status: "idle", // downtime / metric cards
-    perfStatus: "idle", // performance chart (sub-tabs refetch on their own)
+    customFrom: "",
+    customTo: "",
+    status: "idle", // idle | loading | succeeded | error
     error: null,
-    perfError: null,
-    downtimeAvailable: false,
-    performanceAvailable: false,
-    generating: false,
-    generateError: null,
-    generated: null,
+    // Health has no separate phase any more — it is computed inside fetchReport.
   },
   reducers: {
     setTab(state, action) {
@@ -223,57 +255,32 @@ const reportSlice = createSlice({
     setRange(state, action) {
       state.range = action.payload;
     },
-    clearGenerated(state) {
-      state.generated = null;
-      state.generateError = null;
+    setCustom(state, action) {
+      state.customFrom = action.payload.from ?? state.customFrom;
+      state.customTo = action.payload.to ?? state.customTo;
+    },
+    clearReport(state) {
+      state.report = null;
+      state.status = "idle";
+      state.error = null;
     },
   },
   extraReducers: (builder) => {
     builder
-      .addCase(fetchDowntime.pending, (state) => {
+      .addCase(fetchReport.pending, (state) => {
         state.status = "loading";
         state.error = null;
       })
-      .addCase(fetchDowntime.fulfilled, (state, action) => {
+      .addCase(fetchReport.fulfilled, (state, action) => {
         state.status = "succeeded";
-        state.downtime = action.payload.data;
-        state.downtimeAvailable = action.payload.available;
-        state.error = action.payload.notFound ? null : state.error;
+        state.report = action.payload;
       })
-      .addCase(fetchDowntime.rejected, (state, action) => {
+      .addCase(fetchReport.rejected, (state, action) => {
         state.status = "error";
-        state.error = action.payload || { message: "Could not load downtime." };
-      })
-
-      .addCase(fetchPerformance.pending, (state) => {
-        state.perfStatus = "loading";
-        state.perfError = null;
-      })
-      .addCase(fetchPerformance.fulfilled, (state, action) => {
-        state.perfStatus = "succeeded";
-        state.performance = action.payload.data;
-        state.performanceAvailable = action.payload.available;
-      })
-      .addCase(fetchPerformance.rejected, (state, action) => {
-        state.perfStatus = "error";
-        state.perfError = action.payload || { message: "Could not load performance." };
-      })
-
-      .addCase(generateReport.pending, (state) => {
-        state.generating = true;
-        state.generateError = null;
-        state.generated = null;
-      })
-      .addCase(generateReport.fulfilled, (state, action) => {
-        state.generating = false;
-        state.generated = action.payload;
-      })
-      .addCase(generateReport.rejected, (state, action) => {
-        state.generating = false;
-        state.generateError = action.payload || { message: "Could not generate the report." };
+        state.error = action.payload || { message: "Could not load the report." };
       });
   },
 });
 
-export const { setTab, setRange, clearGenerated } = reportSlice.actions;
+export const { setTab, setRange, setCustom, clearReport } = reportSlice.actions;
 export default reportSlice.reducer;
