@@ -170,9 +170,9 @@ export const ENDPOINTS = Object.freeze({
   // --- Settings ---
   SETTINGS: "/api/settings", // ASSUMED — confirm with backend
 
-  // --- AI ---
-  AI_PREDICT: "/api/ai/predict", // ASSUMED — confirm with backend
-  AI_RECOMMENDATIONS: "/api/ai/recommendations", // ASSUMED — confirm with backend
+  // --- AI Predictions (CONFIRMED — AnomalyController Sprint 8) ---
+  AI_PREDICTIONS: "/api/anomalies", // GET with thresholdType filter for AI_MODEL anomalies
+  AI_PREDICTION_LATEST: "/api/anomalies", // GET ?status=OPEN&page=0&size=50 filtered client-side for AI_MODEL
 });
 
 /**

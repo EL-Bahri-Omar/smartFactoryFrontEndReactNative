@@ -166,6 +166,22 @@ export default function MaintenanceScreen() {
     );
   }, [dispatch, filters.status, filters.type, page, canAccess]);
 
+  // Auto-refresh every 15 s — real-time without manual reload.
+  useEffect(() => {
+    if (!canAccess("maintenance")) return;
+    const timer = setInterval(() => {
+      dispatch(
+        fetchInterventions({
+          status: filters.status || undefined,
+          type: filters.type || undefined,
+          page,
+          size: 100,
+        })
+      );
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [dispatch, filters.status, filters.type, page, canAccess]);
+
   // Debounced search.
   useEffect(() => {
     const timer = setTimeout(() => {

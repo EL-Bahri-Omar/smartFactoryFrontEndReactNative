@@ -33,6 +33,38 @@ let liveSliceActions = null;
 // Survives reconnects; stompSub is nulled whenever the connection dies.
 const registry = new Set();
 
+// ── Throttle / batch incoming messages to prevent UI freezes ──────────────
+// When sensors push every second, dispatching each frame individually hammers
+// Redux (one shallow-compare cycle per subscriber). Instead we accumulate
+// deliveries and flush them in a rAF batch — the UI stays smooth.
+const pendingDeliveries = [];
+let flushScheduled = false;
+
+function scheduleFlush() {
+  if (flushScheduled) return;
+  flushScheduled = true;
+  // requestAnimationFrame aligns the batch with the next paint frame so the
+  // main thread is never blocked mid-render by a burst of STOMP frames.
+  const schedule = typeof requestAnimationFrame === "function"
+    ? requestAnimationFrame
+    : (fn) => setTimeout(fn, 16);
+  schedule(() => {
+    flushScheduled = false;
+    const batch = pendingDeliveries.splice(0);
+    if (!batch.length || !dispatchFn || !liveSliceActions) return;
+    // Push the LAST message per topic (most recent wins), discarding
+    // intermediate readings that would only cause wasted renders.
+    const latest = new Map();
+    for (const item of batch) {
+      latest.set(item.topic, item);
+    }
+    for (const { topic, payload, handler } of latest.values()) {
+      dispatchFn(liveSliceActions.pushMessage({ topic, payload }));
+      if (handler) handler(payload);
+    }
+  });
+}
+
 /**
  * Set up the dispatch function and slice actions.
  * Called once from store/index.js after store creation.
@@ -54,7 +86,7 @@ function isConnected() {
   return !!stompClient?.connected;
 }
 
-/** Parse + push one incoming frame to Redux (and the optional handler). */
+/** Parse + queue one incoming frame for batched delivery to Redux. */
 function deliver(entry, rawBody) {
   let payload;
   try {
@@ -62,10 +94,8 @@ function deliver(entry, rawBody) {
   } catch {
     payload = rawBody;
   }
-  if (dispatchFn && liveSliceActions) {
-    dispatchFn(liveSliceActions.pushMessage({ topic: entry.destination, payload }));
-  }
-  if (entry.handler) entry.handler(payload);
+  pendingDeliveries.push({ topic: entry.destination, payload, handler: entry.handler });
+  scheduleFlush();
 }
 
 /** Create the real STOMP subscription for one registry entry (idempotent). */

@@ -15,9 +15,10 @@
 // (Availability Over Time first) with a slim MTBF / MTTR / Downtime / Failures
 // card row underneath.
 //
-// Map: reuses src/components/FactoryMap.jsx with variant="compact" — the
-// single source shared with Map & Zones. Zones are grouped client-side from
-// the machine rows we already fetched (no extra /zones/:id/machines calls).
+// Sprint 9: Factory Overview, Machine Status list, and Machines by Zone chart
+// REMOVED. Factory Health Score moved to a big standalone circle sitting in the
+// same row as the charts. Dashboard auto-refreshes every 30 s and reloads on
+// live STOMP messages (debounced).
 //
 // The greeting moved to TopBar (review: "move Good afternoon, Admin 👋 to the
 // top bar"), which is what freed this much vertical space.
@@ -33,10 +34,8 @@ import Card from "../../src/components/Card";
 import Button from "../../src/components/Button";
 import EmptyState from "../../src/components/EmptyState";
 import Skeleton from "../../src/components/Skeleton";
-import KpiCard from "../../src/components/KpiCard";
+import KpiCard, { ScoreRing } from "../../src/components/KpiCard";
 import StatusCountCard from "../../src/components/StatusCountCard";
-import FactoryMap from "../../src/components/FactoryMap";
-import Sparkline from "../../src/components/charts/Sparkline";
 import BarChart from "../../src/components/charts/BarChart";
 import LineChart from "../../src/components/charts/LineChart";
 import ChartLegend from "../../src/components/charts/ChartLegend";
@@ -49,14 +48,7 @@ import { useLiveTopic } from "../../src/hooks/useLiveTopic";
 import { useDialog } from "../../src/components/dialog/DialogContext";
 import { fetchDashboard } from "../../src/store/slices/dashboardSlice";
 import { useReconnecting } from "../../src/hooks/useReconnecting";
-import { fetchZones } from "../../src/store/slices/zoneSlice";
 import { setFilters } from "../../src/store/slices/machineSlice";
-import { getMachineStatus } from "../../src/lib/status";
-import { relativeTime } from "../../src/lib/time";
-
-// FactoryMap lays machines out in four fixed slots; real Mongo zones are
-// assigned to them by index (same rule as Map & Zones).
-const SLOTS = ["A", "B", "C", "D"];
 
 /** Rounded-up axis maximum so bar charts get human tick labels (10, 25, 60…). */
 function niceMax(value) {
@@ -88,23 +80,20 @@ export default function DashboardScreen() {
   const canReadMachines = hasPermission(PERMISSIONS.MACHINE_READ);
   const canReadAlerts = hasPermission(PERMISSIONS.ALERT_READ);
   const canReadMaintenance = hasPermission(PERMISSIONS.MAINTENANCE_READ);
-  const canReadZones = hasPermission(PERMISSIONS.ZONE_READ);
 
   const { data, status, error } = useAppSelector((s) => s.dashboard);
-  const { list: zones, status: zoneStatus } = useAppSelector((s) => s.zone);
   // Only a genuine DROP (connected → dropped) shows a badge; the first
   // connect is startup and must not flash "Reconnecting…".
   const reconnecting = useReconnecting();
 
   // ASSUMED destination — documents itself in liveSlice.messagesByTopic, which
   // is where the "live" state of this screen comes from.
-  useLiveTopic("/topic/dashboard", { enabled: canView });
+  const liveMessage = useLiveTopic("/topic/dashboard", { enabled: canView });
 
   // Mobile "View Dashboard" CTA scrolls to the Factory Overview block.
   // Declared up here with the other hooks: the early returns below must never
   // sit between two hook calls.
   const scrollRef = useRef(null);
-  const [overviewY, setOverviewY] = useState(0);
 
   const load = useCallback(() => {
     // One parallel fan-out. The Factory Health Score is computed INSIDE this
@@ -117,11 +106,34 @@ export default function DashboardScreen() {
         interventions: canReadMaintenance,
       })
     );
-    if (canReadZones) dispatch(fetchZones());
-  }, [dispatch, canReadMachines, canReadAlerts, canReadMaintenance, canReadZones]);
+  }, [dispatch, canReadMachines, canReadAlerts, canReadMaintenance]);
 
   useEffect(() => {
     if (canView) load();
+  }, [canView, load]);
+
+  // ── Real-time refresh: when a live message arrives on /topic/dashboard,
+  // reload the dashboard data. Debounced so rapid STOMP bursts don't trigger
+  // multiple fetches. Also auto-refresh every 30 s while the screen is mounted.
+  const refreshTimerRef = useRef(null);
+  const lastLiveMsgRef = useRef(null);
+
+  useEffect(() => {
+    if (!liveMessage || !canView) return;
+    const key = JSON.stringify(liveMessage);
+    if (lastLiveMsgRef.current === key) return;
+    lastLiveMsgRef.current = key;
+    // Debounce: wait 2 s before re-fetching so a burst of live events
+    // (e.g. 5 machines changing status within a second) coalesces.
+    clearTimeout(refreshTimerRef.current);
+    refreshTimerRef.current = setTimeout(load, 2000);
+  }, [liveMessage, canView, load]);
+
+  // Auto-refresh every 30 s for data freshness without manual reload.
+  useEffect(() => {
+    if (!canView) return;
+    const interval = setInterval(load, 30000);
+    return () => clearInterval(interval);
   }, [canView, load]);
 
   const darkText = dark ? "text-white" : "text-text";
@@ -151,8 +163,6 @@ export default function DashboardScreen() {
   const loadFailed = status === "error" && !data;
   const kpis = data?.kpis || null;
   const history = data?.history || [];
-  const machineRows = data?.machineRows || [];
-  const allMachines = data?.allMachines || [];
 
   // ── Machine status cards — ONE line (docs/ui/machines_count_cards.png) ────
   // Real counts. `statusCounts` comes from GET /api/dashboard/overview (whole
@@ -232,16 +242,7 @@ export default function DashboardScreen() {
       icon: "🚨",
       iconBgClass: "bg-warning/10",
     },
-    {
-      key: "health",
-      label: "Factory Health Score",
-      // FRONTEND calculation (src/lib/health.js): mean of every machine's
-      // score. The backend route for this measured 151–339 s and is not used.
-      value: kpis?.healthScore,
-      unit: "/100",
-      // Circular gauge, red / orange / green by score band (review).
-      ring: true,
-    },
+    // Factory Health Score MOVED to charts row (big circle) — sprint 9.
   ];
 
   // Every card is a door (review: "let the dashboards cards be clickable and
@@ -288,38 +289,11 @@ export default function DashboardScreen() {
   const kpiRow = (
     <View className="gap-3">
       {statusRow}
-      {isMobile ? (
-        <View className="gap-3">
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View className="flex-row gap-3 pr-4">{kpiCards}</View>
-          </ScrollView>
-          {reconnectChip}
-        </View>
-      ) : (
-        <View className="flex-row gap-4 items-start">
-          {kpiCards}
-          {reconnectChip}
-        </View>
-      )}
     </View>
   );
 
-  // ── Zone grouping — shared by the "Machines by Zone" chart below and the
-  // Factory Overview map. Grouped CLIENT-SIDE from the machine rows we already
-  // fetched, so the chart costs no extra request.
-  const zonesLoading = zoneStatus === "loading" || (zoneStatus === "idle" && canReadZones);
-  const zonesFailed = zoneStatus === "error";
-  const slotZones = SLOTS.map((slot, i) => (zones[i] ? { ...zones[i], slot } : null)).filter(Boolean);
-  const slotMachines = {};
-  slotZones.forEach((z) => {
-    // Group the rows we already have — no extra per-zone request on landing.
-    slotMachines[z.slot] = allMachines.filter((m) => m?.zoneId === z.id);
-  });
-  const mapZones = slotZones.map((z) => ({ ...z, id: z.slot, realId: z.id }));
-
   // ── Charts — Availability Over Time is first (review), then the downtime
-  // bars, then the per-zone split. Real series from /kpis/history + the
-  // machine rows already on screen; no demo figures exist here.
+  // bars. Real series from /kpis/history; no demo figures exist here.
   const chartEmpty = (text) => (
     <View className="items-center justify-center" style={{ height: 112 }}>
       <Text className={`text-xs font-inter ${darkMuted}`}>{text}</Text>
@@ -329,29 +303,6 @@ export default function DashboardScreen() {
   // Real downtime series from GET /api/dashboard/kpis/history.
   const downtime = history.map((p) => Number(p?.downtimeMinutes) || 0);
   const maxDowntime = downtime.reduce((m, v) => Math.max(m, v), 0);
-
-  // Real per-zone status split, counted from the machine rows on screen.
-  // `id` doubles as the ChartLegend key and the status matcher.
-  const ZONE_SERIES = [
-    { id: "RUNNING", label: "Running", color: "#16A34A" },
-    { id: "IDLE", label: "Idle", color: "#0EA5E9" },
-    { id: "MAINTENANCE", label: "Maintenance", color: "#F59E0B" },
-    { id: "FAILURE", label: "Failure", color: "#DC2626" },
-    { id: "OFFLINE", label: "Offline", color: "#64748B" },
-  ];
-  const zoneChart = slotZones.map((z) => {
-    const rows = slotMachines[z.slot] || [];
-    return {
-      label: z?.name || `Zone ${z.slot}`,
-      values: ZONE_SERIES.map((s) =>
-        rows.filter((m) => String(m?.status || "").toUpperCase() === s.id).length
-      ),
-    };
-  });
-  const zoneTotal = zoneChart.reduce(
-    (m, r) => Math.max(m, r.values.reduce((a, b) => a + b, 0)),
-    0
-  );
 
   // Real availability series — same buckets as the downtime bars, so cards 1
   // and 3 share the Mon…Sun axis. Points with an unreadable timestamp are
@@ -416,24 +367,7 @@ export default function DashboardScreen() {
           chartEmpty(history.length ? "No downtime in this period." : "No KPI history yet.")
         ),
     },
-    {
-      key: "zones",
-      title: "Machines by Zone",
-      icon: "🏭",
-      legend: ZONE_SERIES,
-      body: zoneTotal > 0 ? (
-        <BarChart
-          data={zoneChart}
-          series={ZONE_SERIES}
-          yMax={Math.max(1, zoneTotal)}
-          height={112}
-          groupWidth={54}
-          stacked
-        />
-      ) : (
-        chartEmpty("No machines grouped by zone yet.")
-      ),
-    },
+    // "Machines by Zone" chart REMOVED per sprint 9 review.
   ];
 
   // MTBF · MTTR · Downtime · Failures — slim cards, all on ONE line, sitting
@@ -453,30 +387,70 @@ export default function DashboardScreen() {
     },
   ];
 
-  const slimRow = isMobile ? (
+  // ── Factory Health Score — big standalone circle, same width as each chart ──
+  const healthScoreValue = kpis?.healthScore;
+  const healthRing = (
+    <Card className={isMobile ? "w-[300px]" : "flex-1 min-w-[240px]"}>
+      <View className="items-center justify-center py-2">
+        <Text
+          className={`text-xs font-inter mb-3 ${dark ? "text-white/60" : "text-text-muted"}`}
+        >
+          Factory Health Score
+        </Text>
+        {loading ? (
+          <Skeleton width={140} height={140} rounded />
+        ) : (
+          <ScoreRing value={healthScoreValue != null ? Number(healthScoreValue) : null} size={140} stroke={10} />
+        )}
+        <Text
+          className={`text-[11px] font-inter mt-2 ${dark ? "text-white/70" : "text-text"}`}
+          numberOfLines={1}
+        >
+          {healthScoreValue != null ? `${Math.round(Number(healthScoreValue))} / 100` : "No score yet"}
+        </Text>
+      </View>
+    </Card>
+  );
+
+  // ── Bottom KPI row: Availability + Alerts + MTBF/MTTR/Downtime/Failures (2×2) ──
+  const bottomKpiRow = isMobile ? (
     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
       <View className="flex-row gap-3 pr-4">
+        {kpiCards}
         {slimStats.map((s) => (
           <SlimStat key={s.key} label={s.label} value={s.value} dark={dark} />
         ))}
       </View>
     </ScrollView>
   ) : (
-    <View className="flex-row gap-3">
-      {slimStats.map((s) => (
-        <SlimStat key={s.key} label={s.label} value={s.value} dark={dark} />
-      ))}
+    <View className="flex-row gap-3 items-stretch">
+      {/* Availability + Alerts KPIs */}
+      {kpiCards}
+      {/* MTBF/MTTR/Downtime/Failures in 2×2 grid */}
+      <View className="flex-1 min-w-[280px] gap-2">
+        <View className="flex-row gap-2 flex-1">
+          <SlimStat label={slimStats[0].label} value={slimStats[0].value} dark={dark} />
+          <SlimStat label={slimStats[1].label} value={slimStats[1].value} dark={dark} />
+        </View>
+        <View className="flex-row gap-2 flex-1">
+          <SlimStat label={slimStats[2].label} value={slimStats[2].value} dark={dark} />
+          <SlimStat label={slimStats[3].label} value={slimStats[3].value} dark={dark} />
+        </View>
+      </View>
+      {reconnectChip}
     </View>
   );
 
   const chartsBlock = (
-    <View className="mt-6">
+    <View className="mt-6 gap-4">
+      {/* Row 1: Charts + Health Score — 3 equal columns */}
       {isMobile ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <View className="flex-row gap-3 pr-4">
             {oeeCards.map((c) => (
               <OeeCard key={c.key} card={c} dark={dark} className="w-[300px]" />
             ))}
+            {healthRing}
           </View>
         </ScrollView>
       ) : (
@@ -484,152 +458,12 @@ export default function DashboardScreen() {
           {oeeCards.map((c) => (
             <OeeCard key={c.key} card={c} dark={dark} className="flex-1 min-w-[240px]" />
           ))}
+          {healthRing}
         </View>
       )}
-      <View className="mt-3">{slimRow}</View>
+      {/* Row 2: Availability + Alerts + MTBF/MTTR/Down/Fail (2×2) */}
+      {bottomKpiRow}
     </View>
-  );
-
-  // ── Factory Overview ──────────────────────────────────────────────────────
-  // idle + a permitted fetch means "still to come" — don't flash an empty map.
-  // Zones / slotMachines / mapZones are grouped above (shared with the chart).
-  const factoryOverview = (
-    <Card>
-      <View className="flex-row items-center justify-between mb-3">
-        <Text className={`text-base font-bold font-inter ${darkText}`}>Factory Overview</Text>
-        <Button
-          title="Open map"
-          variant="ghost"
-          size="sm"
-          onPress={() => router.push("/(app)/map")}
-        />
-      </View>
-
-      {zonesLoading ? (
-        <Skeleton height={220} className="rounded-card" />
-      ) : zonesFailed ? (
-        <EmptyState
-          icon={<Text className="text-3xl">🗺️</Text>}
-          title="Zones unavailable"
-          message="The factory layout could not be loaded."
-          action={
-            <Button title="Retry" variant="outline" size="sm" onPress={() => dispatch(fetchZones())} />
-          }
-        />
-      ) : !mapZones.length ? (
-        <EmptyState
-          icon={<Text className="text-3xl">🗺️</Text>}
-          title="No zones yet"
-          message="Zones appear here as soon as they are created."
-        />
-      ) : (
-        <FactoryMap variant="compact" zones={mapZones} machinesByZone={slotMachines} />
-      )}
-    </Card>
-  );
-
-  // ── Machine Status list ───────────────────────────────────────────────────
-  function StatusBadge({ status: raw }) {
-    const s = getMachineStatus(raw);
-    return (
-      <View
-        className="flex-row items-center gap-1 px-2 py-0.5 rounded-chip"
-        style={{ backgroundColor: `${s.color}1F` }}
-      >
-        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: s.color }} />
-        <Text style={{ color: s.color }} className="text-[10px] font-bold font-inter">
-          {s.label}
-        </Text>
-      </View>
-    );
-  }
-
-  const machineStatus = (
-    <Card>
-      <View className="flex-row items-center justify-between mb-2">
-        <Text className={`text-base font-bold font-inter ${darkText}`}>Machine Status</Text>
-        {data?.machines ? (
-          <Text className={`text-xs font-inter ${darkMuted}`}>
-            {machineRows.length} / {data.machines.total}
-          </Text>
-        ) : null}
-      </View>
-
-      {loading ? (
-        <View className="gap-3">
-          {[0, 1, 2, 3, 4, 5].map((i) => (
-            <Skeleton key={i} height={34} className="rounded-btn" />
-          ))}
-        </View>
-      ) : !data?.machines ? (
-        <EmptyState
-          icon={<Text className="text-3xl">🏭</Text>}
-          title="Machines unavailable"
-          message={
-            data?.failed?.machines
-              ? "The machine list could not be read for your role."
-              : "No machines to show yet."
-          }
-          action={
-            <Button title="Retry" variant="outline" size="sm" onPress={load} />
-          }
-        />
-      ) : !machineRows.length ? (
-        <EmptyState
-          icon={<Text className="text-3xl">🏭</Text>}
-          title="No machines yet"
-          message="Create a machine to see its status here."
-        />
-      ) : (
-        <View>
-          {machineRows.map((m, idx) => {
-            const lastSeen = m?.lastSeen || m?.updatedAt || m?.createdAt;
-            return (
-              <View
-                key={m?.id || m?.code || idx}
-                className={`flex-row items-center py-2.5 ${
-                  idx === machineRows.length - 1
-                    ? ""
-                    : dark
-                      ? "border-b border-white/5"
-                      : "border-b border-border/70"
-                }`}
-              >
-                <Pressable
-                  className="flex-1 mr-2"
-                  onPress={() => {
-                    if (m?.id) router.push(`/(app)/machines/${m.id}`);
-                  }}
-                >
-                  <Text className={`text-sm font-bold font-inter ${darkText}`} numberOfLines={1}>
-                    {m?.code || m?.name || "—"}
-                  </Text>
-                  <Text className={`text-[11px] font-inter ${darkMuted}`} numberOfLines={1}>
-                    {m?.type || m?.name || "Machine"}
-                  </Text>
-                </Pressable>
-
-                {/* Trend is rendered only when the backend sends points —
-                    an empty sparkline would be invented data. */}
-                <Sparkline
-                  points={m?.spark || m?.trend || []}
-                  width={56}
-                  height={22}
-                  color={getMachineStatus(m?.status).color}
-                />
-
-                <View className="items-end ml-2" style={{ minWidth: 96 }}>
-                  <StatusBadge status={m?.status} />
-                  <Text className={`text-[10px] font-inter mt-0.5 ${darkMuted}`} numberOfLines={1}>
-                    {lastSeen ? `Updated ${relativeTime(lastSeen)}` : "No update yet"}
-                  </Text>
-                </View>
-              </View>
-            );
-          })}
-        </View>
-      )}
-    </Card>
   );
 
   // ── Mobile quick actions ──────────────────────────────────────────────────
@@ -665,12 +499,6 @@ export default function DashboardScreen() {
     },
     { key: "reports", icon: "📄", label: "Reports", onPress: () => router.push("/(app)/reports") },
   ];
-
-  function scrollToOverview() {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTo({ y: Math.max(0, overviewY - 72), animated: true });
-    }
-  }
 
   const quickActionGrid = (
     <View className="gap-3">
@@ -727,14 +555,6 @@ export default function DashboardScreen() {
               <Text className={`text-base font-bold font-inter mb-3 ${darkText}`}>Quick Actions</Text>
               {quickActionGrid}
             </View>
-
-            <Button title="View Dashboard" onPress={scrollToOverview} />
-
-            <View onLayout={(e) => setOverviewY(e.nativeEvent.layout.y)}>
-              {factoryOverview}
-            </View>
-
-            {machineStatus}
           </View>
         </ScrollView>
       </AppShell>
@@ -752,13 +572,6 @@ export default function DashboardScreen() {
       >
         {kpiRow}
         {chartsBlock}
-
-        {/* Factory Overview + Machine Status side by side again (review:
-            "i want Machine Status back beside the map overview"). */}
-        <View className="flex-row gap-4 mt-6" style={{ alignItems: "stretch" }}>
-          <View style={{ flex: 0.6 }}>{factoryOverview}</View>
-          <View style={{ flex: 0.4 }}>{machineStatus}</View>
-        </View>
       </ScrollView>
     </AppShell>
   );

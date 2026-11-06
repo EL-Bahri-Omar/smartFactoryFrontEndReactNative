@@ -17,8 +17,8 @@
 //   ADMIN                      → read-only consult
 // Everyone except OPERATOR can consult the interventions list.
 
-import { useEffect, useState, useCallback } from "react";
-import { View, Text, ScrollView, Pressable } from "react-native";
+import { useEffect, useState, useCallback, useMemo } from "react";
+import { View, Text, ScrollView, Pressable, ActivityIndicator } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import AppShell from "../../../src/components/AppShell";
 import Card from "../../../src/components/Card";
@@ -57,6 +57,8 @@ import {
   OBSERVATION_CATEGORY_LABELS,
 } from "../../../src/lib/status";
 import { formatDateTime, relativeTime } from "../../../src/lib/time";
+import { getFixingSuggestions } from "../../../src/store/services/interventionService";
+import * as aiService from "../../../src/store/services/aiService";
 
 const OBSERVATION_CATEGORIES = [
   { value: "GENERAL", label: OBSERVATION_CATEGORY_LABELS.GENERAL },
@@ -115,9 +117,52 @@ export default function InterventionDetailScreen() {
   const [statusChoice, setStatusChoice] = useState(null); // IN_PROGRESS | COMPLETED
   const [editTarget, setEditTarget] = useState(null); // { kind, index, entry }
 
+  // Sprint 9 — AI fixing suggestions (fetched when intervention is IN_PROGRESS).
+  const [fixingSuggestions, setFixingSuggestions] = useState([]);
+  const [fixingSuggestionsLoading, setFixingSuggestionsLoading] = useState(false);
+
+  // Sprint 11 — Linked AI prediction card (fetched via anomalyId).
+  const [linkedPrediction, setLinkedPrediction] = useState(null);
+
   useEffect(() => {
     if (id) dispatch(fetchInterventionById(id));
   }, [dispatch, id]);
+
+  // Sprint 9 — Fetch AI fixing suggestions when the technician starts work.
+  // The backend analyses the machine's intervention history (past diagnoses,
+  // actions, sensor patterns) and returns confidence-scored repair hints.
+  useEffect(() => {
+    if (
+      current?.status === "IN_PROGRESS" &&
+      current?.machineId &&
+      fixingSuggestions.length === 0 &&
+      !fixingSuggestionsLoading
+    ) {
+      setFixingSuggestionsLoading(true);
+      getFixingSuggestions(current.machineId)
+        .then((data) => setFixingSuggestions(Array.isArray(data) ? data : []))
+        .catch(() => setFixingSuggestions([]))
+        .finally(() => setFixingSuggestionsLoading(false));
+    }
+  }, [current?.status, current?.machineId]);
+
+  // Sprint 11 — Fetch linked AI prediction when the intervention has an anomalyId.
+  useEffect(() => {
+    if (current?.anomalyId && !linkedPrediction) {
+      // The anomalyId IS the prediction's anomaly record. Fetch all AI predictions
+      // for this machine and find the matching one.
+      const machineId = current.machineId;
+      if (machineId) {
+        aiService.getAiPredictionsForMachine(machineId, { status: "", size: 50 })
+          .then((preds) => {
+            const match = preds.find((p) => p.id === current.anomalyId);
+            if (match) setLinkedPrediction(match);
+            else if (preds.length > 0) setLinkedPrediction(preds[0]);
+          })
+          .catch(() => {});
+      }
+    }
+  }, [current?.anomalyId, current?.machineId]);
 
   // Technician list loads itself via the shared useTechnicians hook
   // (GET /api/users?role=TECHNICIAN, one fetch per session).
@@ -487,6 +532,86 @@ export default function InterventionDetailScreen() {
               </View>
             </Card>
 
+            {/* Sprint 11 — Linked AI Prediction card */}
+            {linkedPrediction && (
+              <Card className="mb-4">
+                <View className="flex-row items-center gap-2 mb-3">
+                  <Text style={{ fontSize: 16 }}>🤖</Text>
+                  <Text className={`text-base font-bold font-inter ${darkText}`}>
+                    AI Prediction
+                  </Text>
+                  <View
+                    className="px-2 py-0.5 rounded-chip"
+                    style={{
+                      backgroundColor:
+                        (linkedPrediction.predictedStatus || linkedPrediction.severity) === "CRITICAL" || linkedPrediction.predictedStatus === "failure"
+                          ? "#EF444420"
+                          : linkedPrediction.predictedStatus === "anomaly" || linkedPrediction.severity === "HIGH"
+                            ? "#F9731620"
+                            : "#F59E0B20",
+                    }}
+                  >
+                    <Text
+                      className="text-[10px] font-bold font-inter"
+                      style={{
+                        color:
+                          linkedPrediction.predictedStatus === "failure" || linkedPrediction.severity === "CRITICAL"
+                            ? "#EF4444"
+                            : linkedPrediction.predictedStatus === "anomaly" || linkedPrediction.severity === "HIGH"
+                              ? "#F97316"
+                              : "#F59E0B",
+                      }}
+                    >
+                      {linkedPrediction.predictedStatus
+                        ? linkedPrediction.predictedStatus.charAt(0).toUpperCase() + linkedPrediction.predictedStatus.slice(1)
+                        : linkedPrediction.severity || "Warning"}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Prediction details tiles */}
+                <View className="flex-row flex-wrap gap-2 mb-2">
+                  {linkedPrediction.observedValue != null && (
+                    <View className={`rounded-btn px-3 py-2 ${dark ? "bg-white/5" : "bg-bg"}`}>
+                      <Text className={`text-[10px] font-inter ${darkMuted}`}>Confidence</Text>
+                      <Text className={`text-xs font-bold font-inter mt-0.5 ${darkText}`}>
+                        {(linkedPrediction.observedValue * 100).toFixed(1)}%
+                      </Text>
+                    </View>
+                  )}
+                  {linkedPrediction.thresholdValue != null && (
+                    <View className={`rounded-btn px-3 py-2 ${dark ? "bg-white/5" : "bg-bg"}`}>
+                      <Text className={`text-[10px] font-inter ${darkMuted}`}>Anomaly Score</Text>
+                      <Text className={`text-xs font-bold font-inter mt-0.5 ${darkText}`}>
+                        {linkedPrediction.thresholdValue.toFixed(3)}
+                      </Text>
+                    </View>
+                  )}
+                  {linkedPrediction.sensorType && (
+                    <View className={`rounded-btn px-3 py-2 ${dark ? "bg-white/5" : "bg-bg"}`}>
+                      <Text className={`text-[10px] font-inter ${darkMuted}`}>Problem Sensor</Text>
+                      <Text className={`text-xs font-bold font-inter mt-0.5 ${darkText}`}>
+                        {linkedPrediction.sensorType}
+                      </Text>
+                    </View>
+                  )}
+                  <View className={`rounded-btn px-3 py-2 ${dark ? "bg-white/5" : "bg-bg"}`}>
+                    <Text className={`text-[10px] font-inter ${darkMuted}`}>Detected</Text>
+                    <Text className={`text-xs font-bold font-inter mt-0.5 ${darkText}`}>
+                      {linkedPrediction.timestamp ? formatDateTime(linkedPrediction.timestamp) : linkedPrediction.createdAt ? formatDateTime(linkedPrediction.createdAt) : "—"}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* AI prediction message */}
+                {linkedPrediction.message && (
+                  <Text className={`text-xs font-inter mt-1 ${darkMuted}`} numberOfLines={4}>
+                    {linkedPrediction.message}
+                  </Text>
+                )}
+              </Card>
+            )}
+
             {/* Action bar — full width right under the details: the primary
                 next step of EVERY role is visible without scrolling (it used
                 to be buried in the right column). One primary button per role
@@ -687,6 +812,82 @@ export default function InterventionDetailScreen() {
                 </View>
               )}
             </Card>
+
+            {/* Sprint 9 — AI Fixing Suggestions: shown when the technician
+                starts the intervention (IN_PROGRESS). The backend analyses past
+                interventions on this machine and suggests repair approaches with
+                confidence scores. */}
+            {current.status === "IN_PROGRESS" && (
+              <Card>
+                <View className="flex-row items-center justify-between mb-3">
+                  <View className="flex-row items-center gap-2">
+                    <Text style={{ fontSize: 16 }}>🤖</Text>
+                    <Text className={`text-base font-bold font-inter ${darkText}`}>
+                      AI Fixing Suggestions
+                    </Text>
+                  </View>
+                  {fixingSuggestionsLoading && (
+                    <ActivityIndicator size="small" color="#6366f1" />
+                  )}
+                </View>
+                {fixingSuggestionsLoading && fixingSuggestions.length === 0 ? (
+                  <View className="gap-2">
+                    {[1, 2].map((i) => (
+                      <Skeleton key={i} height={60} className="rounded-btn" />
+                    ))}
+                  </View>
+                ) : fixingSuggestions.length === 0 ? (
+                  <Text className={`text-sm font-inter ${darkMuted}`}>
+                    No AI suggestions available for this machine yet.
+                    Suggestions improve as more interventions are recorded.
+                  </Text>
+                ) : (
+                  <View className="gap-2">
+                    {fixingSuggestions.map((s, i) => {
+                      const conf = s.confidence != null ? Math.round(s.confidence * 100) : null;
+                      const confColor =
+                        conf == null ? "#94A3B8" : conf >= 70 ? "#16A34A" : conf >= 40 ? "#F59E0B" : "#94A3B8";
+                      const typeIcon =
+                        s.type === "DIAGNOSIS" ? "🔍"
+                        : s.type === "ACTION" ? "🔧"
+                        : s.type === "SENSOR" ? "📊"
+                        : "💡";
+                      return (
+                        <View
+                          key={s.title || i}
+                          className={`p-3 rounded-btn ${dark ? "bg-white/5" : "bg-bg"}`}
+                          style={{ borderLeftWidth: 3, borderLeftColor: confColor }}
+                        >
+                          <View className="flex-row items-center justify-between mb-1">
+                            <View className="flex-row items-center gap-1.5 flex-1">
+                              <Text style={{ fontSize: 12 }}>{typeIcon}</Text>
+                              <Text className={`text-sm font-bold font-inter flex-1 ${darkText}`} numberOfLines={2}>
+                                {s.title}
+                              </Text>
+                            </View>
+                            {conf != null && (
+                              <View className="px-2 py-0.5 rounded-chip" style={{ backgroundColor: confColor + "1A" }}>
+                                <Text className="text-[10px] font-bold font-inter" style={{ color: confColor }}>
+                                  {conf}% confidence
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                          {s.description ? (
+                            <Text className={`text-xs font-inter mt-0.5 ${darkMuted}`} numberOfLines={4}>
+                              {s.description}
+                            </Text>
+                          ) : null}
+                        </View>
+                      );
+                    })}
+                    <Text className={`text-[10px] font-inter mt-1 ${darkMuted}`}>
+                      Suggestions are generated from this machine's intervention history and sensor patterns.
+                    </Text>
+                  </View>
+                )}
+              </Card>
+            )}
 
             {/* Observations */}
             <Card>

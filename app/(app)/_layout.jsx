@@ -20,6 +20,9 @@ import {
   setServerUnread,
   pollNotifications,
 } from "../../src/store/slices/notificationSlice";
+import { prependAlert } from "../../src/store/slices/alertSlice";
+import { normalizeAlert } from "../../src/store/services/alertService";
+import AiChatBot from "../../src/components/AiChatBot";
 
 function NotificationBridge() {
   const dispatch = useAppDispatch();
@@ -76,11 +79,35 @@ function NotificationBridge() {
   return null;
 }
 
+/**
+ * AlertBridge — mounted ONCE for the whole app, subscribes to /topic/alerts
+ * so the TopBar alert badge updates in real time even when the Alerts screen
+ * is not mounted. Each incoming STOMP frame is normalised and prepended into
+ * alertSlice.list, which the TopBar badge selector reads.
+ */
+function AlertBridge() {
+  const dispatch = useAppDispatch();
+  const liveAlert = useLiveTopic("/topic/alerts");
+  const lastAlertRef = useRef(null);
+
+  useEffect(() => {
+    if (!liveAlert) return;
+    const key = `${liveAlert.id || liveAlert.message}-${liveAlert.severity || ""}-${liveAlert.status || ""}-${liveAlert.timestamp || ""}`;
+    if (!key || lastAlertRef.current === key) return;
+    lastAlertRef.current = key;
+    dispatch(prependAlert(normalizeAlert(liveAlert)));
+  }, [liveAlert, dispatch]);
+
+  return null;
+}
+
 export default function AppLayout() {
   return (
     <>
       <NotificationBridge />
+      <AlertBridge />
       <Slot />
+      <AiChatBot />
     </>
   );
 }

@@ -110,7 +110,7 @@ export default function MachinesListScreen() {
 
   // Settings → Machines → auto-refresh interval (review: "add the machines
   // settings"): silently refetch the current page every N seconds when set.
-  const autoRefreshSeconds = useAppSelector((s) => s.settings.machines?.autoRefreshSeconds || 0);
+  const autoRefreshSeconds = useAppSelector((s) => s.settings.machines?.autoRefreshSeconds || 15);
   useEffect(() => {
     if (!canReadMachines || !autoRefreshSeconds) return undefined;
     const timer = setInterval(() => dispatch(fetchMachines(query())), autoRefreshSeconds * 1000);

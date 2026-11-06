@@ -364,6 +364,12 @@ export function normalizeIntervention(row) {
   };
 }
 
+/** GET /api/maintenance/fixing-suggestions/:machineId — Sprint 9 AI fixing suggestions. */
+export async function getFixingSuggestions(machineId) {
+  const response = await api.get(`/api/maintenance/fixing-suggestions/${machineId}`);
+  return response.data;
+}
+
 /** Normalize a MaintenanceRecommendationService.Recommendation row. */
 export function normalizeRecommendation(row) {
   if (!row || typeof row !== "object") return null;

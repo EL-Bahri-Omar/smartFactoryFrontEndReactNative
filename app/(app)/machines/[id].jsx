@@ -41,6 +41,7 @@ import { fetchMachineSensors } from "../../../src/store/slices/sensorSlice";
 import { fetchThresholds, saveThreshold, deleteThreshold } from "../../../src/store/slices/thresholdSlice";
 import { fetchMachineAlerts, acknowledgeAlert } from "../../../src/store/slices/alertSlice";
 import { fetchInterventions } from "../../../src/store/slices/interventionSlice";
+import { pushLivePrediction } from "../../../src/store/slices/aiSlice";
 import { getSensorStatus, getAlertSeverity, normalizeAlertSeverity, getAlertStatus } from "../../../src/lib/status";
 import { computeMachineHealth } from "../../../src/lib/health";
 import { ScoreRing } from "../../../src/components/KpiCard";
@@ -191,6 +192,9 @@ export default function MachineDetailScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState(null); // { top, right } screen coords for the dropdown
   const [editOpen, setEditOpen] = useState(false);
+  // Maintenance tab — date range filter (sprint 9).
+  const [maintDateFrom, setMaintDateFrom] = useState("");
+  const [maintDateTo, setMaintDateTo] = useState("");
   const lastLiveRef = useRef(null);
   const menuBtnRef = useRef(null);
   const { width: winWidth } = useWindowDimensions();
@@ -249,6 +253,25 @@ export default function MachineDetailScreen() {
   // Sensor ONLINE/OFFLINE flips arrive here (US19) — refresh the chips.
   const sensorTopic = machine?.code ? `/topic/machines/${machine.code}/sensors` : null;
   const sensorLiveMessage = useLiveTopic(sensorTopic, { enabled: Boolean(sensorTopic) });
+
+  // AI prediction topic — real-time fault classification from the AI model (Sprint 8).
+  const aiTopic = machine?.code
+    ? `/topic/machines/${machine.code}/ai-prediction`
+    : machineId
+      ? `/topic/machines/${machineId}/ai-prediction`
+      : null;
+  const aiLiveMessage = useLiveTopic(aiTopic, { enabled: Boolean(aiTopic) });
+  const aiPrediction = useAppSelector((s) => {
+    const key = machine?.code || machine?.id || machineId;
+    return s.ai.liveByMachine[key] || null;
+  });
+
+  // Push AI predictions into the Redux slice when they arrive.
+  useEffect(() => {
+    if (aiLiveMessage && aiLiveMessage.eventType === "AI_PREDICTION") {
+      dispatch(pushLivePrediction(aiLiveMessage));
+    }
+  }, [dispatch, aiLiveMessage]);
 
   useEffect(() => {
     if (!machineId || !canReadMachines) return;
@@ -702,6 +725,82 @@ export default function MachineDetailScreen() {
           {SensorChips()}
           {HealthScoreCard()}
         </View>
+
+        {/* AI Prediction Badge (Sprint 8) — shows the latest AI fault
+            classification result when the inference service is running. */}
+        {aiPrediction && (
+          <Card className="mb-4">
+            <View className="flex-row items-center justify-between">
+              <View className="flex-row items-center gap-2">
+                <Text style={{ fontSize: 16 }}>{"🤖"}</Text>
+                <Text className={`text-sm font-bold font-inter ${dark ? "text-white" : "text-text"}`}>
+                  AI Prediction
+                </Text>
+                <View
+                  className={`px-2 py-0.5 rounded-chip ${
+                    aiPrediction.predictedStatus === "normal"
+                      ? dark ? "bg-success/10" : "bg-green-50"
+                      : aiPrediction.predictedStatus === "degradation"
+                      ? dark ? "bg-warning/10" : "bg-amber-50"
+                      : aiPrediction.predictedStatus === "anomaly"
+                      ? dark ? "bg-orange-500/10" : "bg-orange-50"
+                      : dark ? "bg-danger/10" : "bg-red-50"
+                  }`}
+                >
+                  <Text
+                    className={`text-xs font-semibold font-inter ${
+                      aiPrediction.predictedStatus === "normal"
+                        ? "text-success"
+                        : aiPrediction.predictedStatus === "degradation"
+                        ? "text-warning"
+                        : aiPrediction.predictedStatus === "anomaly"
+                        ? "text-orange-500"
+                        : "text-danger"
+                    }`}
+                  >
+                    {aiPrediction.predictedStatus === "normal" ? "Normal" :
+                     aiPrediction.predictedStatus === "degradation" ? "Dégradation" :
+                     aiPrediction.predictedStatus === "anomaly" ? "Anomalie" :
+                     aiPrediction.predictedStatus === "failure" ? "Défaillance" :
+                     aiPrediction.predictedStatus || "—"}
+                  </Text>
+                </View>
+                {aiPrediction.severity && aiPrediction.severity !== "INFO" && (
+                  <SeverityBadge severity={aiPrediction.severity} />
+                )}
+              </View>
+              <Text className={`text-[11px] font-inter ${dark ? "text-white/40" : "text-text-muted"}`}>
+                {aiPrediction.timestamp ? relativeTime(aiPrediction.timestamp) : "live"}
+              </Text>
+            </View>
+            <View className={`flex-row gap-4 mt-2 ${isDesktop ? "" : "flex-wrap"}`}>
+              <View>
+                <Text className={`text-[10px] font-inter uppercase ${dark ? "text-white/40" : "text-text-muted"}`}>Confidence</Text>
+                <Text className={`text-sm font-semibold font-inter ${dark ? "text-white" : "text-text"}`}>
+                  {aiPrediction.confidence != null ? `${(aiPrediction.confidence * 100).toFixed(1)}%` : "—"}
+                </Text>
+              </View>
+              <View>
+                <Text className={`text-[10px] font-inter uppercase ${dark ? "text-white/40" : "text-text-muted"}`}>Anomaly Score</Text>
+                <Text className={`text-sm font-semibold font-inter ${dark ? "text-white" : "text-text"}`}>
+                  {aiPrediction.anomalyScore != null ? aiPrediction.anomalyScore.toFixed(3) : "—"}
+                </Text>
+              </View>
+              {aiPrediction.temperatureMean != null && (
+                <View>
+                  <Text className={`text-[10px] font-inter uppercase ${dark ? "text-white/40" : "text-text-muted"}`}>Temp</Text>
+                  <Text className={`text-sm font-inter ${dark ? "text-white/80" : "text-text"}`}>{aiPrediction.temperatureMean.toFixed(1)}°C</Text>
+                </View>
+              )}
+              {aiPrediction.vibrationRms != null && (
+                <View>
+                  <Text className={`text-[10px] font-inter uppercase ${dark ? "text-white/40" : "text-text-muted"}`}>Vibration</Text>
+                  <Text className={`text-sm font-inter ${dark ? "text-white/80" : "text-text"}`}>{aiPrediction.vibrationRms.toFixed(2)} mm/s</Text>
+                </View>
+              )}
+            </View>
+          </Card>
+        )}
 
         {!canReadTelemetry ? (
           <Card>
@@ -1214,25 +1313,85 @@ export default function MachineDetailScreen() {
     );
   }
 
-  /* Maintenance tab — interventions for THIS machine (review: "add the
-     interventions that has the same machine id"). */
+  /* Maintenance tab — interventions for THIS machine with date filter
+     (sprint 9: "filter des maintenance par date"). */
   function MaintenanceBody() {
-    const rows = (maintenanceList || []).filter(
+    const machineRows = (maintenanceList || []).filter(
       (t) =>
         (machine?.id && String(t.machineId) === String(machine.id)) ||
         (machine?.code && t.machineCode === machine.code)
     );
-    const loading = maintenanceStatus === "loading" && rows.length === 0;
+
+    // Apply date range filter.
+    const rows = machineRows.filter((t) => {
+      const ts = new Date(t.scheduledAt || t.createdAt).getTime();
+      if (Number.isNaN(ts)) return true; // keep rows with no parseable date
+      if (maintDateFrom) {
+        const from = new Date(maintDateFrom).getTime();
+        if (!Number.isNaN(from) && ts < from) return false;
+      }
+      if (maintDateTo) {
+        // End-of-day: include the whole "to" day.
+        const to = new Date(maintDateTo);
+        to.setHours(23, 59, 59, 999);
+        if (!Number.isNaN(to.getTime()) && ts > to.getTime()) return false;
+      }
+      return true;
+    });
+
+    const loading = maintenanceStatus === "loading" && machineRows.length === 0;
+    const hasDateFilter = !!(maintDateFrom || maintDateTo);
+
+    const dateFilter = (
+      <Card className="mb-3">
+        <View className={`flex-row items-end gap-3 flex-wrap`}>
+          <View className="flex-1 min-w-[140px]">
+            <Text className={`text-[11px] font-inter mb-1 ${dark ? "text-white/60" : "text-text-muted"}`}>From</Text>
+            <DateTimeInput
+              value={maintDateFrom}
+              onChange={setMaintDateFrom}
+              mode="date"
+              placeholder="Start date"
+            />
+          </View>
+          <View className="flex-1 min-w-[140px]">
+            <Text className={`text-[11px] font-inter mb-1 ${dark ? "text-white/60" : "text-text-muted"}`}>To</Text>
+            <DateTimeInput
+              value={maintDateTo}
+              onChange={setMaintDateTo}
+              mode="date"
+              placeholder="End date"
+            />
+          </View>
+          {hasDateFilter && (
+            <Button
+              title="Clear"
+              variant="ghost"
+              size="sm"
+              onPress={() => { setMaintDateFrom(""); setMaintDateTo(""); }}
+            />
+          )}
+        </View>
+        {hasDateFilter && (
+          <Text className={`text-[10px] font-inter mt-1.5 ${dark ? "text-white/40" : "text-text-muted"}`}>
+            Showing {rows.length} of {machineRows.length} interventions
+          </Text>
+        )}
+      </Card>
+    );
 
     if (loading) {
       return (
-        <Card className="mb-4">
-          <BusyRow label="Loading interventions…" />
-        </Card>
+        <View>
+          {dateFilter}
+          <Card className="mb-4">
+            <BusyRow label="Loading interventions…" />
+          </Card>
+        </View>
       );
     }
 
-    if (rows.length === 0) {
+    if (machineRows.length === 0) {
       return (
         <EmptyState
           icon={<Text className="text-3xl">🛠️</Text>}
@@ -1244,24 +1403,33 @@ export default function MachineDetailScreen() {
 
     return (
       <View className="gap-3">
-        {rows.map((t) => (
-          <Card key={t.id}>
-            <Pressable
-              onPress={() => router.push(`/(app)/maintenance/${String(t.id)}`)}
-              className="flex-row items-center justify-between gap-3"
-            >
-              <View className="flex-1">
-                <Text className={`text-sm font-bold font-inter ${dark ? "text-white" : "text-text"}`} numberOfLines={1}>
-                  {t.title || "Intervention"}
-                </Text>
-                <Text className={`text-xs font-inter mt-0.5 ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>
-                  {t.type || "—"} · {t.priority || "—"} · {relativeTime(t.createdAt)}
-                </Text>
-              </View>
-              <StatusBadge status={t.status} />
-            </Pressable>
-          </Card>
-        ))}
+        {dateFilter}
+        {rows.length === 0 ? (
+          <EmptyState
+            icon={<Text className="text-3xl">📅</Text>}
+            title="No interventions in this period"
+            message="Adjust the date range or clear the filter."
+          />
+        ) : (
+          rows.map((t) => (
+            <Card key={t.id}>
+              <Pressable
+                onPress={() => router.push(`/(app)/maintenance/${String(t.id)}`)}
+                className="flex-row items-center justify-between gap-3"
+              >
+                <View className="flex-1">
+                  <Text className={`text-sm font-bold font-inter ${dark ? "text-white" : "text-text"}`} numberOfLines={1}>
+                    {t.title || "Intervention"}
+                  </Text>
+                  <Text className={`text-xs font-inter mt-0.5 ${dark ? "text-white/60" : "text-text-muted"}`} numberOfLines={1}>
+                    {t.type || "—"} · {t.priority || "—"} · {relativeTime(t.createdAt)}
+                  </Text>
+                </View>
+                <StatusBadge status={t.status} />
+              </Pressable>
+            </Card>
+          ))
+        )}
       </View>
     );
   }
