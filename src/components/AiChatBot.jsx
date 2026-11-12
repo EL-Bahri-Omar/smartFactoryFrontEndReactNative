@@ -356,116 +356,118 @@ export default function AiChatBot() {
         </View>
       )}
 
-      {/* Toast message when chatbot is closed and new predictions arrive */}
-      {!open && showToast && (
-        <Animated.View
-          style={{
-            opacity: toastAnim,
-            transform: [{ translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) }],
-            marginBottom: 8,
-          }}
-        >
-          <Pressable onPress={toggleOpen}>
-            <View
-              className={`rounded-xl px-4 py-3 ${dark ? "bg-[#1e1e2e]" : "bg-white"} border ${borderColor}`}
-              style={{
-                minWidth: 260,
-                ...Platform.select({
-                  web: {
-                    boxShadow: dark
-                      ? "0 4px 16px rgba(0,0,0,0.4)"
-                      : "0 4px 16px rgba(0,0,0,0.12)",
-                  },
-                  default: {
-                    elevation: 6,
-                    shadowColor: "#000",
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.15,
-                    shadowRadius: 6,
-                  },
-                }),
-              }}
-            >
-              <View className="flex-row items-center gap-2">
-                <Text style={{ fontSize: 16 }}>🤖</Text>
-                <View className="flex-1">
-                  <Text className={`text-xs font-bold font-inter ${textColor}`}>
-                    You have new problem predictions
-                  </Text>
-                  <Text className={`text-[10px] font-inter mt-0.5 ${mutedColor}`}>
-                    Tap to view details
-                  </Text>
-                </View>
-                <View className="px-1.5 py-0.5 rounded-full bg-danger">
-                  <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>
-                    {unread > 9 ? "9+" : unread}
-                  </Text>
-                </View>
-              </View>
-            </View>
-          </Pressable>
-        </Animated.View>
-      )}
-
-      {/* Floating Action Button */}
-      <Pressable onPress={toggleOpen}>
-        <Animated.View
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: 28,
-            backgroundColor: fabBg,
-            alignItems: "center",
-            justifyContent: "center",
-            transform: [{ scale: pulseAnim }],
-            ...Platform.select({
-              web: {
-                boxShadow: `0 4px 16px ${dark ? "rgba(99,102,241,0.4)" : "rgba(79,70,229,0.3)"}`,
-                cursor: "pointer",
-              },
-              default: {
-                elevation: 8,
-                shadowColor: fabBg,
-                shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.3,
-                shadowRadius: 8,
-              },
-            }),
-          }}
-        >
-          <Text style={{ fontSize: 24, color: "#fff" }}>
-            {open ? "✕" : "🤖"}
-          </Text>
-
-          {/* Unread badge */}
-          {!open && unread > 0 && (
-            <View
-              style={{
-                position: "absolute",
-                top: -4,
-                right: -4,
-                backgroundColor: "#EF4444",
-                borderRadius: 10,
-                minWidth: 20,
-                height: 20,
-                alignItems: "center",
-                justifyContent: "center",
-                paddingHorizontal: 4,
-              }}
-            >
-              <Text
+      {/* Bottom row: Toast (left) + FAB (right) */}
+      <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 12 }}>
+        {/* Toast message — appears to the LEFT of the FAB */}
+        {!open && showToast && (
+          <Animated.View
+            style={{
+              opacity: toastAnim,
+              transform: [{ translateX: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+            }}
+          >
+            <Pressable onPress={toggleOpen}>
+              <View
+                className={`rounded-xl px-4 py-3 ${dark ? "bg-[#1e1e2e]" : "bg-white"} border ${borderColor}`}
                 style={{
-                  color: "#fff",
-                  fontSize: 11,
-                  fontWeight: "800",
+                  minWidth: 260,
+                  ...Platform.select({
+                    web: {
+                      boxShadow: dark
+                        ? "0 4px 16px rgba(0,0,0,0.4)"
+                        : "0 4px 16px rgba(0,0,0,0.12)",
+                    },
+                    default: {
+                      elevation: 6,
+                      shadowColor: "#000",
+                      shadowOffset: { width: 0, height: 2 },
+                      shadowOpacity: 0.15,
+                      shadowRadius: 6,
+                    },
+                  }),
                 }}
               >
-                {unread > 9 ? "9+" : unread}
-              </Text>
-            </View>
-          )}
-        </Animated.View>
-      </Pressable>
+                <View className="flex-row items-center gap-2">
+                  <Text style={{ fontSize: 16 }}>🤖</Text>
+                  <View className="flex-1">
+                    <Text className={`text-xs font-bold font-inter ${textColor}`}>
+                      You have new problem predictions
+                    </Text>
+                    <Text className={`text-[10px] font-inter mt-0.5 ${mutedColor}`}>
+                      Tap to view details
+                    </Text>
+                  </View>
+                  <View className="px-1.5 py-0.5 rounded-full bg-danger">
+                    <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>
+                      {unread > 9 ? "9+" : unread}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </Pressable>
+          </Animated.View>
+        )}
+
+        {/* Floating Action Button */}
+        <Pressable onPress={toggleOpen}>
+          <Animated.View
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: 28,
+              backgroundColor: fabBg,
+              alignItems: "center",
+              justifyContent: "center",
+              transform: [{ scale: pulseAnim }],
+              ...Platform.select({
+                web: {
+                  boxShadow: `0 4px 16px ${dark ? "rgba(99,102,241,0.4)" : "rgba(79,70,229,0.3)"}`,
+                  cursor: "pointer",
+                },
+                default: {
+                  elevation: 8,
+                  shadowColor: fabBg,
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 8,
+                },
+              }),
+            }}
+          >
+            <Text style={{ fontSize: 24, color: "#fff" }}>
+              {open ? "✕" : "🤖"}
+            </Text>
+
+            {/* Unread badge */}
+            {!open && unread > 0 && (
+              <View
+                style={{
+                  position: "absolute",
+                  top: -4,
+                  right: -4,
+                  backgroundColor: "#EF4444",
+                  borderRadius: 10,
+                  minWidth: 20,
+                  height: 20,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  paddingHorizontal: 4,
+                }}
+              >
+                <Text
+                  style={{
+                    color: "#fff",
+                    fontSize: 11,
+                    fontWeight: "800",
+                  }}
+                >
+                  {unread > 9 ? "9+" : unread}
+                </Text>
+              </View>
+            )}
+          </Animated.View>
+        </Pressable>
+      </View>
     </View>
   );
 }

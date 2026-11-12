@@ -1561,7 +1561,7 @@ export default function MachineDetailScreen() {
             { key: "warningMin", label: "Warn low ≤" },
             { key: "warningMax", label: "Warn high ≥" },
             { key: "criticalMin", label: "Critical low ≤" },
-            { key: "criticalHigh", label: "Critical high ≥" },
+            { key: "criticalMax", label: "Critical high ≥" },
           ],
         })}
 

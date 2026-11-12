@@ -161,7 +161,7 @@ export default function MaintenanceScreen() {
         status: filters.status || undefined,
         type: filters.type || undefined,
         page,
-        size: 100,
+        size: 15,
       })
     );
   }, [dispatch, filters.status, filters.type, page, canAccess]);
@@ -175,7 +175,7 @@ export default function MaintenanceScreen() {
           status: filters.status || undefined,
           type: filters.type || undefined,
           page,
-          size: 100,
+          size: 15,
         })
       );
     }, 15000);
@@ -589,7 +589,7 @@ export default function MaintenanceScreen() {
                         title="Retry"
                         variant="outline"
                         size="sm"
-                        onPress={() => dispatch(fetchInterventions({ page, size: 100 }))}
+                        onPress={() => dispatch(fetchInterventions({ page, size: 15 }))}
                       />
                     ) : undefined
                   }
@@ -597,53 +597,116 @@ export default function MaintenanceScreen() {
               )}
 
               {!loading && visibleList.length > 0 && !failed && (
-                isDesktop ? (
-                  <View>
-                    {/* Table header */}
-                    <View
-                      className={`flex-row items-center py-2 px-3 border-b rounded-t-lg ${
-                        dark ? "border-white/10 bg-white/[0.03]" : "border-border bg-slate-50"
-                      }`}
-                    >
-                      <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 90, letterSpacing: 0.5 }}>Ref</Text>
-                      <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 120, letterSpacing: 0.5 }}>Machine</Text>
-                      <Text className={`flex-1 text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ letterSpacing: 0.5 }}>Intervention</Text>
-                      <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 96, letterSpacing: 0.5 }}>Type</Text>
-                      <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 96, marginRight: 14, letterSpacing: 0.5 }}>Priority</Text>
-                      <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 104, letterSpacing: 0.5 }}>Status</Text>
-                      <Text className={`text-[11px] font-bold font-inter uppercase text-right ${darkMuted}`} style={{ width: 110, letterSpacing: 0.5 }}>Date</Text>
+                <>
+                  {isDesktop ? (
+                    <View>
+                      {/* Table header */}
+                      <View
+                        className={`flex-row items-center py-2 px-3 border-b rounded-t-lg ${
+                          dark ? "border-white/10 bg-white/[0.03]" : "border-border bg-slate-50"
+                        }`}
+                      >
+                        <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 90, letterSpacing: 0.5 }}>Ref</Text>
+                        <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 120, letterSpacing: 0.5 }}>Machine</Text>
+                        <Text className={`flex-1 text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ letterSpacing: 0.5 }}>Intervention</Text>
+                        <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 96, letterSpacing: 0.5 }}>Type</Text>
+                        <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 96, marginRight: 14, letterSpacing: 0.5 }}>Priority</Text>
+                        <Text className={`text-[11px] font-bold font-inter uppercase ${darkMuted}`} style={{ width: 104, letterSpacing: 0.5 }}>Status</Text>
+                        <Text className={`text-[11px] font-bold font-inter uppercase text-right ${darkMuted}`} style={{ width: 110, letterSpacing: 0.5 }}>Date</Text>
+                      </View>
+                      {visibleList.map(renderTicketRow)}
                     </View>
-                    {visibleList.map(renderTicketRow)}
-                    {!clientFiltered && pagination.totalPages > 1 && (
-                      <View className="flex-row items-center justify-center mt-3 gap-4 py-2">
+                  ) : (
+                    <View>{visibleList.map((t) => renderTicketRow(t))}</View>
+                  )}
+
+                  {/* Pagination controls — shared desktop + mobile */}
+                  {pagination.totalPages > 1 && (
+                    <View className="mt-3 mb-1">
+                      <View className="flex-row items-center justify-between px-1 mb-2">
+                        <Text className={`text-xs font-inter ${darkMuted}`}>
+                          {`Showing ${page * pagination.size + 1}–${Math.min((page + 1) * pagination.size, pagination.totalElements)} of ${pagination.totalElements}`}
+                        </Text>
+                        <Text className={`text-xs font-inter ${darkMuted}`}>
+                          {`Page ${page + 1} / ${pagination.totalPages}`}
+                        </Text>
+                      </View>
+                      <View className="flex-row items-center justify-center gap-2">
+                        {/* First page */}
+                        <Pressable
+                          onPress={() => setPage(0)}
+                          disabled={page === 0}
+                          className={`px-2.5 py-1.5 rounded-btn ${page === 0 ? "opacity-30" : ""} ${dark ? "bg-white/5" : "bg-bg"}`}
+                        >
+                          <Text className={`text-xs font-bold font-inter ${darkMuted}`}>«</Text>
+                        </Pressable>
+                        {/* Previous */}
                         <Pressable
                           onPress={() => setPage((p) => Math.max(0, p - 1))}
                           disabled={page === 0}
-                          className={`px-3 py-1.5 rounded-btn ${page === 0 ? "opacity-40" : ""} ${dark ? "bg-white/5" : "bg-bg"}`}
+                          className={`px-3 py-1.5 rounded-btn ${page === 0 ? "opacity-30" : ""} ${dark ? "bg-white/5" : "bg-bg"}`}
                         >
                           <Text className={`text-xs font-bold font-inter ${darkMuted}`}>‹ Prev</Text>
                         </Pressable>
-                        <Text className={`text-xs font-inter ${darkMuted}`}>
-                          {`Page ${page + 1} of ${pagination.totalPages}`}
-                        </Text>
+                        {/* Page numbers */}
+                        {(() => {
+                          const pages = [];
+                          const total = pagination.totalPages;
+                          let start = Math.max(0, page - 2);
+                          let end = Math.min(total - 1, page + 2);
+                          if (end - start < 4) {
+                            if (start === 0) end = Math.min(total - 1, start + 4);
+                            else start = Math.max(0, end - 4);
+                          }
+                          for (let i = start; i <= end; i++) {
+                            pages.push(
+                              <Pressable
+                                key={i}
+                                onPress={() => setPage(i)}
+                                className={`px-3 py-1.5 rounded-btn ${
+                                  i === page
+                                    ? "bg-primary"
+                                    : dark ? "bg-white/5" : "bg-bg"
+                                }`}
+                              >
+                                <Text
+                                  className={`text-xs font-bold font-inter ${
+                                    i === page ? "text-white" : darkMuted
+                                  }`}
+                                >
+                                  {i + 1}
+                                </Text>
+                              </Pressable>
+                            );
+                          }
+                          return pages;
+                        })()}
+                        {/* Next */}
                         <Pressable
                           onPress={() => setPage((p) => Math.min(pagination.totalPages - 1, p + 1))}
                           disabled={page >= pagination.totalPages - 1}
-                          className={`px-3 py-1.5 rounded-btn ${page >= pagination.totalPages - 1 ? "opacity-40" : ""} ${dark ? "bg-white/5" : "bg-bg"}`}
+                          className={`px-3 py-1.5 rounded-btn ${page >= pagination.totalPages - 1 ? "opacity-30" : ""} ${dark ? "bg-white/5" : "bg-bg"}`}
                         >
                           <Text className={`text-xs font-bold font-inter ${darkMuted}`}>Next ›</Text>
                         </Pressable>
+                        {/* Last page */}
+                        <Pressable
+                          onPress={() => setPage(pagination.totalPages - 1)}
+                          disabled={page >= pagination.totalPages - 1}
+                          className={`px-2.5 py-1.5 rounded-btn ${page >= pagination.totalPages - 1 ? "opacity-30" : ""} ${dark ? "bg-white/5" : "bg-bg"}`}
+                        >
+                          <Text className={`text-xs font-bold font-inter ${darkMuted}`}>»</Text>
+                        </Pressable>
                       </View>
-                    )}
-                    {clientFiltered && (
-                      <Text className={`text-xs font-inter py-2 text-center ${darkMuted}`}>
-                        {`${visibleList.length} of ${pagination.totalElements} interventions shown (priority/search filter applied)`}
-                      </Text>
-                    )}
-                  </View>
-                ) : (
-                  <View>{visibleList.map((t) => renderTicketRow(t))}</View>
-                )
+                    </View>
+                  )}
+
+                  {clientFiltered && (
+                    <Text className={`text-xs font-inter py-2 text-center ${darkMuted}`}>
+                      {`${visibleList.length} of ${pagination.totalElements} interventions shown (priority/search filter applied)`}
+                    </Text>
+                  )}
+                </>
               )}
             </Card>
           </View>

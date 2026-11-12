@@ -42,6 +42,7 @@ import {
   addInterventionObservation,
   closeIntervention,
   updateInterventionStatus,
+  startIntervention,
   updateInterventionDetails,
   updateInterventionDiagnosis,
   updateInterventionAction,
@@ -294,23 +295,21 @@ export default function InterventionDetailScreen() {
     if (!statusChoice) return;
     setSheetError(null);
     try {
-      await dispatch(updateInterventionStatus({ id, status: statusChoice })).unwrap();
+      if (statusChoice === "IN_PROGRESS") {
+        // Use dedicated /start endpoint (allowed for technicians).
+        await dispatch(startIntervention(id)).unwrap();
+      } else {
+        await dispatch(updateInterventionStatus({ id, status: statusChoice })).unwrap();
+      }
       setStatusChoice(null);
       setSheet(null);
     } catch (e) {
       const msg = String(e?.message || "");
-      // Backend STILL blocks technicians on PUT /api/maintenance/{id} in two
-      // places (the service layer already allows ROLE_TECHNICIAN, but these
-      // two guards were never updated):
-      //   SecurityConfig.java:122   PUT "/api/maintenance/*"  → ADMIN / RESPONSABLE only
-      //   MaintenanceController:60  @PreAuthorize              → "!hasRole('TECHNICIAN')"
-      // Until both are relaxed, don't leak the raw French 403 — say what a
-      // technician CAN do instead (diagnosis/action auto-start, Close to finish).
       const forbidden =
         e?.status === 403 || /FORBIDDEN|403|refus/i.test(msg) || /responsable/i.test(msg);
       setSheetError(
         forbidden && isTechnician
-          ? "Your profile can't set the status from this screen yet (backend restriction on PUT /api/maintenance/:id). Meanwhile: record your first diagnosis or action and the intervention starts automatically (In progress) — use Close when the job is done."
+          ? "Access denied. Make sure you are assigned to this intervention."
           : msg ||
             "Could not change the status. Close this sheet and retry — the backend rejected the transition."
       );
@@ -532,85 +531,166 @@ export default function InterventionDetailScreen() {
               </View>
             </Card>
 
-            {/* Sprint 11 — Linked AI Prediction card */}
-            {linkedPrediction && (
-              <Card className="mb-4">
-                <View className="flex-row items-center gap-2 mb-3">
-                  <Text style={{ fontSize: 16 }}>🤖</Text>
-                  <Text className={`text-base font-bold font-inter ${darkText}`}>
-                    AI Prediction
-                  </Text>
-                  <View
-                    className="px-2 py-0.5 rounded-chip"
-                    style={{
-                      backgroundColor:
-                        (linkedPrediction.predictedStatus || linkedPrediction.severity) === "CRITICAL" || linkedPrediction.predictedStatus === "failure"
-                          ? "#EF444420"
-                          : linkedPrediction.predictedStatus === "anomaly" || linkedPrediction.severity === "HIGH"
-                            ? "#F9731620"
-                            : "#F59E0B20",
-                    }}
-                  >
-                    <Text
-                      className="text-[10px] font-bold font-inter"
-                      style={{
-                        color:
-                          linkedPrediction.predictedStatus === "failure" || linkedPrediction.severity === "CRITICAL"
-                            ? "#EF4444"
-                            : linkedPrediction.predictedStatus === "anomaly" || linkedPrediction.severity === "HIGH"
-                              ? "#F97316"
-                              : "#F59E0B",
-                      }}
-                    >
-                      {linkedPrediction.predictedStatus
-                        ? linkedPrediction.predictedStatus.charAt(0).toUpperCase() + linkedPrediction.predictedStatus.slice(1)
-                        : linkedPrediction.severity || "Warning"}
-                    </Text>
+            {/* Sprint 11 — Linked AI Prediction card (styled like ai.jsx PredictionCard) */}
+            {linkedPrediction && (() => {
+              const predStatus = (linkedPrediction.predictedStatus || "").toLowerCase();
+              const statusColors = {
+                failure:     { bg: "#EF444415", border: "#EF444440", text: "#EF4444", label: "Failure", emoji: "⛔" },
+                anomaly:     { bg: "#F9731615", border: "#F9731640", text: "#F97316", label: "Anomaly", emoji: "🔴" },
+                degradation: { bg: "#F59E0B15", border: "#F59E0B40", text: "#F59E0B", label: "Degradation", emoji: "⚠️" },
+                normal:      { bg: "#22C55E15", border: "#22C55E40", text: "#22C55E", label: "Normal", emoji: "✅" },
+              };
+              const sc = statusColors[predStatus] || statusColors.degradation;
+              const confidence = linkedPrediction.observedValue ?? linkedPrediction.confidence;
+              const anomalyScore = linkedPrediction.thresholdValue ?? linkedPrediction.anomalyScore;
+              const estHours = linkedPrediction.estimatedHoursToEvent;
+              const recFix = linkedPrediction.recommendedFix || linkedPrediction.message;
+
+              // Extract problem sensors
+              const sensors = [];
+              (linkedPrediction.drivingSensors || []).forEach((s) => {
+                if (s.sensor && s.sensor !== "model" && s.sensor !== "all") {
+                  sensors.push(s.sensor.charAt(0).toUpperCase() + s.sensor.slice(1));
+                }
+              });
+              if (sensors.length === 0 && linkedPrediction.sensorType) {
+                sensors.push(linkedPrediction.sensorType.charAt(0).toUpperCase() + linkedPrediction.sensorType.slice(1));
+              }
+
+              // Format ETA
+              let etaText = null;
+              if (estHours != null) {
+                if (estHours <= 0) etaText = "imminent";
+                else if (estHours < 1) etaText = `~${Math.round(estHours * 60)} min`;
+                else if (estHours < 2) etaText = `~${estHours.toFixed(1)} hour`;
+                else etaText = `~${estHours.toFixed(1)} hours`;
+              }
+
+              return (
+                <View
+                  className="mb-4 rounded-2xl overflow-hidden"
+                  style={{
+                    backgroundColor: sc.bg,
+                    borderWidth: 1,
+                    borderColor: sc.border,
+                  }}
+                >
+                  {/* Header */}
+                  <View className="px-4 py-3">
+                    <View className="flex-row items-center justify-between mb-2">
+                      <View className="flex-row items-center gap-2">
+                        <Text style={{ fontSize: 18 }}>🤖</Text>
+                        <Text className={`text-base font-bold font-inter ${darkText}`}>
+                          AI Prediction
+                        </Text>
+                        <View
+                          className="px-2 py-0.5 rounded-chip"
+                          style={{ backgroundColor: sc.bg }}
+                        >
+                          <Text
+                            className="text-[11px] font-bold font-inter"
+                            style={{ color: sc.text }}
+                          >
+                            {sc.emoji} {sc.label}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text className={`text-[10px] font-inter ${darkMuted}`}>
+                        {linkedPrediction.timestamp
+                          ? formatDateTime(linkedPrediction.timestamp)
+                          : linkedPrediction.createdAt
+                            ? formatDateTime(linkedPrediction.createdAt)
+                            : "—"}
+                      </Text>
+                    </View>
+
+                    {/* Problem sensors row */}
+                    {sensors.length > 0 && (
+                      <View className="flex-row items-center gap-1.5 mb-2">
+                        <Text style={{ fontSize: 12 }}>🔍</Text>
+                        <Text className={`text-xs font-inter ${dark ? "text-white/70" : "text-gray-600"}`}>
+                          Problem: {sensors.join(", ")}
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* ETA row */}
+                    {etaText && (
+                      <View className="flex-row items-center gap-1.5 mb-2">
+                        <Text style={{ fontSize: 12 }}>⏱️</Text>
+                        <Text className={`text-xs font-semibold font-inter ${darkText}`}>
+                          Estimated problem in{" "}
+                          <Text style={{ color: sc.text, fontWeight: "800" }}>
+                            {etaText}
+                          </Text>
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Stats row */}
+                    <View className="flex-row flex-wrap gap-2 mb-2">
+                      {confidence != null && (
+                        <View
+                          className="rounded-lg px-3 py-2"
+                          style={{ backgroundColor: dark ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.7)" }}
+                        >
+                          <Text className={`text-[10px] font-inter ${darkMuted}`}>Confidence</Text>
+                          <Text className={`text-sm font-bold font-inter mt-0.5 ${darkText}`}>
+                            {(confidence * 100).toFixed(1)}%
+                          </Text>
+                        </View>
+                      )}
+                      {anomalyScore != null && (
+                        <View
+                          className="rounded-lg px-3 py-2"
+                          style={{ backgroundColor: dark ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.7)" }}
+                        >
+                          <Text className={`text-[10px] font-inter ${darkMuted}`}>Anomaly Score</Text>
+                          <Text className={`text-sm font-bold font-inter mt-0.5 ${darkText}`}>
+                            {anomalyScore.toFixed(3)}
+                          </Text>
+                        </View>
+                      )}
+                      {linkedPrediction.severity && (
+                        <View
+                          className="rounded-lg px-3 py-2"
+                          style={{ backgroundColor: dark ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.7)" }}
+                        >
+                          <Text className={`text-[10px] font-inter ${darkMuted}`}>Severity</Text>
+                          <Text
+                            className="text-sm font-bold font-inter mt-0.5"
+                            style={{ color: sc.text }}
+                          >
+                            {linkedPrediction.severity}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {/* Recommended fix */}
+                    {recFix && (
+                      <View
+                        className="rounded-xl p-3"
+                        style={{ backgroundColor: dark ? "rgba(99,102,241,0.12)" : "#EEF2FF" }}
+                      >
+                        <Text
+                          className="text-[10px] font-bold font-inter mb-1"
+                          style={{ color: dark ? "#818CF8" : "#4338CA" }}
+                        >
+                          💡 Recommended fix
+                        </Text>
+                        <Text
+                          className={`text-xs font-inter leading-5 ${dark ? "text-white/80" : "text-gray-700"}`}
+                          numberOfLines={6}
+                        >
+                          {recFix}
+                        </Text>
+                      </View>
+                    )}
                   </View>
                 </View>
-
-                {/* Prediction details tiles */}
-                <View className="flex-row flex-wrap gap-2 mb-2">
-                  {linkedPrediction.observedValue != null && (
-                    <View className={`rounded-btn px-3 py-2 ${dark ? "bg-white/5" : "bg-bg"}`}>
-                      <Text className={`text-[10px] font-inter ${darkMuted}`}>Confidence</Text>
-                      <Text className={`text-xs font-bold font-inter mt-0.5 ${darkText}`}>
-                        {(linkedPrediction.observedValue * 100).toFixed(1)}%
-                      </Text>
-                    </View>
-                  )}
-                  {linkedPrediction.thresholdValue != null && (
-                    <View className={`rounded-btn px-3 py-2 ${dark ? "bg-white/5" : "bg-bg"}`}>
-                      <Text className={`text-[10px] font-inter ${darkMuted}`}>Anomaly Score</Text>
-                      <Text className={`text-xs font-bold font-inter mt-0.5 ${darkText}`}>
-                        {linkedPrediction.thresholdValue.toFixed(3)}
-                      </Text>
-                    </View>
-                  )}
-                  {linkedPrediction.sensorType && (
-                    <View className={`rounded-btn px-3 py-2 ${dark ? "bg-white/5" : "bg-bg"}`}>
-                      <Text className={`text-[10px] font-inter ${darkMuted}`}>Problem Sensor</Text>
-                      <Text className={`text-xs font-bold font-inter mt-0.5 ${darkText}`}>
-                        {linkedPrediction.sensorType}
-                      </Text>
-                    </View>
-                  )}
-                  <View className={`rounded-btn px-3 py-2 ${dark ? "bg-white/5" : "bg-bg"}`}>
-                    <Text className={`text-[10px] font-inter ${darkMuted}`}>Detected</Text>
-                    <Text className={`text-xs font-bold font-inter mt-0.5 ${darkText}`}>
-                      {linkedPrediction.timestamp ? formatDateTime(linkedPrediction.timestamp) : linkedPrediction.createdAt ? formatDateTime(linkedPrediction.createdAt) : "—"}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* AI prediction message */}
-                {linkedPrediction.message && (
-                  <Text className={`text-xs font-inter mt-1 ${darkMuted}`} numberOfLines={4}>
-                    {linkedPrediction.message}
-                  </Text>
-                )}
-              </Card>
-            )}
+              );
+            })()}
 
             {/* Action bar — full width right under the details: the primary
                 next step of EVERY role is visible without scrolling (it used
@@ -664,7 +744,7 @@ export default function InterventionDetailScreen() {
                     onPress={async () => {
                       dispatch(clearMutatingError());
                       try {
-                        await dispatch(updateInterventionStatus({ id, status: "IN_PROGRESS" })).unwrap();
+                        await dispatch(startIntervention(id)).unwrap();
                       } catch (e) {
                         // Error captured in mutatingError
                       }

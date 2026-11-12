@@ -64,15 +64,13 @@ const aiSlice = createSlice({
     pushLivePrediction(state, action) {
       const pred = action.payload;
       if (!pred?.machineId && !pred?.machineCode) return;
+      // Use machineId as the single canonical key — avoids duplicate
+      // entries when Object.values() is called downstream.
       const key = pred.machineId || pred.machineCode;
       state.liveByMachine[key] = {
         ...pred,
         receivedAt: new Date().toISOString(),
       };
-      // Also index by machineCode for easy lookup
-      if (pred.machineCode && pred.machineCode !== key) {
-        state.liveByMachine[pred.machineCode] = state.liveByMachine[key];
-      }
     },
 
     /** Clear all live predictions (e.g. on logout). */

@@ -657,9 +657,9 @@ export default function AiAnalyticsScreen() {
                     {livePredictions.length} live prediction{livePredictions.length !== 1 ? "s" : ""} — updates in real-time via WebSocket
                   </Text>
                 </View>
-                {livePredictions.map((pred) => (
+                {livePredictions.map((pred, idx) => (
                   <PredictionCard
-                    key={`live-${pred.machineId}-${pred.machineCode}`}
+                    key={`live-${pred.machineId || pred.machineCode || idx}`}
                     prediction={pred}
                     isLive
                     onPress={() => navigateToMachine(pred)}

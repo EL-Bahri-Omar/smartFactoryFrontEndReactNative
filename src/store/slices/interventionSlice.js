@@ -78,6 +78,22 @@ export const updateInterventionStatus = createAsyncThunk(
   }
 );
 
+/**
+ * PUT /api/maintenance/:id/start — dedicated start endpoint.
+ * Allowed for TECHNICIAN, ADMIN, RESPONSABLE_INDUSTRIEL.
+ * Moves status to IN_PROGRESS and stamps startedAt.
+ */
+export const startIntervention = createAsyncThunk(
+  "intervention/start",
+  async (id, { rejectWithValue }) => {
+    try {
+      return await interventionService.startIntervention(id);
+    } catch (error) {
+      return rejectWithValue(error);
+    }
+  }
+);
+
 /** POST /api/maintenance/:id/diagnoses (US45). */
 export const addInterventionDiagnosis = createAsyncThunk(
   "intervention/addDiagnosis",
@@ -324,6 +340,29 @@ const interventionSlice = createSlice({
         state.mutatingError = action.payload?.message || "Status change failed";
       })
       .addCase(updateInterventionStatus.fulfilled, (state, action) => {
+        state.mutating = "succeeded";
+        upsert(state, action.payload);
+      })
+      .addCase(startIntervention.pending, (state, action) => {
+        state.mutating = "loading";
+        // Optimistic — move to IN_PROGRESS immediately.
+        const id = action.meta.arg;
+        const row = state.list.find((t) => t.id === id);
+        const target = row || (state.current?.id === id ? state.current : null);
+        if (target) target.status = "IN_PROGRESS";
+      })
+      .addCase(startIntervention.rejected, (state, action) => {
+        state.mutating = "error";
+        state.mutatingError = action.payload?.message || "Failed to start intervention";
+        // Rollback optimistic update.
+        const id = action.meta.arg;
+        const row = state.list.find((t) => t.id === id);
+        const target = row || (state.current?.id === id ? state.current : null);
+        if (target && target.status === "IN_PROGRESS") {
+          target.status = target.technicianId || target.technicianIds?.length ? "ASSIGNED" : "PENDING";
+        }
+      })
+      .addCase(startIntervention.fulfilled, (state, action) => {
         state.mutating = "succeeded";
         upsert(state, action.payload);
       });

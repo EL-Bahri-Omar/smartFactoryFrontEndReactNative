@@ -154,6 +154,17 @@ export async function updateStatus(id, status) {
 }
 
 /**
+ * PUT /api/maintenance/:id/start — dedicated start endpoint.
+ * Allowed for TECHNICIAN, ADMIN, RESPONSABLE_INDUSTRIEL.
+ * Moves status to IN_PROGRESS and stamps startedAt.
+ */
+export async function startIntervention(id) {
+  const url = buildUrl(ENDPOINTS.INTERVENTION_START, { id });
+  const response = await api.put(url);
+  return normalizeIntervention(response.data);
+}
+
+/**
  * PUT /api/maintenance/:id { title?, description?, priority?, scheduledAt? }
  * — edit the intervention core fields (technician edits the description,
  * manager edits title/priority). BACKEND TODO (not in the controller yet).

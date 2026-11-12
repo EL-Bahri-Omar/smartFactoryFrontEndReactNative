@@ -95,6 +95,7 @@ export const ENDPOINTS = Object.freeze({
   INTERVENTION_DIAGNOSES: "/api/maintenance/:id/diagnoses", // CONFIRMED — POST { probableCause, details? } (US45)
   INTERVENTION_ACTIONS: "/api/maintenance/:id/actions", // CONFIRMED — POST { description, partsReplaced?, durationMinutes?, performedAt? } (US46)
   INTERVENTION_OBSERVATIONS: "/api/maintenance/:id/observations", // CONFIRMED — POST { content, category? SAFETY|PERFORMANCE|OPERATING_CONDITION|GENERAL } (US47)
+  INTERVENTION_START: "/api/maintenance/:id/start", // CONFIRMED — PUT/POST starts intervention (TECHNICIAN/ADMIN/RESPONSABLE_INDUSTRIEL)
   INTERVENTION_CLOSE: "/api/maintenance/:id/close", // CONFIRMED — PUT { closureNotes, restoreMachineStatus? } (US48)
   MAINTENANCE_RECOMMENDATIONS: "/api/maintenance/recommendations/:machineId", // CONFIRMED — GET List<Recommendation { machineId, machineCode, recommendedType, recommendedSubtype?, priority, title, justification, suggestedActions, status: RECOMMENDED|INSUFFICIENT_DATA|HEALTHY, generatedAt }> (US50)
   MAINTENANCE_RECOMMENDATION_APPLY: "/api/maintenance/recommendations/:machineId/apply", // CONFIRMED — POST ?index=&technicianId= → created intervention
